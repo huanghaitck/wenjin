@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -164,11 +164,104 @@ CREATE TABLE audit_events (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE threads (
+    thread_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE goals (
+    goal_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    objective TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE TABLE runs (
+    run_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    goal_id TEXT NOT NULL REFERENCES goals(goal_id),
+    status TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    error TEXT
+);
+
+CREATE TABLE run_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(run_id, sequence)
+);
+
+CREATE TABLE tool_calls (
+    tool_call_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    tool_name TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+
+CREATE TABLE approvals (
+    approval_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    tool_call_id TEXT NOT NULL REFERENCES tool_calls(tool_call_id),
+    status TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    decision_json TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(tool_call_id)
+);
+
+CREATE TABLE model_profiles (
+    profile_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL,
+    credential_ref TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE model_assignments (
+    role TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES model_profiles(profile_id),
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX idx_pages_source ON pages(source_id);
 CREATE INDEX idx_blocks_page ON blocks(page_id);
 CREATE INDEX idx_anomalies_source_status ON anomalies(source_id, status);
 CREATE INDEX idx_ocr_proposals_page_status ON ocr_proposals(page_id, status);
 CREATE INDEX idx_audit_project ON audit_events(project_id, event_id);
+CREATE INDEX idx_messages_thread ON messages(thread_id, created_at);
+CREATE INDEX idx_runs_thread ON runs(thread_id, created_at);
+CREATE INDEX idx_run_events_run ON run_events(run_id, sequence);
+CREATE INDEX idx_approvals_run_status ON approvals(run_id, status);
 """
 
 
@@ -199,6 +292,94 @@ CREATE INDEX IF NOT EXISTS idx_ocr_proposals_page_status ON ocr_proposals(page_i
 """
 
 
+MIGRATION_3 = """
+CREATE TABLE IF NOT EXISTS threads (
+    thread_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS messages (
+    message_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS goals (
+    goal_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    objective TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    goal_id TEXT NOT NULL REFERENCES goals(goal_id),
+    status TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    error TEXT
+);
+CREATE TABLE IF NOT EXISTS run_events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    sequence INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(run_id, sequence)
+);
+CREATE TABLE IF NOT EXISTS tool_calls (
+    tool_call_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    tool_name TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    output_json TEXT,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS approvals (
+    approval_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id),
+    tool_call_id TEXT NOT NULL REFERENCES tool_calls(tool_call_id),
+    status TEXT NOT NULL,
+    request_json TEXT NOT NULL,
+    decision_json TEXT,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    UNIQUE(tool_call_id)
+);
+CREATE TABLE IF NOT EXISTS model_profiles (
+    profile_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL,
+    credential_ref TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS model_assignments (
+    role TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES model_profiles(profile_id),
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_runs_thread ON runs(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_approvals_run_status ON approvals(run_id, status);
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -213,6 +394,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (2, utc_now()),
+        )
+        version = 2
+    if version < 3:
+        connection.executescript(MIGRATION_3)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (3, utc_now()),
         )
 
 

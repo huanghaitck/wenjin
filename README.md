@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`M4_AGENT_WORKSPACE_FOUNDATION_AUTHORIZED`
+`M4_AGENT_WORKSPACE_FOUNDATION_COMPLETE_AWAITING_M5_SCOPE`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -44,6 +44,12 @@ M3 deliberately stopped before translation, evidence extraction, manuscript writ
 M4 now adds the minimum Research Codex runtime: persistent conversation threads, Goals/Runs, ordered
 tool and approval events, role-based text-model selection, and a human-gated research-note write path.
 It does not yet add web research, browser control or evidence freezing; those are M5-M7 milestones.
+
+The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
+real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,
+`HRW_AGENT_MODEL` and, for an OpenAI-compatible endpoint, `HRW_AGENT_API_KEY`. Supported providers are
+`openai_compatible` and `ollama`. The selected profile is frozen per Run; missing configuration remains
+visible as unavailable and never silently falls back.
 
 ## Run tests
 

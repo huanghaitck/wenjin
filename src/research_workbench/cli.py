@@ -5,6 +5,15 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .agent_runtime import (
+    assign_model,
+    create_thread,
+    decide_approval,
+    list_threads,
+    send_message,
+    sync_model_profiles,
+    thread_view,
+)
 from .pdf_ingestion import ingest_pdf
 from .service import (
     accept_ocr_proposal,
@@ -29,7 +38,7 @@ def _emit(value: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M3")
+    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M4")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a research project")
@@ -102,6 +111,37 @@ def build_parser() -> argparse.ArgumentParser:
     ocr_reject.add_argument("--reviewer", required=True)
     ocr_reject.add_argument("--reason", required=True)
 
+    thread_create = commands.add_parser("thread-create", help="create a persistent research thread")
+    thread_create.add_argument("project_root", type=Path)
+    thread_create.add_argument("--title", required=True)
+
+    threads = commands.add_parser("threads", help="list research threads")
+    threads.add_argument("project_root", type=Path)
+
+    thread_show = commands.add_parser("thread-show", help="show messages, runs, tools and approvals")
+    thread_show.add_argument("project_root", type=Path)
+    thread_show.add_argument("thread_id")
+
+    agent_send = commands.add_parser("agent-send", help="send a message and start a research run")
+    agent_send.add_argument("project_root", type=Path)
+    agent_send.add_argument("thread_id")
+    agent_send.add_argument("--message", required=True)
+
+    models = commands.add_parser("models", help="show model profiles without secrets")
+    models.add_argument("project_root", type=Path)
+
+    model_assign = commands.add_parser("model-assign", help="assign the main reasoning model")
+    model_assign.add_argument("project_root", type=Path)
+    model_assign.add_argument("profile_id")
+
+    approve = commands.add_parser("approval-decide", help="approve or reject a pending tool call")
+    approve.add_argument("project_root", type=Path)
+    approve.add_argument("approval_id")
+    approve.add_argument("--decision", choices=("approve", "reject"), required=True)
+    approve.add_argument("--reviewer", required=True)
+    approve.add_argument("--reason", required=True)
+    approve.add_argument("--payload", type=Path)
+
     web = commands.add_parser("serve", help="open the local PDF repair workbench")
     web.add_argument("project_root", type=Path)
     web.add_argument("--host", default="127.0.0.1")
@@ -167,6 +207,28 @@ def main(argv: list[str] | None = None) -> int:
             args.proposal_id,
             args.reviewer,
             args.reason,
+        )
+    elif args.command == "thread-create":
+        result = create_thread(args.project_root, args.title)
+    elif args.command == "threads":
+        result = list_threads(args.project_root)
+    elif args.command == "thread-show":
+        result = thread_view(args.project_root, args.thread_id)
+    elif args.command == "agent-send":
+        result = send_message(args.project_root, args.thread_id, args.message)
+    elif args.command == "models":
+        result = sync_model_profiles(args.project_root)
+    elif args.command == "model-assign":
+        result = assign_model(args.project_root, args.profile_id)
+    elif args.command == "approval-decide":
+        edited = json.loads(args.payload.read_text(encoding="utf-8")) if args.payload else None
+        result = decide_approval(
+            args.project_root,
+            args.approval_id,
+            args.decision == "approve",
+            args.reviewer,
+            args.reason,
+            edited,
         )
     elif args.command == "serve":
         serve(args.project_root, args.host, args.port)

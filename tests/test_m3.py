@@ -83,7 +83,7 @@ class M3OcrProposalTests(unittest.TestCase):
         connection = sqlite3.connect(database_path(self.project))
         try:
             connection.execute("DROP TABLE ocr_proposals")
-            connection.execute("DELETE FROM schema_meta WHERE version = 2")
+            connection.execute("DELETE FROM schema_meta WHERE version >= 2")
             connection.commit()
         finally:
             connection.close()
@@ -96,7 +96,7 @@ class M3OcrProposalTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 2)
+        self.assertEqual(version, 3)
         self.assertIsNotNone(table)
 
     def test_pending_proposal_preserves_blocked_source_and_provenance(self) -> None:

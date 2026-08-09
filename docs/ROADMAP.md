@@ -25,6 +25,8 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ### M4｜Agent Workspace Foundation
 
+状态：已完成（2026-08-09）。
+
 目标：让系统第一次具备“科研版 Codex”的核心交互，而不是继续堆独立功能。
 
 范围：

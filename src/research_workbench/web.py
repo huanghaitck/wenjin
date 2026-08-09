@@ -7,6 +7,15 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .agent_runtime import (
+    assign_model,
+    create_thread,
+    decide_approval,
+    list_threads,
+    send_message,
+    sync_model_profiles,
+    thread_view,
+)
 from .pdf_ingestion import ingest_pdf
 from .service import (
     accept_ocr_proposal,
@@ -56,7 +65,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             if parsed.path == "/api/snapshot":
-                self._json({"project": project_status(self.server.project_root), "sources": list_sources(self.server.project_root)})
+                self._json({
+                    "project": project_status(self.server.project_root),
+                    "sources": list_sources(self.server.project_root),
+                    "threads": list_threads(self.server.project_root),
+                    "model_profiles": sync_model_profiles(self.server.project_root),
+                })
                 return
             if parsed.path == "/api/capabilities":
                 self._json({"vision_ocr": capability()})
@@ -64,6 +78,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/source":
                 source_id = parse_qs(parsed.query).get("id", [""])[0]
                 self._json(source_view(self.server.project_root, source_id))
+                return
+            if parsed.path == "/api/thread":
+                thread_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._json(thread_view(self.server.project_root, thread_id))
                 return
             if parsed.path == "/api/page-image":
                 page_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -147,6 +165,32 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["proposal_id"]),
                     str(payload["reviewer"]),
                     str(payload["reason"]),
+                )
+            elif parsed.path == "/api/thread/create":
+                result = create_thread(self.server.project_root, str(payload["title"]))
+            elif parsed.path == "/api/model/assign":
+                result = assign_model(
+                    self.server.project_root,
+                    str(payload["profile_id"]),
+                    str(payload.get("role", "main_reasoning")),
+                )
+            elif parsed.path == "/api/agent/message":
+                result = send_message(
+                    self.server.project_root,
+                    str(payload["thread_id"]),
+                    str(payload["content"]),
+                )
+            elif parsed.path == "/api/approval/decide":
+                edited = payload.get("edited_request")
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_approval(
+                    self.server.project_root,
+                    str(payload["approval_id"]),
+                    bool(payload["approved"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                    edited if isinstance(edited, dict) else None,
                 )
             else:
                 self._json({"error": "not_found"}, 404)

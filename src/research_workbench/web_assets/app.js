@@ -1,4 +1,4 @@
-const state = { snapshot: null, capabilities: null, view: null, pageIndex: 0, zoom: 1 };
+const state = { snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1 };
 const $ = (id) => document.getElementById(id);
 
 async function request(url, options = {}) {
@@ -26,6 +26,7 @@ async function loadSnapshot(selectId = '') {
     request('/api/snapshot'),
     request('/api/capabilities'),
   ]);
+  renderAgentShell();
   const select = $('sourceSelect');
   select.replaceChildren();
   if (!state.snapshot.sources.length) {
@@ -37,6 +38,106 @@ async function loadSnapshot(selectId = '') {
   for (const source of state.snapshot.sources) select.append(new Option(source.title, source.source_id));
   select.value = selectId || select.value || state.snapshot.sources[0].source_id;
   await loadSource(select.value);
+}
+
+function renderAgentShell() {
+  const models = $('modelProfile'); models.replaceChildren();
+  for (const profile of (state.snapshot?.model_profiles || [])) {
+    const option = new Option(`${profile.provider} · ${profile.model}`, profile.profile_id);
+    option.selected = profile.assigned; option.disabled = profile.status !== 'available'; models.append(option);
+  }
+  const list = $('threadList'); list.replaceChildren();
+  const threads = state.snapshot?.threads || [];
+  if (!threads.length) list.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'还没有研究线程。'}));
+  for (const thread of threads) {
+    const button = document.createElement('button');
+    const title = document.createElement('strong'); title.textContent = thread.title;
+    const meta = document.createElement('small'); meta.textContent = `${thread.message_count} 条消息 · ${thread.latest_run_status || '尚未运行'}`;
+    button.append(title, meta); button.classList.toggle('selected', thread.thread_id === state.threadId);
+    button.onclick = () => loadThread(thread.thread_id).catch((error) => notice(error.message, true));
+    list.append(button);
+  }
+  if (!state.threadId && threads.length) loadThread(threads[0].thread_id).catch((error) => notice(error.message, true));
+  else renderThread();
+}
+
+async function loadThread(threadId) {
+  state.threadId = threadId;
+  state.thread = await request(`/api/thread?id=${encodeURIComponent(threadId)}`);
+  renderAgentShell();
+}
+
+function latestRun() { return state.thread?.runs?.[0]; }
+
+function renderThread() {
+  $('threadTitle').textContent = state.thread?.thread?.title || '新建一个研究线程';
+  const run = latestRun();
+  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model}` : '对话与运行状态会保存在本地项目中';
+  const messages = $('messages'); messages.replaceChildren();
+  for (const message of (state.thread?.messages || [])) {
+    const card = document.createElement('article'); card.className = `message ${message.role}`;
+    const role = document.createElement('small'); role.textContent = message.role === 'user' ? '教授' : 'Research Agent';
+    const text = document.createElement('p'); text.textContent = message.content.text || '';
+    card.append(role, text); messages.append(card);
+  }
+  if (!state.thread) messages.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'创建线程后，可以让 Agent 查看项目、来源和页面，并在写入前等待你的决定。'}));
+  messages.scrollTop = messages.scrollHeight;
+  renderApproval(run); renderTimeline(run);
+}
+
+function renderApproval(run) {
+  const panel = $('approvalPanel'); panel.replaceChildren();
+  const approval = run?.approvals?.find((item) => item.status === 'pending');
+  if (!approval) {
+    panel.append(Object.assign(document.createElement('p'), {className:'empty approval-empty', textContent:'当前没有等待决定的操作。'}));
+    return;
+  }
+  const card = document.createElement('article'); card.className = 'approval-card';
+  const heading = document.createElement('h3'); heading.textContent = '保存研究札记？';
+  const warning = document.createElement('p'); warning.textContent = '这是 Agent 的提案。请修改并确认后再写入项目。';
+  const titleLabel = document.createElement('label'); titleLabel.textContent = '标题';
+  const title = document.createElement('input'); title.value = approval.request.title || ''; titleLabel.append(title);
+  const contentLabel = document.createElement('label'); contentLabel.textContent = '札记内容';
+  const content = document.createElement('textarea'); content.value = approval.request.content || ''; contentLabel.append(content);
+  const reviewerLabel = document.createElement('label'); reviewerLabel.textContent = '决定人';
+  const reviewer = document.createElement('input'); reviewer.value = $('reviewer').value || 'human-reviewer'; reviewerLabel.append(reviewer);
+  const reasonLabel = document.createElement('label'); reasonLabel.textContent = '决定依据';
+  const reason = document.createElement('input'); reason.placeholder = '例如：已核对项目状态'; reasonLabel.append(reason);
+  const actions = document.createElement('div'); actions.className = 'approval-actions';
+  const approve = document.createElement('button'); approve.className = 'primary-inline'; approve.textContent = '修改后批准';
+  const reject = document.createElement('button'); reject.textContent = '拒绝写入';
+  const decide = async (approved) => {
+    if (!reviewer.value.trim() || !reason.value.trim()) throw new Error('请填写决定人和决定依据。');
+    state.thread = await request('/api/approval/decide', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      approval_id:approval.approval_id, approved, reviewer:reviewer.value, reason:reason.value,
+      edited_request:{title:title.value, content:content.value},
+    })});
+    await refreshAgentSnapshot(); notice(approved ? '札记已经人工核准并保存。' : '提案已拒绝，没有写入札记。');
+  };
+  approve.onclick = () => decide(true).catch((error) => notice(error.message, true));
+  reject.onclick = () => decide(false).catch((error) => notice(error.message, true));
+  actions.append(approve, reject); card.append(heading, warning, titleLabel, contentLabel, reviewerLabel, reasonLabel, actions); panel.append(card);
+}
+
+function renderTimeline(run) {
+  const timeline = $('runTimeline'); timeline.replaceChildren();
+  if (!run) { timeline.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'运行后会显示模型、工具、错误和审批时间线。'})); return; }
+  for (const event of [...run.events].reverse()) {
+    const row = document.createElement('article'); row.className = 'timeline-event';
+    const title = document.createElement('strong'); title.textContent = event.event_type;
+    const meta = document.createElement('small'); meta.textContent = `#${event.sequence} · ${new Date(event.created_at).toLocaleString()}`;
+    let detail = '';
+    if (event.payload.tool) detail = event.payload.tool;
+    else if (event.payload.error) detail = event.payload.error;
+    const text = document.createElement('p'); text.textContent = detail;
+    row.append(title, meta); if (detail) row.append(text); timeline.append(row);
+  }
+}
+
+async function refreshAgentSnapshot() {
+  state.snapshot = await request('/api/snapshot');
+  if (state.threadId) state.thread = await request(`/api/thread?id=${encodeURIComponent(state.threadId)}`);
+  renderAgentShell();
 }
 
 async function loadSource(sourceId, keepPage = false) {
@@ -226,6 +327,40 @@ function render() {
 }
 
 $('sourceSelect').onchange = (event) => loadSource(event.target.value).catch((error) => notice(error.message, true));
+$('agentMode').onclick = () => {
+  $('agentWorkbench').hidden = false; $('pdfWorkbench').hidden = true;
+  $('agentMode').classList.add('mode-active'); $('sourceMode').classList.remove('mode-active');
+};
+$('sourceMode').onclick = () => {
+  $('agentWorkbench').hidden = true; $('pdfWorkbench').hidden = false;
+  $('sourceMode').classList.add('mode-active'); $('agentMode').classList.remove('mode-active');
+};
+$('newThread').onclick = async () => {
+  const title = window.prompt('这个研究线程讨论什么？', '新的研究讨论');
+  if (!title?.trim()) return;
+  try {
+    const thread = await request('/api/thread/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title})});
+    state.threadId = thread.thread_id; await refreshAgentSnapshot(); notice('研究线程已创建并保存在本地项目。');
+  } catch (error) { notice(error.message, true); }
+};
+$('modelProfile').onchange = async (event) => {
+  try {
+    await request('/api/model/assign', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile_id:event.target.value})});
+    await refreshAgentSnapshot(); notice('主模型配置已更新；只影响之后的新 Run。');
+  } catch (error) { notice(error.message, true); }
+};
+$('sendMessage').onclick = async () => {
+  const content = $('messageInput').value.trim();
+  if (!state.threadId) { notice('请先创建一个研究线程。', true); return; }
+  if (!content) { notice('请输入研究任务。', true); return; }
+  $('sendMessage').disabled = true;
+  try {
+    notice('Agent 正在读取项目并调用工具……');
+    state.thread = await request('/api/agent/message', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:state.threadId, content})});
+    $('messageInput').value = ''; await refreshAgentSnapshot(); notice(latestRun()?.status === 'WAITING_FOR_APPROVAL' ? 'Agent 已暂停，等待你检查右侧提案。' : '本次运行已完成。');
+  } catch (error) { notice(error.message, true); }
+  finally { $('sendMessage').disabled = false; }
+};
 $('zoomIn').onclick = () => { state.zoom = Math.min(3, state.zoom + .2); render(); };
 $('zoomOut').onclick = () => { state.zoom = Math.max(.4, state.zoom - .2); render(); };
 $('importButton').onclick = async () => {

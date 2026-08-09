@@ -1,6 +1,6 @@
 # M4 Task Spec｜Agent Workspace Foundation
 
-状态：已授权  
+状态：已完成
 日期：2026-08-09
 
 ## 目标

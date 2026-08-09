@@ -8,23 +8,23 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M4_AGENT_WORKSPACE_FOUNDATION`.
+Current milestone: `M4_AGENT_WORKSPACE_FOUNDATION_COMPLETE`.
 
-The user authorized M4 on 2026-08-09 after the Research Codex product, architecture and roadmap were
-frozen. M4 is limited to persistent threads/messages/goals/runs/events, role-based text-model profiles,
-one main Agent tool loop, project/source/page read tools, a human-gated research-note write tool, and
-the corresponding CLI/API/GUI. See `docs/M4_TASK_SPEC.md`.
+The user authorized and completed M4 on 2026-08-09 after the Research Codex product, architecture and
+roadmap were frozen. M4 provides persistent threads/messages/goals/runs/events, role-based text-model
+profiles, one main Agent tool loop, project/source/page read tools, a human-gated research-note write
+tool, and the corresponding CLI/API/GUI. See `docs/M4_TASK_SPEC.md`.
 
-M4 must not implement network research, authenticated browser control, evidence freezing, long-term
-memory writes, translation, formal manuscript drafting, journal export, a generic multi-agent framework,
-packaged desktop distribution or broad Bookflow code copying. It must preserve all M1-M3 source and
-repair gates.
+Do not enter M5 until the user has reviewed the M4 vertical slice and approved the concrete M5 scope.
+Network research, authenticated browser control, evidence freezing, long-term memory writes, translation,
+formal manuscript drafting, journal export, a generic multi-agent framework, packaged desktop distribution
+and broad Bookflow code copying remain outside the completed M4 boundary.
 
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read the active milestone specification (`docs/M4_TASK_SPEC.md`).
+3. Read `docs/M4_TASK_SPEC.md` and the next proposed stage in `docs/ROADMAP.md`.
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles

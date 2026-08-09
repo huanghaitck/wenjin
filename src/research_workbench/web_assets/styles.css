@@ -12,6 +12,7 @@
   font-family: Inter, "Microsoft YaHei", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; color: var(--ink); background: var(--ground); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
@@ -26,8 +27,42 @@ button { cursor: pointer; }
 .importer input { max-width: 220px; }
 button, select, input { min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
 button:hover { border-color: var(--accent); }
+.mode-active { color: #fff; background: var(--accent); border-color: #b88c6e; }
 #notice { min-height: 34px; padding: 8px 20px; color: var(--muted); font-size: 13px; }
 #notice.error { color: var(--danger); }
+.agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 220px minmax(480px, 1fr) 340px; gap: 10px; padding: 0 12px 12px; }
+.agent-heading { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.agent-heading h1, .agent-heading h2 { margin: 0; font: 600 17px Georgia, "Songti SC", serif; }
+.agent-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+.agent-heading label { min-width: 190px; }
+.thread-panel, .conversation-panel, .activity-panel { display: grid; min-height: 0; }
+.thread-panel { grid-template-rows: auto minmax(0, 1fr); }
+.thread-list { overflow: auto; padding: 9px; }
+.thread-list button { width: 100%; display: grid; gap: 5px; margin-bottom: 7px; padding: 10px; text-align: left; background: var(--paper); }
+.thread-list button.selected { border: 2px solid var(--accent); background: #fff8ed; }
+.thread-list small { color: var(--muted); font-size: 10px; }
+.conversation-panel { grid-template-rows: auto minmax(0, 1fr) auto; }
+.messages { overflow: auto; padding: 18px; }
+.message { max-width: 82%; margin-bottom: 14px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.message.user { margin-left: auto; background: #efe3d4; }
+.message small { color: var(--muted); }
+.message p { margin: 5px 0 0; white-space: pre-wrap; line-height: 1.65; }
+.composer { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: #f1ece3; }
+.composer textarea { min-height: 74px; }
+.composer button { align-self: end; min-width: 74px; }
+.activity-panel { grid-template-rows: auto auto minmax(0, 1fr); }
+.approval-empty { padding: 0 14px; }
+.approval-card { margin: 10px; padding: 12px; border: 2px solid #bc865e; border-radius: 10px; background: #fff8ec; }
+.approval-card h3 { margin: 0; font-size: 15px; }
+.approval-card > p { color: var(--muted); font-size: 11px; }
+.approval-card label { margin-top: 8px; }
+.approval-card textarea { min-height: 180px; }
+.approval-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+.run-timeline { overflow: auto; padding: 10px; border-top: 1px solid var(--line); }
+.timeline-event { display: grid; gap: 3px; margin-bottom: 7px; padding: 8px; border-left: 3px solid var(--accent-soft); background: #fff; }
+.timeline-event strong { font-size: 11px; }
+.timeline-event small { color: var(--muted); font-size: 9px; }
+.timeline-event p { margin: 2px 0 0; font-size: 11px; }
 .workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 126px minmax(420px, 1.15fr) minmax(380px, .85fr); gap: 10px; padding: 0 12px 12px; }
 .surface { min-height: 0; overflow: hidden; background: #f8f5ee; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px #3b302618; }
 .page-panel { padding: 12px 8px; }
@@ -73,6 +108,8 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
 .relation-actions { display: flex; gap: 6px; margin-top: 7px; }
 .empty { color: var(--muted); font-size: 13px; }
 @media (max-width: 1000px) {
+  .agent-workbench { height: auto; grid-template-columns: 1fr; }
+  .thread-panel, .conversation-panel, .activity-panel { min-height: 300px; }
   .workbench { height: auto; grid-template-columns: 90px 1fr; }
   .repair-panel { grid-column: 1 / -1; min-height: 620px; }
   .topbar { align-items: flex-start; flex-direction: column; }

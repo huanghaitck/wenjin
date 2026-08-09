@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-09"
-current_stage: M4_AGENT_WORKSPACE_FOUNDATION_AUTHORIZED
-last_completed_stage: M3_MODEL_ASSISTED_PAGE_REPAIR
-active_human_gate: M4_IMPLEMENTATION_AND_ACCEPTANCE
+current_stage: M4_AGENT_WORKSPACE_FOUNDATION_COMPLETE_AWAITING_M5_SCOPE
+last_completed_stage: M4_AGENT_WORKSPACE_FOUNDATION
+active_human_gate: M5_SCOPE_APPROVAL
 
 m1:
   status: complete
@@ -39,10 +39,10 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: M4
-  authorized: true
-  objective: persistent_agent_workspace_with_model_roles_tool_events_and_human_approval
-  task_spec: docs/M4_TASK_SPEC.md
+  stage: M5
+  authorized: false
+  objective: open_research_retrieval_records_and_public_source_acquisition
+  proposed_scope: docs/ROADMAP.md
 
 product_direction:
   identity: local_first_model_selectable_historian_research_codex
@@ -118,3 +118,31 @@ m3_model_assisted_page_repair:
   glm_live_result: http_429_rate_limited
   credentials_copied_or_logged: false
   model_outputs_applied_without_human_acceptance: 0
+
+m4_agent_workspace_foundation:
+  status: complete
+  database_schema: 3
+  schema_v1_to_v3_migration: implemented_and_tested
+  schema_v2_to_v3_migration: implemented_and_tested
+  persistent_threads_messages_goals_runs: implemented
+  ordered_run_events: implemented
+  tool_call_ledger: implemented
+  approval_pause_resume: implemented
+  approval_survives_restart: implemented_and_tested
+  editable_note_approval: implemented
+  rejection_writes_no_note: implemented_and_tested
+  model_profiles:
+    - deterministic_mock
+    - openai_compatible
+    - ollama
+  explicit_provider_no_fallback: true
+  project_status_tool: implemented
+  source_list_tool: implemented
+  source_page_tool: implemented
+  save_research_note_tool: human_gated
+  cli_api_gui: implemented
+  full_test_suite: 29_passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/
+  demo_pending_approval: created_for_human_review
+  credentials_persisted: 0

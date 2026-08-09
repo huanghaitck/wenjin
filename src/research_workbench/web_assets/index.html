@@ -8,8 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学研究工作台</strong><span>M3 · 模型建议与人工修复</span></div>
+    <div><strong>史学 Research Codex</strong><span>M4 · 对话、工具与人工门禁</span></div>
     <div class="importer">
+      <button id="agentMode" class="mode-active">研究对话</button>
+      <button id="sourceMode">文献修复</button>
       <input id="pdfFile" type="file" accept="application/pdf">
       <button id="importButton">导入 PDF</button>
       <select id="sourceSelect" aria-label="选择文献"></select>
@@ -17,7 +19,32 @@
   </header>
 
   <div id="notice" role="status">正在读取本地项目……</div>
-  <main class="workbench">
+  <main id="agentWorkbench" class="agent-workbench">
+    <aside class="thread-panel surface">
+      <header class="agent-heading"><h2>研究线程</h2><button id="newThread">＋</button></header>
+      <div id="threadList" class="thread-list"></div>
+    </aside>
+
+    <section class="conversation-panel surface">
+      <header class="agent-heading">
+        <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
+        <label>主模型<select id="modelProfile"></select></label>
+      </header>
+      <div id="messages" class="messages"></div>
+      <div class="composer">
+        <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
+        <button id="sendMessage" class="primary-inline">发送</button>
+      </div>
+    </section>
+
+    <aside class="activity-panel surface">
+      <header class="agent-heading"><div><h2>运行与审批</h2><p>工具结果不是自动认可的研究判断</p></div></header>
+      <div id="approvalPanel"></div>
+      <div id="runTimeline" class="run-timeline"></div>
+    </aside>
+  </main>
+
+  <main id="pdfWorkbench" class="workbench" hidden>
     <aside class="page-panel surface">
       <h2>物理页</h2>
       <div id="pageRail" class="page-rail"></div>
