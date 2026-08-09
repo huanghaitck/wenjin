@@ -24,13 +24,58 @@ button { cursor: pointer; }
 .topbar strong { font-family: Georgia, "Songti SC", serif; font-size: 20px; }
 .topbar span { color: #d5c7b9; font-size: 12px; }
 .importer { display: flex; align-items: center; gap: 8px; }
-.importer input { max-width: 220px; }
+.importer input { max-width: 220px; color: var(--ink); background: #fff; }
 button, select, input { min-height: 34px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
 button:hover { border-color: var(--accent); }
 .mode-active { color: #fff; background: var(--accent); border-color: #b88c6e; }
 #notice { min-height: 34px; padding: 8px 20px; color: var(--muted); font-size: 13px; }
 #notice.error { color: var(--danger); }
 .agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 220px minmax(480px, 1fr) 340px; gap: 10px; padding: 0 12px 12px; }
+.library-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: minmax(290px, .8fr) minmax(420px, 1.1fr) minmax(390px, 1fr); gap: 10px; padding: 0 12px 12px; }
+.inventory-panel, .catalog-panel, .work-detail-panel { display: grid; min-height: 0; }
+.inventory-panel { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
+.catalog-panel { grid-template-rows: auto minmax(0, 1fr); }
+.catalog-panel > .agent-heading { display: grid; align-items: stretch; }
+.work-detail-panel { grid-template-rows: auto minmax(0, 1fr); }
+.inventory-form { display: grid; gap: 8px; padding: 12px; border-bottom: 1px solid var(--line); }
+.inventory-form input { width: 100%; }
+.boundary-note { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+.scan-summary { padding: 8px 12px 0; }
+.scan-receipt { display: grid; gap: 3px; padding: 8px; border-left: 3px solid var(--accent); background: #fff; }
+.scan-receipt small { overflow-wrap: anywhere; color: var(--muted); font-size: 9px; }
+.scan-candidates { overflow: auto; padding: 8px 12px 12px; }
+.candidate { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; margin-bottom: 8px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.candidate.needs_visual_triage, .candidate.uncertain { border-left: 4px solid #b4834d; }
+.candidate.unsupported, .candidate.error { opacity: .75; }
+.candidate input { min-height: auto; }
+.candidate div { min-width: 0; }
+.candidate strong, .candidate small, .candidate p { display: block; }
+.candidate small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.candidate p { margin: 5px 0; font-size: 11px; line-height: 1.5; }
+.candidate .path { overflow-wrap: anywhere; }
+details { margin-top: 6px; color: var(--muted); font-size: 10px; }
+summary { cursor: pointer; }
+pre { overflow-x: auto; margin: 6px 0 0; padding: 7px; color: #49443d; background: #f2eee6; white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.55 Consolas, monospace; }
+.library-approve { margin-top: 8px; }
+.library-search { display: flex; gap: 6px; min-width: 0; width: 100%; }
+.library-search input { min-width: 0; flex: 1; }
+.work-list { overflow: auto; padding: 12px; }
+.work-row { width: 100%; display: grid; gap: 4px; margin-bottom: 8px; padding: 12px; text-align: left; background: var(--paper); }
+.work-row.selected { border: 2px solid var(--accent); background: #fff8ed; }
+.work-row span { font-size: 12px; }
+.work-row small { color: var(--muted); font-size: 10px; }
+.work-detail { overflow: auto; padding: 12px; }
+.bibliography-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.bibliography-form label:first-child, .bibliography-form label:nth-child(2), .bibliography-form label:last-of-type { grid-column: 1 / -1; }
+.detail-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 7px; }
+.file-history { margin-top: 14px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.file-heading { display: grid; gap: 4px; margin-bottom: 8px; }
+.file-heading strong { overflow-wrap: anywhere; font-size: 11px; }
+.file-heading small { color: var(--muted); font-size: 10px; }
+.file-heading a { color: var(--accent); font-size: 11px; }
+.version-card { margin-top: 8px; padding: 8px; border-left: 3px solid #aaa; background: #f7f3eb; }
+.version-card.current { border-left-color: var(--ok); }
+.version-card > strong { font-size: 11px; }
 .agent-heading { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .agent-heading h1, .agent-heading h2 { margin: 0; font: 600 17px Georgia, "Songti SC", serif; }
 .agent-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
@@ -108,6 +153,8 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
 .relation-actions { display: flex; gap: 6px; margin-top: 7px; }
 .empty { color: var(--muted); font-size: 13px; }
 @media (max-width: 1000px) {
+  .library-workbench { height: auto; grid-template-columns: 1fr; }
+  .inventory-panel, .catalog-panel, .work-detail-panel { min-height: 520px; }
   .agent-workbench { height: auto; grid-template-columns: 1fr; }
   .thread-panel, .conversation-panel, .activity-panel { min-height: 300px; }
   .workbench { height: auto; grid-template-columns: 90px 1fr; }

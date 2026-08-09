@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 import fitz
 
 from research_workbench.library import (
+    _pdf_bibliography,
     approve_candidates,
     link_work_to_project,
     scan_directory,
@@ -49,6 +50,9 @@ class M5ResearchLibraryTests(unittest.TestCase):
         work_id, first = self._approve_one(source)
 
         source.write_text(source.read_text(encoding="utf-8") + "字", encoding="utf-8")
+        changed = work_detail(self.project, work_id, self.library)
+        self.assertEqual(changed["files"][0]["file_state"], "changed_since_last_scan")
+        self.assertFalse(changed["files"][0]["versions"][0]["bytes_available"])
         session = scan_directory(self.project, self.materials, self.library)
         candidate = next(item for item in session["candidates"] if item["path"] == str(source.resolve()))
         self.assertEqual(candidate["proposed_action"], "new_version")
@@ -116,6 +120,7 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(updated["canonical_title"], "Imperial Archive Revised")
         self.assertEqual(updated["editions"][0]["publication_year"], "1908")
         self.assertEqual(search_library(self.project, "Professor A", library_root=self.library)[0]["work_id"], work_id)
+        self.assertEqual(search_library(self.project, "知识", library_root=self.library)[0]["work_id"], work_id)
         self.assertEqual(search_library(self.project, tags=["知识史"], library_root=self.library)[0]["work_id"], work_id)
         linked = link_work_to_project(self.project, work_id, self.library)
         self.assertEqual(len(linked["project_links"]), 1)
@@ -136,6 +141,13 @@ class M5ResearchLibraryTests(unittest.TestCase):
             self.project, session["session_id"], [candidate["candidate_id"]], self.library
         )
         self.assertEqual(approved["approved"], [])
+
+    def test_title_page_suggestions_remain_human_editable_metadata(self) -> None:
+        sample = "书 名廿二史考异\n(清)钱大昕撰\n凤凰出版社\n版次 2008年1月第1版"
+        self.assertEqual(
+            _pdf_bibliography(sample, "qdx", "", "", ""),
+            ("廿二史考异", "(清)钱大昕撰", "凤凰出版社", "2008"),
+        )
 
     def test_loopback_library_api_scans_approves_and_shows_versions(self) -> None:
         source = self.materials / "api-history.txt"

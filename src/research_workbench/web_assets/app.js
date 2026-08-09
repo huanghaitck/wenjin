@@ -1,4 +1,7 @@
-const state = { snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1 };
+const state = {
+  snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1,
+  libraryScan: null, libraryWorks: [], libraryWork: null, libraryWorkId: '',
+};
 const $ = (id) => document.getElementById(id);
 
 async function request(url, options = {}) {
@@ -27,6 +30,8 @@ async function loadSnapshot(selectId = '') {
     request('/api/capabilities'),
   ]);
   renderAgentShell();
+  state.libraryWorks = state.snapshot.library_works || [];
+  renderLibraryShell();
   const select = $('sourceSelect');
   select.replaceChildren();
   if (!state.snapshot.sources.length) {
@@ -38,6 +43,177 @@ async function loadSnapshot(selectId = '') {
   for (const source of state.snapshot.sources) select.append(new Option(source.title, source.source_id));
   select.value = selectId || select.value || state.snapshot.sources[0].source_id;
   await loadSource(select.value);
+}
+
+const actionLabels = {
+  register_new: '新作品', new_version: '同一文件的新版本', exact_duplicate: '精确重复位置',
+  unchanged: '内容未变化', error: '读取失败',
+};
+const triageLabels = {
+  likely_historical: '较可能是历史材料', uncertain: '需要人工判断', needs_visual_triage: '需要查看原页',
+  not_obviously_historical: '暂未发现历史线索', unsupported: '当前不解析', error: '读取失败',
+};
+
+function formatBytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 ** 2).toFixed(1)} MB`;
+}
+
+function renderLibraryShell() {
+  const library = state.snapshot?.library;
+  $('libraryRoot').textContent = library ? `索引位置：${library.library_root}` : '图书馆尚未初始化';
+  const counts = library?.counts || {};
+  $('libraryCounts').textContent = `${counts.works || 0} 部作品 · ${counts.library_files || 0} 个文件位置 · ${counts.file_versions || 0} 个精确版本`;
+  const skills = $('intakeSkill'); skills.replaceChildren();
+  for (const skill of (library?.skills || [])) {
+    const option = new Option(`${skill.name} · ${skill.execution}`, skill.name);
+    option.title = `${skill.description}\nSHA-256 ${skill.sha256}`; skills.append(option);
+  }
+  renderScan(); renderWorkList(); renderWorkDetail();
+  if (!state.libraryWorkId && state.libraryWorks.length) {
+    loadWork(state.libraryWorks[0].work_id).catch((error) => notice(error.message, true));
+  }
+}
+
+function renderScan() {
+  const summary = $('scanSummary'); const container = $('scanCandidates');
+  summary.replaceChildren(); container.replaceChildren();
+  if (!state.libraryScan) {
+    summary.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'填写一个明确文件夹后，系统先生成候选清单。'}));
+    $('approveCandidates').hidden = true; return;
+  }
+  const scan = state.libraryScan;
+  const heading = document.createElement('article'); heading.className = 'scan-receipt';
+  const title = document.createElement('strong'); title.textContent = `${scan.candidates.length} 个候选 · ${scan.status}`;
+  const skill = document.createElement('small'); skill.textContent = `${scan.skill_name} · Skill SHA-256 ${scan.skill_sha256}`;
+  const root = document.createElement('small'); root.textContent = scan.root_path;
+  heading.append(title, skill, root); summary.append(heading);
+  const unsupported = scan.candidates.filter((item) => item.triage_state === 'unsupported');
+  if (unsupported.length) {
+    const formats = Object.entries(unsupported.reduce((result, item) => {
+      result[item.format] = (result[item.format] || 0) + 1; return result;
+    }, {})).map(([format, count]) => `${format.toUpperCase()} ${count}`).join(' · ');
+    const note = document.createElement('p'); note.className = 'boundary-note';
+    note.textContent = `${unsupported.length} 个当前不解析的文件已保留在盘点收据中，不在此展开：${formats}`;
+    summary.append(note);
+  }
+  let selectable = 0;
+  for (const candidate of scan.candidates.filter((item) => item.triage_state !== 'unsupported')) {
+    const card = document.createElement('article'); card.className = `candidate ${candidate.triage_state}`;
+    const check = document.createElement('input'); check.type = 'checkbox'; check.dataset.candidateId = candidate.candidate_id;
+    check.disabled = candidate.status !== 'preview' || ['unsupported', 'error', 'unchanged'].includes(candidate.triage_state) || candidate.proposed_action === 'unchanged';
+    check.checked = !check.disabled; if (!check.disabled) selectable += 1;
+    const body = document.createElement('div');
+    const name = document.createElement('strong'); name.textContent = candidate.suggested_title;
+    const meta = document.createElement('small'); meta.textContent = `${actionLabels[candidate.proposed_action] || candidate.proposed_action} · ${triageLabels[candidate.triage_state] || candidate.triage_state} · ${candidate.format.toUpperCase()} · ${formatBytes(candidate.byte_count)}`;
+    const bibliography = document.createElement('small'); bibliography.textContent = [candidate.suggested_author || '责任者待核', candidate.suggested_year || '年代待核', candidate.suggested_publisher || '出版信息待核'].join(' · ');
+    const reason = document.createElement('p'); reason.textContent = candidate.triage_reason;
+    const path = document.createElement('small'); path.className = 'path'; path.textContent = candidate.path;
+    const exact = document.createElement('details');
+    const exactTitle = document.createElement('summary'); exactTitle.textContent = '精确盘点信息';
+    const exactText = document.createElement('pre'); exactText.textContent = `SHA-256  ${candidate.sha256 || '未取得'}\n物理页    ${candidate.page_count ?? '不适用'}\n已检查页  ${candidate.inspected_pages}\n文本层    ${candidate.text_layer}\n文件时间  ${new Date(candidate.modified_ns / 1e6).toLocaleString()}\n候选编号  ${candidate.candidate_id}${candidate.error ? `\n错误      ${candidate.error}` : ''}`;
+    exact.append(exactTitle, exactText); body.append(name, meta, bibliography, reason, path, exact); card.append(check, body); container.append(card);
+  }
+  $('approveCandidates').hidden = selectable === 0;
+}
+
+function renderWorkList() {
+  const list = $('workList'); list.replaceChildren();
+  if (!state.libraryWorks.length) {
+    list.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'图书馆还没有已批准材料。盘点不会自动入库。'})); return;
+  }
+  for (const work of state.libraryWorks) {
+    const button = document.createElement('button'); button.className = 'work-row';
+    button.classList.toggle('selected', work.work_id === state.libraryWorkId);
+    const title = document.createElement('strong'); title.textContent = work.canonical_title;
+    const author = document.createElement('span'); author.textContent = work.author || '作者待核';
+    const meta = document.createElement('small'); meta.textContent = `${work.material_type} · ${work.file_count} 个位置 · ${work.version_count} 个版本`;
+    const tags = document.createElement('small'); tags.textContent = work.tags.map((item) => item.name).join(' · ');
+    button.append(title, author, meta, tags);
+    button.onclick = () => loadWork(work.work_id).catch((error) => notice(error.message, true)); list.append(button);
+  }
+}
+
+async function loadWork(workId) {
+  state.libraryWorkId = workId;
+  state.libraryWork = await request(`/api/library/work?id=${encodeURIComponent(workId)}`);
+  renderWorkList(); renderWorkDetail();
+}
+
+function detailField(labelText, value, name) {
+  const label = document.createElement('label'); label.textContent = labelText;
+  const input = document.createElement('input'); input.value = value || ''; input.dataset.field = name;
+  label.append(input); return label;
+}
+
+function renderWorkDetail() {
+  const container = $('workDetail'); container.replaceChildren();
+  const work = state.libraryWork;
+  if (!work) {
+    container.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'选择一部作品，查看完整书目信息、文件位置与每一次精确版本。'})); return;
+  }
+  const form = document.createElement('section'); form.className = 'bibliography-form';
+  const edition = work.editions[0] || {};
+  form.append(
+    detailField('作品题名', work.canonical_title, 'canonical_title'),
+    detailField('作者 / 责任者', work.author, 'author'),
+    detailField('语言', work.language, 'language'),
+    detailField('材料类型', work.material_type, 'material_type'),
+    detailField('版本说明', edition.edition_label, 'edition_label'),
+    detailField('出版者', edition.publisher, 'publisher'),
+    detailField('出版年', edition.publication_year, 'publication_year'),
+    detailField('ISBN', edition.isbn, 'isbn'),
+    detailField('用户标签（逗号分隔）', work.tags.filter((item) => item.origin === 'user').map((item) => item.name).join(', '), 'tags'),
+  );
+  const actions = document.createElement('div'); actions.className = 'detail-actions';
+  const save = document.createElement('button'); save.className = 'primary-inline'; save.textContent = '保存人工书目';
+  save.onclick = async () => {
+    try {
+      const values = Object.fromEntries([...form.querySelectorAll('input')].map((input) => [input.dataset.field, input.value.trim()]));
+      const tags = values.tags.split(/[,，]/).map((item) => item.trim()).filter(Boolean); delete values.tags;
+      values.edition_id = edition.edition_id || '';
+      state.libraryWork = await request('/api/library/work/update', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({work_id:work.work_id, fields:values, tags})});
+      await refreshLibrary(); notice('人工书目信息和标签已保存。');
+    } catch (error) { notice(error.message, true); }
+  };
+  const link = document.createElement('button'); link.textContent = work.project_links.length ? '已关联当前项目' : '关联到当前项目'; link.disabled = work.project_links.length > 0;
+  link.onclick = async () => {
+    try {
+      state.libraryWork = await request('/api/library/link', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({work_id:work.work_id})});
+      renderWorkDetail(); notice('作品已关联到当前研究项目，原文件仍保持原位。');
+    } catch (error) { notice(error.message, true); }
+  };
+  actions.append(save, link); form.append(actions); container.append(form);
+
+  for (const file of work.files) {
+    const section = document.createElement('section'); section.className = 'file-history';
+    const heading = document.createElement('div'); heading.className = 'file-heading';
+    const title = document.createElement('strong'); title.textContent = file.path;
+    const fileStates = {
+      matches_registered_version: '当前字节与已登记版本一致',
+      changed_since_last_scan: '文件自上次登记后又有变化，请重新盘点',
+      missing: '原文件当前位置已不可用',
+    };
+    const status = document.createElement('small'); status.textContent = fileStates[file.file_state] || file.file_state;
+    const open = document.createElement('a'); open.textContent = '打开当前原文件'; open.href = `/api/library/file?id=${encodeURIComponent(file.file_id)}`; open.target = '_blank';
+    heading.append(title, status, open); section.append(heading);
+    for (const version of file.versions) {
+      const card = document.createElement('article'); card.className = `version-card ${version.is_current ? 'current' : ''}`;
+      const label = document.createElement('strong'); label.textContent = version.is_current ? '当前精确版本' : '历史版本记录';
+      const availability = version.bytes_available ? '当前路径字节可打开' : '仅保留记录，旧字节未归档';
+      const values = document.createElement('pre'); values.textContent = `Version ID  ${version.version_id}\nSHA-256    ${version.sha256}\n大小        ${formatBytes(version.byte_count)}\n文件时间    ${new Date(version.modified_ns / 1e6).toLocaleString()}\n发现时间    ${new Date(version.discovered_at).toLocaleString()}\n格式 / 页数 ${version.format.toUpperCase()} / ${version.page_count ?? '不适用'}\n文本层      ${version.text_layer}\n分诊        ${triageLabels[version.triage_state] || version.triage_state}\n资格        ${version.qualification}（不是 CITABLE）\nSkill       ${version.skill_name}\nSkill Hash  ${version.skill_sha256}\n字节可用性  ${availability}`;
+      card.append(label, values); section.append(card);
+    }
+    container.append(section);
+  }
+}
+
+async function refreshLibrary() {
+  state.snapshot = await request('/api/snapshot');
+  state.libraryWorks = state.snapshot.library_works || [];
+  if (state.libraryWorkId) state.libraryWork = await request(`/api/library/work?id=${encodeURIComponent(state.libraryWorkId)}`);
+  renderLibraryShell();
 }
 
 function renderAgentShell() {
@@ -327,14 +503,47 @@ function render() {
 }
 
 $('sourceSelect').onchange = (event) => loadSource(event.target.value).catch((error) => notice(error.message, true));
-$('agentMode').onclick = () => {
-  $('agentWorkbench').hidden = false; $('pdfWorkbench').hidden = true;
-  $('agentMode').classList.add('mode-active'); $('sourceMode').classList.remove('mode-active');
+function setMode(mode) {
+  $('libraryWorkbench').hidden = mode !== 'library';
+  $('agentWorkbench').hidden = mode !== 'agent';
+  $('pdfWorkbench').hidden = mode !== 'source';
+  $('libraryMode').classList.toggle('mode-active', mode === 'library');
+  $('agentMode').classList.toggle('mode-active', mode === 'agent');
+  $('sourceMode').classList.toggle('mode-active', mode === 'source');
+}
+$('libraryMode').onclick = () => setMode('library');
+$('agentMode').onclick = () => setMode('agent');
+$('sourceMode').onclick = () => setMode('source');
+$('scanLibrary').onclick = async () => {
+  const sourceRoot = $('scanRoot').value.trim();
+  if (!sourceRoot) { notice('请先填写本次允许盘点的文件夹。', true); return; }
+  $('scanLibrary').disabled = true;
+  try {
+    notice('正在只读盘点明确选择的目录；尚未把任何材料加入图书馆……');
+    state.libraryScan = await request('/api/library/scan', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_root:sourceRoot, skill_name:$('intakeSkill').value})});
+    renderScan(); notice(`盘点完成：${state.libraryScan.candidates.length} 个候选，等待你决定是否入库。`);
+  } catch (error) { notice(error.message, true); }
+  finally { $('scanLibrary').disabled = false; }
 };
-$('sourceMode').onclick = () => {
-  $('agentWorkbench').hidden = true; $('pdfWorkbench').hidden = false;
-  $('sourceMode').classList.add('mode-active'); $('agentMode').classList.remove('mode-active');
+$('approveCandidates').onclick = async () => {
+  const candidateIds = [...$('scanCandidates').querySelectorAll('input[type=checkbox]:checked')].map((item) => item.dataset.candidateId);
+  if (!candidateIds.length) { notice('请至少选择一个可入库候选。', true); return; }
+  $('approveCandidates').disabled = true;
+  try {
+    const result = await request('/api/library/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({session_id:state.libraryScan.session_id, candidate_ids:candidateIds})});
+    state.libraryScan = await request(`/api/library/scan?id=${encodeURIComponent(state.libraryScan.session_id)}`);
+    if (result.approved[0]) state.libraryWorkId = result.approved[0].work_id;
+    await refreshLibrary(); notice(`已人工批准 ${result.approved.length} 个候选；原文件没有移动或修改。`);
+  } catch (error) { notice(error.message, true); }
+  finally { $('approveCandidates').disabled = false; }
 };
+$('searchLibrary').onclick = async () => {
+  try {
+    state.libraryWorks = await request(`/api/library/search?q=${encodeURIComponent($('libraryQuery').value.trim())}`);
+    renderWorkList(); notice(`找到 ${state.libraryWorks.length} 部作品。`);
+  } catch (error) { notice(error.message, true); }
+};
+$('libraryQuery').onkeydown = (event) => { if (event.key === 'Enter') $('searchLibrary').click(); };
 $('newThread').onclick = async () => {
   const title = window.prompt('这个研究线程讨论什么？', '新的研究讨论');
   if (!title?.trim()) return;

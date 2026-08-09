@@ -50,9 +50,32 @@ def _material_type(title: str, sample: str) -> str:
     combined = f"{title}\n{sample[:3000]}".lower()
     if any(term in combined for term in ("档案", "奏折", "公文", "日记", "archive", "diary")):
         return "archival_source"
-    if any(term in combined for term in ("journal", "vol.", "卷", "期", "doi")):
+    if any(term in combined for term in ("journal", "doi", "期刊", "学报", "研究论文")):
         return "article"
     return "book_or_document"
+
+
+def _pdf_bibliography(
+    sample: str,
+    fallback_title: str,
+    author: str,
+    publisher: str,
+    year: str,
+) -> tuple[str, str, str, str]:
+    title = fallback_title
+    named = re.search(r"书\s*名\s*[:：]?\s*([^\n]{2,60})", sample[:8000])
+    if named:
+        title = named.group(1).strip()
+    if not author:
+        authored = re.search(r"^([^\n]{2,40}(?:著|撰|编|校点))\s*$", sample[:4000], re.MULTILINE)
+        author = authored.group(1).strip() if authored else ""
+    if not publisher:
+        published = re.search(r"^([^\n]{2,60}出版社[^\n]{0,20})$", sample[:8000], re.MULTILINE)
+        publisher = published.group(1).strip() if published else ""
+    if not year:
+        dated = re.search(r"(?:出版|版次|CIP)[^\n]{0,80}(1[0-9]{3}|20[0-9]{2})", sample[:10000])
+        year = dated.group(1) if dated else ""
+    return title, author, publisher, year
 
 
 def _triage_state(sample: str, supported: bool, text_layer: str, page_count: int | None) -> tuple[str, str]:
@@ -98,6 +121,9 @@ def _inspect_file(path: Path) -> dict[str, Any]:
                 inspected_pages += 1
             sample = "\n".join(chunks).strip()[:50000]
             text_layer = "present" if sample else "absent"
+            title, author, publisher, year = _pdf_bibliography(
+                sample, title, author, publisher, year
+            )
     elif suffix in {".md", ".txt"}:
         sample = path.read_text(encoding="utf-8", errors="replace")[:50000]
         first_line = next((line.strip(" #\t") for line in sample.splitlines() if line.strip()), "")
@@ -106,7 +132,7 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         text_layer = "present" if sample.strip() else "absent"
 
     title = _clean_title(title, path.stem)
-    year = year or _year(f"{title} {sample[:3000]}")
+    year = year or _year(f"{path.stem} {title}")
     state, reason = _triage_state(sample, supported, text_layer, page_count)
     return {
         "path": str(path.resolve()),
@@ -430,6 +456,19 @@ def search_library(
                 "SELECT work_id FROM work_search WHERE work_search MATCH ? ORDER BY rank", (phrase,)
             ).fetchall()
             work_ids = [row["work_id"] for row in rows]
+            contains = f"%{query.strip()}%"
+            fallback = connection.execute(
+                """SELECT DISTINCT w.work_id FROM works w
+                   LEFT JOIN editions e ON e.work_id = w.work_id
+                   LEFT JOIN library_files f ON f.work_id = w.work_id
+                   LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
+                   LEFT JOIN work_tags wt ON wt.work_id = w.work_id
+                   LEFT JOIN tags t ON t.tag_id = wt.tag_id
+                   WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
+                      OR t.name LIKE ? OR v.sample_text LIKE ?""",
+                (contains, contains, contains, contains, contains),
+            ).fetchall()
+            work_ids.extend(row["work_id"] for row in fallback if row["work_id"] not in work_ids)
         else:
             work_ids = [row["work_id"] for row in connection.execute("SELECT work_id FROM works ORDER BY updated_at DESC")]
         required_tags = set(tags or [])
@@ -451,14 +490,22 @@ def work_detail(project_root: Path, work_id: str, library_root: Path | None = No
         ).fetchall()
         file_items = []
         for file in files:
+            path = Path(file["path"])
+            current_hash = _file_hash(path) if path.is_file() else ""
             versions = connection.execute(
                 "SELECT * FROM file_versions WHERE file_id = ? ORDER BY discovered_at DESC", (file["file_id"],)
             ).fetchall()
+            registered_current = next((row for row in versions if row["is_current"]), None)
             file_items.append({
                 **dict(file),
-                "exists_now": Path(file["path"]).is_file(),
+                "exists_now": path.is_file(),
+                "file_state": (
+                    "matches_registered_version"
+                    if registered_current and registered_current["sha256"] == current_hash
+                    else ("changed_since_last_scan" if path.is_file() else "missing")
+                ),
                 "versions": [
-                    {**dict(row), "bytes_available": bool(row["is_current"] and Path(file["path"]).is_file())}
+                    {**dict(row), "bytes_available": bool(row["sha256"] == current_hash)}
                     for row in versions
                 ],
             })

@@ -8,9 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学 Research Codex</strong><span>M4 · 对话、工具与人工门禁</span></div>
+    <div><strong>史学 Research Codex</strong><span>M5 · 研究图书馆、版本与人工门禁</span></div>
     <div class="importer">
-      <button id="agentMode" class="mode-active">研究对话</button>
+      <button id="libraryMode" class="mode-active">研究图书馆</button>
+      <button id="agentMode">研究对话</button>
       <button id="sourceMode">文献修复</button>
       <input id="pdfFile" type="file" accept="application/pdf">
       <button id="importButton">导入 PDF</button>
@@ -19,7 +20,35 @@
   </header>
 
   <div id="notice" role="status">正在读取本地项目……</div>
-  <main id="agentWorkbench" class="agent-workbench">
+  <main id="libraryWorkbench" class="library-workbench">
+    <aside class="inventory-panel surface">
+      <header class="agent-heading"><div><h2>只读盘点</h2><p id="libraryRoot">正在读取图书馆位置……</p></div></header>
+      <div class="inventory-form">
+        <label>材料所在文件夹<input id="scanRoot" placeholder="例如 D:\History\Books"></label>
+        <label>验收 Skill<select id="intakeSkill"></select></label>
+        <button id="scanLibrary" class="primary-inline">只读盘点，先不入库</button>
+        <p class="boundary-note">仅查看你填写的目录；不会移动、改名或修改原文件。</p>
+      </div>
+      <div id="scanSummary" class="scan-summary"></div>
+      <div id="scanCandidates" class="scan-candidates"></div>
+      <button id="approveCandidates" class="primary library-approve" hidden>批准所选材料原地入库</button>
+    </aside>
+
+    <section class="catalog-panel surface">
+      <header class="agent-heading">
+        <div><h1>研究图书馆</h1><p id="libraryCounts">作品、文件与精确版本分层保存</p></div>
+        <div class="library-search"><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button></div>
+      </header>
+      <div id="workList" class="work-list"></div>
+    </section>
+
+    <aside class="work-detail-panel surface">
+      <header class="agent-heading"><div><h2>作品与版本</h2><p>哈希只标识精确文件版本</p></div></header>
+      <div id="workDetail" class="work-detail"></div>
+    </aside>
+  </main>
+
+  <main id="agentWorkbench" class="agent-workbench" hidden>
     <aside class="thread-panel surface">
       <header class="agent-heading"><h2>研究线程</h2><button id="newThread">＋</button></header>
       <div id="threadList" class="thread-list"></div>
