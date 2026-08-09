@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -380,6 +380,127 @@ CREATE INDEX IF NOT EXISTS idx_approvals_run_status ON approvals(run_id, status)
 """
 
 
+MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS source_library_links (
+    source_id TEXT PRIMARY KEY REFERENCES sources(source_id),
+    library_work_id TEXT NOT NULL,
+    library_file_id TEXT NOT NULL,
+    library_version_id TEXT NOT NULL,
+    library_sha256 TEXT NOT NULL,
+    linked_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retrieval_records (
+    record_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    query TEXT NOT NULL,
+    filters_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    result_count INTEGER NOT NULL,
+    request_url TEXT NOT NULL,
+    response_hash TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS retrieval_results (
+    result_id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL REFERENCES retrieval_records(record_id),
+    external_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    authors TEXT NOT NULL,
+    publication_year TEXT NOT NULL,
+    container_title TEXT NOT NULL,
+    doi TEXT NOT NULL,
+    url TEXT NOT NULL,
+    open_access_url TEXT NOT NULL,
+    raw_json TEXT NOT NULL,
+    qualification TEXT NOT NULL,
+    UNIQUE(record_id, external_id)
+);
+CREATE TABLE IF NOT EXISTS claims (
+    claim_id TEXT PRIMARY KEY,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS evidence_items (
+    evidence_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    source_version_id TEXT NOT NULL REFERENCES source_versions(source_version_id),
+    page_id TEXT NOT NULL REFERENCES pages(page_id),
+    block_id TEXT NOT NULL REFERENCES blocks(block_id),
+    physical_page INTEGER NOT NULL,
+    quote TEXT NOT NULL,
+    note TEXT NOT NULL,
+    qualification TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS claim_evidence (
+    link_id TEXT PRIMARY KEY,
+    claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+    evidence_id TEXT NOT NULL REFERENCES evidence_items(evidence_id),
+    relation TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(claim_id, evidence_id, relation)
+);
+CREATE TABLE IF NOT EXISTS evidence_freezes (
+    freeze_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    approved_by TEXT,
+    approved_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    artifact_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS artifact_versions (
+    version_id TEXT PRIMARY KEY,
+    artifact_id TEXT NOT NULL REFERENCES artifacts(artifact_id),
+    content TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reviews (
+    review_id TEXT PRIMARY KEY,
+    artifact_version_id TEXT NOT NULL REFERENCES artifact_versions(version_id),
+    reviewer_role TEXT NOT NULL,
+    report TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS browser_sessions (
+    session_id TEXT PRIMARY KEY,
+    start_url TEXT NOT NULL,
+    allowed_domain TEXT NOT NULL,
+    status TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_candidates (
+    candidate_id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_results_record ON retrieval_results(record_id);
+CREATE INDEX IF NOT EXISTS idx_evidence_source_page ON evidence_items(source_id, page_id);
+CREATE INDEX IF NOT EXISTS idx_claim_evidence_claim ON claim_evidence(claim_id);
+CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact ON artifact_versions(artifact_id, created_at);
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -402,6 +523,18 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (3, utc_now()),
         )
+        version = 3
+    if version < 4:
+        connection.executescript(MIGRATION_4)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (4, utc_now()),
+        )
+    # The scripts are idempotent and also repair an interrupted migration where
+    # schema_meta was committed but one of its tables was not.
+    connection.executescript(MIGRATION_2)
+    connection.executescript(MIGRATION_3)
+    connection.executescript(MIGRATION_4)
 
 
 @contextmanager
@@ -428,6 +561,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
     connection = sqlite3.connect(path)
     try:
         connection.executescript(SCHEMA)
+        connection.executescript(MIGRATION_4)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

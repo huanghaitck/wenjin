@@ -8,10 +8,10 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学 Research Codex</strong><span>M5 · 研究图书馆、版本与人工门禁</span></div>
+    <div><strong>史学 Research Codex</strong><span>D1 · 对话、项目、来源、证据与人工决定</span></div>
     <div class="importer">
-      <button id="libraryMode" class="mode-active">研究图书馆</button>
-      <button id="agentMode">研究对话</button>
+      <button id="agentMode" class="mode-active">研究对话</button>
+      <button id="libraryMode">研究图书馆</button>
       <button id="sourceMode">文献修复</button>
       <input id="pdfFile" type="file" accept="application/pdf">
       <button id="importButton">导入 PDF</button>
@@ -20,7 +20,7 @@
   </header>
 
   <div id="notice" role="status">正在读取本地项目……</div>
-  <main id="libraryWorkbench" class="library-workbench">
+  <main id="libraryWorkbench" class="library-workbench" hidden>
     <aside class="inventory-panel surface">
       <header class="agent-heading"><div><h2>只读盘点</h2><p id="libraryRoot">正在读取图书馆位置……</p></div></header>
       <div class="inventory-form">
@@ -48,8 +48,12 @@
     </aside>
   </main>
 
-  <main id="agentWorkbench" class="agent-workbench" hidden>
+  <main id="agentWorkbench" class="agent-workbench">
     <aside class="thread-panel surface">
+      <header class="project-heading">
+        <label>当前项目<select id="projectSelect"></select></label>
+        <button id="newProject">新建项目</button>
+      </header>
       <header class="agent-heading"><h2>研究线程</h2><button id="newThread">＋</button></header>
       <div id="threadList" class="thread-list"></div>
     </aside>
@@ -67,9 +71,19 @@
     </section>
 
     <aside class="activity-panel surface">
-      <header class="agent-heading"><div><h2>运行与审批</h2><p>工具结果不是自动认可的研究判断</p></div></header>
+      <header class="agent-heading"><div><h2>研究上下文</h2><p>来源状态始终和对话并列可见</p></div></header>
+      <nav id="contextTabs" class="context-tabs">
+        <button data-context="sources" class="selected">项目文献</button>
+        <button data-context="library">图书馆</button>
+        <button data-context="retrieval">联网研究</button>
+        <button data-context="evidence">证据与论点</button>
+        <button data-context="writing">冻结与写作</button>
+        <button data-context="browser">研究浏览器</button>
+        <button data-context="memory">记忆候选</button>
+      </nav>
+      <div id="contextContent" class="context-content"></div>
       <div id="approvalPanel"></div>
-      <div id="runTimeline" class="run-timeline"></div>
+      <details class="run-details"><summary>运行与工具回执</summary><div id="runTimeline" class="run-timeline"></div></details>
     </aside>
   </main>
 

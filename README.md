@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE_AWAITING_M6_SCOPE`
+`D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -46,6 +46,14 @@ tool and approval events, role-based text-model selection, and a human-gated res
 M5 adds the pre-desktop research library: SKILL.md discovery, explicitly scoped folder inventory,
 human-approved index-in-place, durable work/edition/file/version identity, ten-page triage, tags and search.
 Hashes identify exact file versions only; they do not define a work's identity.
+
+D1 makes the conversation the home screen and joins the earlier components into one vertical demo:
+projects can be created and switched; an exact library file version can be copied into a project and
+processed; Crossref/OpenAlex/Zotero retrievals are recorded as non-citable leads; verified page blocks can
+be linked to claims and human-approved evidence freezes; only approved freezes can generate traceable
+Markdown drafts. The research-browser panel records a domain-limited, user-controlled session without
+capturing login state. Translation and visual OCR are separate optional model roles, so a text-only main
+model can use a visual or translation helper.
 
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,
@@ -84,6 +92,10 @@ Use one reusable library location across projects before desktop packaging:
 ```powershell
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw serve D:\research\my-project --library-root D:\research\historian-library
 ```
+
+Add `--workspace-root D:\research\historian-workspace` to persist the project list and last selected
+project. The default home is **研究对话**; its right-hand context panel contains project sources, library,
+open retrieval, evidence, frozen writing, browser receipts and memory candidates.
 
 In **研究图书馆**, paste only the folder you want to inventory. The first action is read-only preview;
 selected candidates enter the library only after a second approval. Files remain in place. Exact hashes,

@@ -29,6 +29,21 @@ from .library import (
     work_detail,
 )
 from .library_store import resolve_library_root
+from .project_library import add_library_file_to_project
+from .research import connector_capabilities, list_retrievals, retrieval_record, search
+from .scholarship import (
+    approve_freeze,
+    create_browser_session,
+    create_claim,
+    create_evidence,
+    create_freeze,
+    create_memory_candidate,
+    decide_memory_candidate,
+    draft_from_freeze,
+    export_artifact,
+    research_state,
+    review_artifact,
+)
 from .service import (
     accept_ocr_proposal,
     create_ocr_proposal,
@@ -43,6 +58,13 @@ from .service import (
     submit_relation_repair,
 )
 from .vision import capability
+from .translation import capability as translation_capability, translate_evidence
+from .workspace import (
+    create_workspace_project,
+    initialize_workspace,
+    select_workspace_project,
+    workspace_view,
+)
 
 
 WEB_ROOT = Path(__file__).parent / "web_assets"
@@ -51,6 +73,7 @@ WEB_ROOT = Path(__file__).parent / "web_assets"
 class WorkbenchServer(ThreadingHTTPServer):
     project_root: Path
     library_root: Path
+    workspace_root: Path
 
 
 class WorkbenchHandler(BaseHTTPRequestHandler):
@@ -85,10 +108,20 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "model_profiles": sync_model_profiles(self.server.project_root),
                     "library": library_status(self.server.project_root, self.server.library_root),
                     "library_works": search_library(self.server.project_root, library_root=self.server.library_root),
+                    "workspace": workspace_view(self.server.workspace_root),
+                    "retrievals": list_retrievals(self.server.project_root),
+                    "research": research_state(self.server.project_root),
                 })
                 return
             if parsed.path == "/api/capabilities":
-                self._json({"vision_ocr": capability()})
+                self._json({
+                    "vision_ocr": capability(), "translation": translation_capability(),
+                    "research_connectors": connector_capabilities(),
+                })
+                return
+            if parsed.path == "/api/research/record":
+                record_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._json(retrieval_record(self.server.project_root, record_id))
                 return
             if parsed.path == "/api/source":
                 source_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -262,6 +295,69 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["work_id"]),
                     self.server.library_root,
                 )
+            elif parsed.path == "/api/project/create":
+                result = create_workspace_project(self.server.workspace_root, str(payload["title"]))
+                self.server.project_root = Path(result["project_root"])
+            elif parsed.path == "/api/project/select":
+                self.server.project_root = select_workspace_project(
+                    self.server.workspace_root, str(payload["project_id"])
+                )
+                result = {"project_root": str(self.server.project_root), "project": project_status(self.server.project_root)}
+            elif parsed.path == "/api/library/add-to-project":
+                result = add_library_file_to_project(
+                    self.server.project_root, self.server.library_root,
+                    str(payload["work_id"]), str(payload["file_id"]),
+                )
+            elif parsed.path == "/api/research/search":
+                result = search(
+                    self.server.project_root, str(payload["provider"]), str(payload["query"]),
+                    int(payload.get("limit", 10)),
+                )
+            elif parsed.path == "/api/claim/create":
+                result = create_claim(self.server.project_root, str(payload["text"]))
+            elif parsed.path == "/api/evidence/create":
+                result = create_evidence(
+                    self.server.project_root, str(payload["claim_id"]), str(payload["block_id"]),
+                    str(payload["quote"]), str(payload.get("note", "")), str(payload.get("relation", "supports")),
+                )
+            elif parsed.path == "/api/freeze/create":
+                result = create_freeze(
+                    self.server.project_root, str(payload["title"]), [str(value) for value in payload["claim_ids"]],
+                )
+            elif parsed.path == "/api/freeze/approve":
+                result = approve_freeze(
+                    self.server.project_root, str(payload["freeze_id"]), str(payload["reviewer"]),
+                )
+            elif parsed.path == "/api/draft/create":
+                result = draft_from_freeze(
+                    self.server.project_root, str(payload["freeze_id"]), str(payload.get("title", "")),
+                )
+            elif parsed.path == "/api/review/create":
+                result = review_artifact(
+                    self.server.project_root, str(payload["version_id"]), str(payload.get("reviewer_role", "source_critic")),
+                )
+            elif parsed.path == "/api/artifact/export":
+                result = export_artifact(self.server.project_root, str(payload["artifact_id"]))
+            elif parsed.path == "/api/browser/session":
+                result = create_browser_session(
+                    self.server.project_root, str(payload["start_url"]), str(payload["allowed_domain"]),
+                )
+            elif parsed.path == "/api/memory/create":
+                result = create_memory_candidate(
+                    self.server.project_root, str(payload["category"]), str(payload["content"]),
+                    [str(value) for value in payload["source_refs"]],
+                )
+            elif parsed.path == "/api/translation/create":
+                result = translate_evidence(
+                    self.server.project_root, str(payload["evidence_id"]),
+                    str(payload.get("target_language", "Chinese")),
+                )
+            elif parsed.path == "/api/memory/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_memory_candidate(
+                    self.server.project_root, str(payload["candidate_id"]), bool(payload["approved"]),
+                )
             else:
                 self._json({"error": "not_found"}, 404)
                 return
@@ -277,6 +373,7 @@ def build_server(
     host: str = "127.0.0.1",
     port: int = 8765,
     library_root: Path | None = None,
+    workspace_root: Path | None = None,
 ) -> WorkbenchServer:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("workbench may only bind to a loopback address")
@@ -284,8 +381,10 @@ def build_server(
     if not (project_root / "project.sqlite3").is_file():
         raise FileNotFoundError(f"project database does not exist: {project_root}")
     server = WorkbenchServer((host, port), WorkbenchHandler)
-    server.project_root = project_root
     server.library_root = resolve_library_root(project_root, library_root)
+    server.workspace_root = (workspace_root or (project_root.parent / "historical-workbench-workspace")).resolve()
+    registry = initialize_workspace(server.workspace_root, project_root)
+    server.project_root = Path(registry["current_project"])
     return server
 
 
@@ -294,8 +393,9 @@ def serve(
     host: str = "127.0.0.1",
     port: int = 8765,
     library_root: Path | None = None,
+    workspace_root: Path | None = None,
 ) -> None:
-    server = build_server(project_root, host, port, library_root)
+    server = build_server(project_root, host, port, library_root, workspace_root)
     try:
         print(f"Historical Research Workbench: http://{host}:{server.server_port}")
         server.serve_forever()

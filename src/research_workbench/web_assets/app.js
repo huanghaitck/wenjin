@@ -1,6 +1,7 @@
 const state = {
   snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1,
   libraryScan: null, libraryWorks: [], libraryWork: null, libraryWorkId: '',
+  contextMode: 'sources', retrievalRecord: null,
 };
 const $ = (id) => document.getElementById(id);
 
@@ -43,6 +44,7 @@ async function loadSnapshot(selectId = '') {
   for (const source of state.snapshot.sources) select.append(new Option(source.title, source.source_id));
   select.value = selectId || select.value || state.snapshot.sources[0].source_id;
   await loadSource(select.value);
+  renderContext();
 }
 
 const actionLabels = {
@@ -197,7 +199,10 @@ function renderWorkDetail() {
     };
     const status = document.createElement('small'); status.textContent = fileStates[file.file_state] || file.file_state;
     const open = document.createElement('a'); open.textContent = '打开当前原文件'; open.href = `/api/library/file?id=${encodeURIComponent(file.file_id)}`; open.target = '_blank';
-    heading.append(title, status, open); section.append(heading);
+    const add = document.createElement('button'); add.textContent = '加入当前项目文献';
+    add.disabled = file.file_state !== 'matches_registered_version' || !file.path.toLowerCase().endsWith('.pdf');
+    add.onclick = () => addLibraryFile(work.work_id, file.file_id).catch((error) => notice(error.message, true));
+    heading.append(title, status, open, add); section.append(heading);
     for (const version of file.versions) {
       const card = document.createElement('article'); card.className = `version-card ${version.is_current ? 'current' : ''}`;
       const label = document.createElement('strong'); label.textContent = version.is_current ? '当前精确版本' : '历史版本记录';
@@ -217,6 +222,12 @@ async function refreshLibrary() {
 }
 
 function renderAgentShell() {
+  const projectSelect = $('projectSelect'); projectSelect.replaceChildren();
+  for (const project of (state.snapshot?.workspace?.projects || [])) {
+    const option = new Option(`${project.title} · ${project.source_count} 项文献`, project.project_id);
+    option.selected = project.project_id === state.snapshot?.project?.project_id;
+    option.disabled = !project.available; projectSelect.append(option);
+  }
   const models = $('modelProfile'); models.replaceChildren();
   for (const profile of (state.snapshot?.model_profiles || [])) {
     const option = new Option(`${profile.provider} · ${profile.model}`, profile.profile_id);
@@ -235,6 +246,7 @@ function renderAgentShell() {
   }
   if (!state.threadId && threads.length) loadThread(threads[0].thread_id).catch((error) => notice(error.message, true));
   else renderThread();
+  renderContext();
 }
 
 async function loadThread(threadId) {
@@ -259,6 +271,151 @@ function renderThread() {
   if (!state.thread) messages.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'创建线程后，可以让 Agent 查看项目、来源和页面，并在写入前等待你的决定。'}));
   messages.scrollTop = messages.scrollHeight;
   renderApproval(run); renderTimeline(run);
+}
+
+function card(title, detail = '') {
+  const node = document.createElement('article'); node.className = 'context-card';
+  const heading = document.createElement('h3'); heading.textContent = title; node.append(heading);
+  if (detail) node.append(Object.assign(document.createElement('p'), {textContent:detail}));
+  return node;
+}
+
+function actionButton(label, handler, primary = false) {
+  const button = document.createElement('button'); button.textContent = label;
+  if (primary) button.className = 'primary-inline';
+  button.onclick = () => Promise.resolve(handler()).catch((error) => notice(error.message, true));
+  return button;
+}
+
+function formField(label, id, value = '', area = false) {
+  const wrapper = document.createElement('label'); wrapper.textContent = label;
+  const input = document.createElement(area ? 'textarea' : 'input'); input.id = id; input.value = value;
+  wrapper.append(input); return wrapper;
+}
+
+async function refreshResearch(message = '') {
+  state.snapshot = await request('/api/snapshot');
+  state.libraryWorks = state.snapshot.library_works || [];
+  renderAgentShell();
+  if (message) notice(message);
+}
+
+async function addLibraryFile(workId, fileId) {
+  notice('正在复制精确图书馆版本并执行逐页处理；不会修改图书馆原件……');
+  const result = await request('/api/library/add-to-project', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({work_id:workId, file_id:fileId})});
+  await loadSnapshot(result.source.source_id);
+  state.contextMode = 'sources'; renderContext();
+  notice(`已加入项目并处理 ${result.intake.page_count} 个物理页。`);
+}
+
+function renderContext() {
+  const container = $('contextContent'); if (!container || !state.snapshot) return;
+  container.replaceChildren();
+  for (const button of $('contextTabs').querySelectorAll('button')) button.classList.toggle('selected', button.dataset.context === state.contextMode);
+  const research = state.snapshot.research || {};
+  if (state.contextMode === 'sources') {
+    for (const source of state.snapshot.sources || []) {
+      const node = card(source.title, `${source.original_name} · ${source.processing_state}`);
+      const chip = document.createElement('small'); chip.className = `status-chip ${source.use_state}`; chip.textContent = source.use_state;
+      node.append(chip, actionButton('查看原页与文本', async () => { await loadSource(source.source_id); setMode('source'); })); container.append(node);
+    }
+    if (!state.snapshot.sources.length) container.append(card('项目还没有文献', '从图书馆加入书籍，或在顶部导入 PDF。'));
+  } else if (state.contextMode === 'library') {
+    for (const work of state.libraryWorks || []) {
+      const node = card(work.canonical_title, `${work.author || '责任者待核'} · ${work.version_count} 个精确版本`);
+      node.append(actionButton('选择版本并加入项目', async () => {
+        const detail = await request(`/api/library/work?id=${encodeURIComponent(work.work_id)}`);
+        const file = detail.files.find((item) => item.file_state === 'matches_registered_version' && item.path.toLowerCase().endsWith('.pdf'));
+        if (!file) throw new Error('这部作品当前没有可用的已登记 PDF 版本。');
+        await addLibraryFile(work.work_id, file.file_id);
+      }, true)); container.append(node);
+    }
+  } else if (state.contextMode === 'retrieval') {
+    const form = document.createElement('section'); form.className = 'context-form';
+    const provider = document.createElement('select'); provider.id = 'researchProvider';
+    for (const item of state.capabilities?.research_connectors || []) {
+      const option = new Option(`${item.provider}${item.available ? '' : '（未配置）'}`, item.provider); option.disabled = !item.available; provider.append(option);
+    }
+    const label = document.createElement('label'); label.textContent = '开放数据库'; label.append(provider);
+    form.append(label, formField('有界检索式', 'researchQuery'));
+    form.append(actionButton('检索并保存回执', async () => {
+      const result = await request('/api/research/search', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({provider:$('researchProvider').value, query:$('researchQuery').value, limit:10})});
+      state.retrievalRecord = result; await refreshResearch(`检索完成：${result.result_count} 条线索，均为 DISCOVERED。`);
+    }, true)); container.append(form);
+    const records = state.snapshot.retrievals || [];
+    for (const record of records) {
+      const node = card(`${record.provider} · ${record.query}`, `${record.result_count} 条 · ${record.status} · ${new Date(record.created_at).toLocaleString()}`);
+      node.append(actionButton('查看结果', async () => { state.retrievalRecord = await request(`/api/research/record?id=${encodeURIComponent(record.record_id)}`); renderContext(); })); container.append(node);
+    }
+    for (const item of state.retrievalRecord?.results || []) {
+      const node = card(item.title || '无题名', `${item.authors || '作者待核'} · ${item.publication_year || '年代待核'} · ${item.qualification}`);
+      if (item.url) { const link = document.createElement('a'); link.href = item.url; link.target = '_blank'; link.textContent = '打开来源页'; node.append(link); }
+      container.append(node);
+    }
+  } else if (state.contextMode === 'evidence') {
+    const translation = state.capabilities?.translation;
+    container.append(card('模型搭档', `主模型负责研究对话；视觉模型负责扫描页建议；翻译模型：${translation?.available ? `${translation.provider} / ${translation.model}` : '尚未配置，入口保持可见'}`));
+    const form = document.createElement('section'); form.className = 'context-form';
+    form.append(formField('候选主张', 'claimText', '', true), actionButton('建立候选主张', async () => {
+      await request('/api/claim/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({text:$('claimText').value})});
+      await refreshResearch('候选主张已保存，尚未冻结。');
+    }, true)); container.append(form);
+    for (const claim of research.claims || []) {
+      const node = card(claim.text, `${claim.evidence.length} 条已核页面证据 · ${claim.status}`);
+      if (state.view?.pages?.length) {
+        const evidenceForm = document.createElement('div'); evidenceForm.className = 'context-form';
+        const blocks = state.view.pages.flatMap((page) => page.blocks.map((block) => ({page, block}))).filter((item) => item.block.use_state === 'research_usable' && item.page.use_state === 'research_usable');
+        const select = document.createElement('select'); select.dataset.role = 'evidence-block';
+        for (const item of blocks) select.append(new Option(`物理页 ${item.page.physical_page} · ${item.block.effective_text.slice(0,42)}`, item.block.block_id));
+        const quote = document.createElement('textarea'); quote.placeholder = '粘贴所选已核块中的原文；必须逐字存在';
+        const note = document.createElement('input'); note.placeholder = '为何与主张有关';
+        const relation = document.createElement('select'); for (const value of ['supports','weakens','background','counterevidence']) relation.append(new Option(value, value));
+        evidenceForm.append(select, quote, note, relation, actionButton('人工提交证据', async () => {
+          await request('/api/evidence/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({claim_id:claim.claim_id, block_id:select.value, quote:quote.value, note:note.value, relation:relation.value})});
+          await refreshResearch('证据已固定到精确页面块和来源版本。');
+        }, true)); node.append(evidenceForm);
+      }
+      for (const evidence of claim.evidence) {
+        node.append(Object.assign(document.createElement('p'), {textContent:`${evidence.relation} · 物理页 ${evidence.physical_page} · “${evidence.quote}”`}));
+        const translate = actionButton(translation?.available ? '调用翻译搭档' : '翻译搭档未配置', async () => {
+          await request('/api/translation/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({evidence_id:evidence.evidence_id, target_language:'Chinese'})});
+          await refreshResearch('译文已保存为派生稿，原文和页面锚点未改变。');
+        }); translate.disabled = !translation?.available; node.append(translate);
+      }
+      container.append(node);
+    }
+  } else if (state.contextMode === 'writing') {
+    const claims = research.claims || [];
+    const form = document.createElement('section'); form.className = 'context-form'; form.append(formField('冻结包标题', 'freezeTitle', '试写证据包'));
+    for (const claim of claims) { const label = document.createElement('label'); const check = document.createElement('input'); check.type='checkbox'; check.value=claim.claim_id; check.disabled=!claim.evidence.length; label.append(check, document.createTextNode(claim.text)); form.append(label); }
+    form.append(actionButton('创建待批准冻结包', async () => {
+      const claim_ids = [...form.querySelectorAll('input[type=checkbox]:checked')].map((item)=>item.value);
+      await request('/api/freeze/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:$('freezeTitle').value, claim_ids})}); await refreshResearch('冻结包已创建，等待教授批准。');
+    }, true)); container.append(form);
+    for (const freeze of research.freezes || []) {
+      const node = card(freeze.title, `${freeze.payload.claims.length} 个主张 · ${freeze.status}`);
+      if (freeze.status === 'pending') node.append(actionButton('人工批准冻结', async () => { await request('/api/freeze/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({freeze_id:freeze.freeze_id, reviewer:'human-reviewer'})}); await refreshResearch('冻结包已人工批准。'); }, true));
+      if (freeze.status === 'approved') node.append(actionButton('由冻结证据生成试写', async () => { await request('/api/draft/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({freeze_id:freeze.freeze_id, title:freeze.title})}); await refreshResearch('可追溯试写已生成。'); }, true));
+      container.append(node);
+    }
+    for (const artifact of research.artifacts || []) {
+      const version = artifact.versions[0]; const node = card(artifact.title, `${artifact.artifact_type} · ${version.version_id}`);
+      const pre = document.createElement('pre'); pre.textContent = version.content; node.append(pre);
+      node.append(actionButton('来源批判评审', async () => { const result = await request('/api/review/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:version.version_id})}); await refreshResearch(result.report); }));
+      node.append(actionButton('导出 Markdown', async () => { const result = await request('/api/artifact/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({artifact_id:artifact.artifact_id})}); notice(`已导出：${result.project_path}`); }, true)); container.append(node);
+    }
+  } else if (state.contextMode === 'browser') {
+    const form = document.createElement('section'); form.className = 'context-form';
+    form.append(formField('起始网址', 'browserUrl', 'https://www.crossref.org/'), formField('允许域名', 'browserDomain', 'crossref.org'));
+    form.append(actionButton('建立研究浏览会话并打开', async () => { const result = await request('/api/browser/session', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({start_url:$('browserUrl').value, allowed_domain:$('browserDomain').value})}); window.open(result.start_url, '_blank', 'noopener'); await refreshResearch('研究浏览会话回执已保存；登录和下载仍由你决定。'); }, true)); container.append(form);
+    container.append(card('D1 浏览器边界', '只记录允许域名、起始页和操作回执；不读取 Cookie，不代替你登录、过验证码、付费或提交。'));
+    for (const session of research.browser_sessions || []) container.append(card(session.allowed_domain, `${session.start_url} · ${session.status}`));
+  } else if (state.contextMode === 'memory') {
+    const form = document.createElement('section'); form.className = 'context-form';
+    form.append(formField('类别', 'memoryCategory', '研究判断'), formField('候选内容', 'memoryContent', '', true), formField('来源 ID（逗号分隔）', 'memoryRefs'));
+    form.append(actionButton('保存为记忆候选', async () => { await request('/api/memory/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:$('memoryCategory').value, content:$('memoryContent').value, source_refs:$('memoryRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})}); await refreshResearch('只保存为项目内候选，尚未写入长期记忆库。'); }, true)); container.append(form);
+    for (const item of research.memory_candidates || []) { const node = card(item.category, `${item.content}\n来源：${item.source_refs.join('、')} · ${item.status}`); if(item.status==='candidate') node.append(actionButton('批准为本地候选', async()=>{await request('/api/memory/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidate_id:item.candidate_id,approved:true})}); await refreshResearch('记忆候选已批准，但仍未自动写入外部知识库。');},true)); container.append(node); }
+  }
 }
 
 function renderApproval(run) {
@@ -514,6 +671,25 @@ function setMode(mode) {
 $('libraryMode').onclick = () => setMode('library');
 $('agentMode').onclick = () => setMode('agent');
 $('sourceMode').onclick = () => setMode('source');
+$('contextTabs').onclick = (event) => {
+  const button = event.target.closest('button[data-context]');
+  if (!button) return; state.contextMode = button.dataset.context; renderContext();
+};
+$('projectSelect').onchange = async (event) => {
+  try {
+    await request('/api/project/select', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_id:event.target.value})});
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = '';
+    await loadSnapshot(); setMode('agent'); notice('已切换项目；对话和研究对象按项目隔离。');
+  } catch (error) { notice(error.message, true); }
+};
+$('newProject').onclick = async () => {
+  const title = window.prompt('新项目名称', '新的历史研究项目'); if (!title?.trim()) return;
+  try {
+    await request('/api/project/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title})});
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = '';
+    await loadSnapshot(); setMode('agent'); notice('新项目已建立，可以从图书馆加入材料。');
+  } catch (error) { notice(error.message, true); }
+};
 $('scanLibrary').onclick = async () => {
   const sourceRoot = $('scanRoot').value.trim();
   if (!sourceRoot) { notice('请先填写本次允许盘点的文件夹。', true); return; }
@@ -582,4 +758,5 @@ $('importButton').onclick = async () => {
   } catch (error) { notice(error.message, true); }
 };
 
-loadSnapshot().then(() => notice('本地项目已就绪。')).catch((error) => notice(error.message, true));
+setMode('agent');
+loadSnapshot().then(() => notice('对话工作台已就绪。')).catch((error) => notice(error.message, true));

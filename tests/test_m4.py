@@ -64,7 +64,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(run["status"], "WAITING_FOR_APPROVAL")
         self.assertEqual(
             [call["tool_name"] for call in run["tool_calls"]],
-            ["project.status", "source.list", "source.page", "save_research_note"],
+            ["project.status", "source.list", "source.page", "research.state", "save_research_note"],
         )
         approval = run["approvals"][0]
         self.assertEqual(approval["status"], "pending")
@@ -147,7 +147,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 3)
+        self.assertEqual(version, 4)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:

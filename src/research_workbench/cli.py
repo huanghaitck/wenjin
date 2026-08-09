@@ -49,7 +49,7 @@ def _emit(value: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M5")
+    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench D1")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a research project")
@@ -203,6 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
     web.add_argument("--library-root", type=Path)
+    web.add_argument("--workspace-root", type=Path)
     return parser
 
 
@@ -311,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "library-link":
         result = link_work_to_project(args.project_root, args.work_id, args.library_root)
     elif args.command == "serve":
-        serve(args.project_root, args.host, args.port, args.library_root)
+        serve(args.project_root, args.host, args.port, args.library_root, args.workspace_root)
         return 0
     else:
         raise AssertionError(args.command)

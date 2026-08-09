@@ -11,6 +11,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from .db import connect, utc_now
+from .research import list_retrievals
+from .scholarship import research_state
 from .service import list_sources, project_status, source_view
 
 
@@ -23,9 +25,12 @@ Available actions:
 {"type":"tool_call","tool":"project.status","arguments":{}}
 {"type":"tool_call","tool":"source.list","arguments":{}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"..."}}
+{"type":"tool_call","tool":"research.state","arguments":{}}
+{"type":"tool_call","tool":"retrieval.list","arguments":{}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
+Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
 """
 
 
@@ -369,14 +374,19 @@ def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict
                     "type": "tool_call", "tool": "source.page",
                     "arguments": {"page_id": view["pages"][0]["page_id"]},
                 }
+    if "research.state" not in tools:
+        return {"type": "tool_call", "tool": "research.state", "arguments": {}}
     status = next(item["result"] for item in observations if item["tool"] == "project.status")
     sources = next(item["result"] for item in observations if item["tool"] == "source.list")
     page = next((item["result"] for item in observations if item["tool"] == "source.page"), None)
+    research = next(item["result"] for item in observations if item["tool"] == "research.state")
     lines = [
         "# 项目检查札记", "",
         f"- 当前来源数：{status.get('source_count', len(sources))}",
         f"- 待处理异常：{status.get('open_anomaly_count', 0)}",
         f"- 研究可用来源：{status.get('usable_source_count', 0)}",
+        f"- 候选主张：{len(research['claims'])}",
+        f"- 已批准证据冻结：{sum(item['status'] == 'approved' for item in research['freezes'])}",
     ]
     if sources:
         lines.append(f"- 首个来源：{sources[0]['title']}（{sources[0]['use_state']}）")
@@ -456,7 +466,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.page", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.page", "research.state", "retrieval.list", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -475,6 +485,10 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result = list_sources(project_root)
         elif tool_name == "source.page":
             result = _read_page(project_root, str(arguments.get("page_id", "")))
+        elif tool_name == "research.state":
+            result = research_state(project_root)
+        elif tool_name == "retrieval.list":
+            result = list_retrievals(project_root)
         else:
             title = str(arguments.get("title", "")).strip()
             content = str(arguments.get("content", "")).strip()
