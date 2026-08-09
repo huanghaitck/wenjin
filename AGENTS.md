@@ -8,23 +8,23 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M3_MODEL_ASSISTED_PAGE_REPAIR_COMPLETE`.
+Current milestone: `M4_AGENT_WORKSPACE_FOUNDATION`.
 
-The user approved and completed M3 on 2026-08-09. Its scope is limited to explicit visual-model OCR
-proposals for pages already blocked by M2, proposal provenance, and human accept/reject decisions that
-reuse the M1 repair records. See `docs/M3_TASK_SPEC.md`.
+The user authorized M4 on 2026-08-09 after the Research Codex product, architecture and roadmap were
+frozen. M4 is limited to persistent threads/messages/goals/runs/events, role-based text-model profiles,
+one main Agent tool loop, project/source/page read tools, a human-gated research-note write tool, and
+the corresponding CLI/API/GUI. See `docs/M4_TASK_SPEC.md`.
 
-M3 must not implement translation, evidence extraction, research drafting, journal export, a generic
-multi-agent framework, packaged desktop distribution or broad Bookflow code copying. Model output may
-not silently replace effective source text or bypass the existing human repair gate.
-
-Do not enter M4 or expand the research workflow until the user approves a concrete M4 scope.
+M4 must not implement network research, authenticated browser control, evidence freezing, long-term
+memory writes, translation, formal manuscript drafting, journal export, a generic multi-agent framework,
+packaged desktop distribution or broad Bookflow code copying. It must preserve all M1-M3 source and
+repair gates.
 
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read the active milestone specification (`docs/M3_TASK_SPEC.md`).
+3. Read the active milestone specification (`docs/M4_TASK_SPEC.md`).
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles
@@ -37,7 +37,7 @@ Do not enter M4 or expand the research workflow until the user approves a concre
 - Do not add microservices, distributed queues, vector stores, graph stores or speculative plugin layers.
 - Never hide a failed state behind a successful-looking artifact.
 - PyMuPDF remains the single PDF dependency. Keep provider HTTP calls dependency-free and the local
-  web interface build-free.
+  web interface build-free during M4.
 
 ## File safety
 
@@ -56,5 +56,5 @@ conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench pyth
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench python -m unittest discover -s tests -v
 ```
 
-Run M1, M2 and M3 target tests. Real provider checks are bounded integration tests and must never
+Run M1-M4 target tests. Real provider checks are bounded integration tests and must never
 print or persist credentials.

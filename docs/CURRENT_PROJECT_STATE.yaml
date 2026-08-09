@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-09"
-current_stage: M3_MODEL_ASSISTED_PAGE_REPAIR_COMPLETE_AWAITING_M4_SCOPE
+current_stage: M4_AGENT_WORKSPACE_FOUNDATION_AUTHORIZED
 last_completed_stage: M3_MODEL_ASSISTED_PAGE_REPAIR
-active_human_gate: M4_SCOPE_APPROVAL
+active_human_gate: M4_IMPLEMENTATION_AND_ACCEPTANCE
 
 m1:
   status: complete
@@ -40,8 +40,17 @@ protected_sibling_projects:
 
 next_scope:
   stage: M4
-  authorized: false
-  objective: not_yet_defined
+  authorized: true
+  objective: persistent_agent_workspace_with_model_roles_tool_events_and_human_approval
+  task_spec: docs/M4_TASK_SPEC.md
+
+product_direction:
+  identity: local_first_model_selectable_historian_research_codex
+  product_baseline: docs/RESEARCH_CODEX_PRODUCT.md
+  architecture: docs/ARCHITECTURE_V1.md
+  roadmap: docs/ROADMAP.md
+  core_runtime: threads_goals_runs_events_tools_approvals
+  domain_harness: page_verification_retrieval_records_evidence_freeze_and_writing_gates
 
 m2:
   status: complete

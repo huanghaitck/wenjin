@@ -1,6 +1,11 @@
 # Historical Research Workbench
 
-Local-first, page-aware infrastructure for auditable historical research projects.
+Local-first, model-selectable Research Codex for auditable historical research projects.
+
+The product direction is a persistent Agent workspace in which conversations can use page-aware PDF,
+retrieval, evidence, scholarly dialogue, writing and memory tools without bypassing historical-source
+verification. See [the product baseline](docs/RESEARCH_CODEX_PRODUCT.md),
+[V1 architecture](docs/ARCHITECTURE_V1.md) and [roadmap](docs/ROADMAP.md).
 
 ## Environment
 
@@ -14,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`M3_MODEL_ASSISTED_PAGE_REPAIR_COMPLETE_AWAITING_M4_SCOPE`
+`M4_AGENT_WORKSPACE_FOUNDATION_AUTHORIZED`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -34,7 +39,11 @@ The runtime reads the selected provider from `HRW_OCR_*` environment variables. 
 is shown as unavailable; providers never fall back silently and credentials are not returned to the
 browser or stored in a project.
 
-Translation, evidence extraction, manuscript writing and desktop packaging remain outside M3.
+M3 deliberately stopped before translation, evidence extraction, manuscript writing and desktop packaging.
+
+M4 now adds the minimum Research Codex runtime: persistent conversation threads, Goals/Runs, ordered
+tool and approval events, role-based text-model selection, and a human-gated research-note write path.
+It does not yet add web research, browser control or evidence freezing; those are M5-M7 milestones.
 
 ## Run tests
 
