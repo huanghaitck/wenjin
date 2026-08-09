@@ -1,6 +1,6 @@
 # Historian Research Codex｜实施路线图
 
-状态：2026-08-09 冻结，使用反馈可通过 ADR 调整。
+状态：2026-08-10 通过 ADR 0005 调整。M5 先建设研究图书馆，原联网阶段顺延。
 
 ## 总体策略
 
@@ -21,7 +21,7 @@ PDF 渲染、坐标文本、页面 Markdown、质量门禁、原页对照和本�
 
 OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真实历史页评测。
 
-## 已授权的下一阶段
+## 已完成的 Agent 基础
 
 ### M4｜Agent Workspace Foundation
 
@@ -45,7 +45,26 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 验收场景：用户在已有 M2/M3 项目中创建线程，选择模型，要求 Agent 查看一个来源的异常状态并
 形成研究札记；Agent 调用只读工具后请求保存，用户可编辑后批准或拒绝；重启后状态与时间线完整。
 
-### M5｜Open Research Retrieval
+## 当前阶段
+
+### M5｜Skills-Compatible Research Library
+
+- 发现并展示 `SKILL.md` 指令型技能，记录技能文件哈希；
+- 用户明确选择目录后进行只读盘点，先预览、后批准、默认原地索引；
+- 区分 Work、Edition、File、File Version，完整展示路径、时间、大小和哈希；
+- 同一路径内容变化产生新 File Version，不因哈希变化丢失作品身份；
+- PDF、Markdown、TXT 元数据和最多前十页快速分诊；
+- 不确定、需视觉判断和暂不支持的材料继续保留，不自动排除或移动；
+- 标签、书目信息、全文片段检索与项目关联。
+
+验收：选择一个测试目录后可看到盘点预览；人工批准后材料原地进入图书馆；修改文件一个字再扫，
+同一作品下出现完整的新旧版本；按题名、作者或标签可找回，原文件路径和内容均未被程序修改。
+
+不包含：任意 Skill 脚本执行、自动移动整理、联网研究、登录数据库、证据冻结和桌面打包。
+
+## 后续阶段
+
+### M6｜Open Research Retrieval
 
 - OpenAlex 与 Crossref connector；
 - query plan、检索范围和停止条件；
@@ -57,7 +76,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 验收：一次对话产生可复现的检索记录，取得一份公开文件并进入 M1 来源登记；搜索结果本身不具备
 引用资格。
 
-### M6｜Authenticated Research Browser
+### M7｜Authenticated Research Browser
 
 - 专用 headed research profile；
 - accessibility/DOM/screenshot 的受控页面读取；
@@ -69,7 +88,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 验收：用户亲自登录一个授权数据库，Agent 在允许域内执行有界检索并下载用户有权访问的文件；
 关闭应用后凭证未进入项目或 Git。
 
-### M7｜Evidence and Claim Freeze
+### M8｜Evidence and Claim Freeze
 
 - 来源资格状态链；
 - Evidence Item 与原页/区域锚点；
@@ -80,7 +99,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 验收：从 M2 页面固定一条证据、连接一个主张、记录一个竞争解释并经人工冻结；每项可回到原页。
 
-### M8｜Scholarly Dialogue and Historiography
+### M9｜Scholarly Dialogue and Historiography
 
 - 研究问题与范围对象；
 - 有来源的 seminar thread；
@@ -90,7 +109,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 验收：教授与 Agent 围绕一个候选解释完成一轮有证据的支持、反驳、修改和决定，后续会话可恢复。
 
-### M9｜Translation, Drafting, Citation and Review
+### M10｜Translation, Drafting, Citation and Review
 
 - 适配 Bookflow 翻译 provider/cache，输入限定为已验收块；
 - 已冻结证据驱动的大纲与段落写作；
@@ -100,7 +119,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 验收：由小型冻结包生成一段正式试写和正确注释，经评审后修改，原文、译文、页码和论证边界可审计。
 
-### M10｜Long-term Memory, Desktop Packaging and Evaluation
+### M11｜Long-term Memory, Desktop Packaging and Evaluation
 
 - historical-memory 与 codex-memory adapters；
 - 记忆候选、人工提升和来源回链；
@@ -110,7 +129,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 验收：安装后的桌面应用完成第一可用版本闭环，并在真实项目副本上通过回归评测。
 
-## M4 后的优先级规则
+## M5 后的优先级规则
 
 1. 当前使用中最影响研究可信度的问题；
 2. 打通纵向闭环所缺的能力；

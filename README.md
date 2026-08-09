@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`M4_AGENT_WORKSPACE_FOUNDATION_COMPLETE_AWAITING_M5_SCOPE`
+`M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_IN_PROGRESS`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -43,7 +43,9 @@ M3 deliberately stopped before translation, evidence extraction, manuscript writ
 
 M4 now adds the minimum Research Codex runtime: persistent conversation threads, Goals/Runs, ordered
 tool and approval events, role-based text-model selection, and a human-gated research-note write path.
-It does not yet add web research, browser control or evidence freezing; those are M5-M7 milestones.
+M5 is now adding the pre-desktop research library: SKILL.md discovery, explicitly scoped folder inventory,
+human-approved index-in-place, durable work/edition/file/version identity, ten-page triage, tags and search.
+Hashes identify exact file versions only; they do not define a work's identity.
 
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,

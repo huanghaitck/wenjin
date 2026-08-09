@@ -8,23 +8,22 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M4_AGENT_WORKSPACE_FOUNDATION_COMPLETE`.
+Current milestone: `M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_IN_PROGRESS`.
 
-The user authorized and completed M4 on 2026-08-09 after the Research Codex product, architecture and
-roadmap were frozen. M4 provides persistent threads/messages/goals/runs/events, role-based text-model
-profiles, one main Agent tool loop, project/source/page read tools, a human-gated research-note write
-tool, and the corresponding CLI/API/GUI. See `docs/M4_TASK_SPEC.md`.
+The user authorized M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
+SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
+work/edition/file/version identity, ten-page triage, tags, search and complete version display. See
+`docs/M5_TASK_SPEC.md` and ADR 0005.
 
-Do not enter M5 until the user has reviewed the M4 vertical slice and approved the concrete M5 scope.
-Network research, authenticated browser control, evidence freezing, long-term memory writes, translation,
-formal manuscript drafting, journal export, a generic multi-agent framework, packaged desktop distribution
-and broad Bookflow code copying remain outside the completed M4 boundary.
+Do not expand M5 into network research, authenticated browser control, evidence freezing, long-term memory
+writes, translation, formal manuscript drafting, journal export, arbitrary skill-script execution, desktop
+packaging or broad Bookflow code copying.
 
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read `docs/M4_TASK_SPEC.md` and the next proposed stage in `docs/ROADMAP.md`.
+3. Read `docs/M5_TASK_SPEC.md` and the next proposed stage in `docs/ROADMAP.md`.
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles
@@ -36,8 +35,9 @@ and broad Bookflow code copying remain outside the completed M4 boundary.
 - Do not create an abstraction until a second real implementation or caller exists.
 - Do not add microservices, distributed queues, vector stores, graph stores or speculative plugin layers.
 - Never hide a failed state behind a successful-looking artifact.
-- PyMuPDF remains the single PDF dependency. Keep provider HTTP calls dependency-free and the local
-  web interface build-free during M4.
+- PyMuPDF remains the single PDF dependency. Keep the local web interface build-free during M5.
+- A SHA-256 identifies an exact byte version or duplicate only. It must never define the enduring identity
+  of a work, edition or library record.
 
 ## File safety
 
@@ -56,5 +56,5 @@ conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench pyth
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench python -m unittest discover -s tests -v
 ```
 
-Run M1-M4 target tests. Real provider checks are bounded integration tests and must never
+Run M1-M5 target tests. Real provider checks are bounded integration tests and must never
 print or persist credentials.

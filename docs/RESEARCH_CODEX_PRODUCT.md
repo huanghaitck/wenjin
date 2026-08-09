@@ -1,7 +1,7 @@
 # Historian Research Codex｜产品与需求基线
 
-状态：M4 前冻结基线  
-日期：2026-08-09
+状态：M5 经 ADR 0005 更新
+日期：2026-08-10
 
 ## 1. 产品定义
 
@@ -42,6 +42,7 @@ Research Codex 以项目为边界，但日常交互以对话线程为中心。PD
 
 最小对象集合：
 
+- `LibraryWork` / `Edition` / `LibraryFile` / `FileVersion`：跨项目材料身份与完整文件版本；
 - `Project`：研究项目和权限边界；
 - `Thread` / `Message`：可长期恢复的研究对话；
 - `Goal` / `Run`：用户目标及一次可暂停、恢复的执行；

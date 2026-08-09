@@ -1,12 +1,13 @@
 # Historian Research Codex｜V1 架构
 
-状态：M4 前冻结基线  
-日期：2026-08-09
+状态：M5 经 ADR 0005 更新
+日期：2026-08-10
 
 ## 1. 架构原则
 
-V1 采用单体本地应用，而不是微服务：一个 Python 应用服务、一个项目 SQLite 数据库、一个
-桌面客户端。所有外部模型、解析器、数据库和浏览器能力都通过窄工具接口接入；领域真相仍由
+V1 采用单体本地应用，而不是微服务：一个 Python 应用服务、一个项目 SQLite 数据库、一个独立
+研究图书馆 SQLite 数据库和一个桌面客户端。图书馆供多个项目复用，项目数据库保存当前研究的
+状态与判断。所有外部模型、解析器、数据库和浏览器能力都通过窄工具接口接入；领域真相仍由
 workbench 自己的状态机掌握。
 
 ```mermaid
@@ -14,6 +15,7 @@ flowchart TB
     UI["Tauri + React 客户端"] <--> BRIDGE["命令/事件桥"]
     BRIDGE <--> APP["本地应用服务"]
     APP --> DB["SQLite：项目状态与事件"]
+    APP --> LIB["SQLite：研究图书馆与文件版本"]
     APP --> FS["项目文件：来源、页面、产物"]
     APP --> AGENT["Agent Runtime"]
     AGENT --> POLICY["研究门禁与审批"]
@@ -37,6 +39,10 @@ flowchart TB
 
 SQLite 保持单写入者。V1 不增加向量数据库或图数据库；需要检索时先使用 SQLite FTS5，
 主张-证据关系用普通关系表表达。
+
+M5 增加独立的 Library Store。它只记录 Work、Edition、File、File Version、标签、扫描会话及
+项目关联，不接管原文件。文件哈希只对应精确 File Version；Work/Edition 身份由书目关系和人工
+决定维持。Library Store 同样使用 SQLite 单写入者和 FTS5，不引入向量数据库。
 
 ### 2.2 Agent Runtime
 
