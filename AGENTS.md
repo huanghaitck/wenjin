@@ -8,23 +8,23 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE`.
+Current milestone: `D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
 work/edition/file/version identity, ten-page triage, tags, search and complete version display. See
 `docs/M5_TASK_SPEC.md` and ADR 0005.
 
-Do not enter M6 without a concrete user-approved scope. Network research, authenticated browser control,
-evidence freezing, long-term memory
-writes, translation, formal manuscript drafting, journal export, arbitrary skill-script execution, desktop
-packaging or broad Bookflow code copying.
+The user approved D1 on 2026-08-10. Follow `docs/D1_END_TO_END_DEMO_TASK_SPEC.md` and ADR 0006. D1 may
+implement bounded slices of later milestones only to complete the documented vertical workflow. It does not
+authorize credential capture, arbitrary skill-script execution, unattended authenticated browsing, broad
+Bookflow code copying, full-paper generation or desktop packaging.
 
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read `docs/M5_TASK_SPEC.md` and the next proposed stage in `docs/ROADMAP.md`.
+3. Read `docs/D1_END_TO_END_DEMO_TASK_SPEC.md`, ADR 0006 and `docs/ROADMAP.md`.
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles

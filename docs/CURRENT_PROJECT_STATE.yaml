@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE_AWAITING_M6_SCOPE
+current_stage: D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS
 last_completed_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY
-active_human_gate: M6_SCOPE_APPROVAL
+active_human_gate: D1_IMPLEMENTATION_AND_ACCEPTANCE
 
 m1:
   status: complete
@@ -39,14 +39,28 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: M6
-  authorized: false
-  objective: open_research_retrieval_records_and_public_source_acquisition
-  proposed_scope: docs/ROADMAP.md
+  stage: D1
+  authorized: true
+  objective: conversation_first_end_to_end_research_demo
+  proposed_scope: docs/D1_END_TO_END_DEMO_TASK_SPEC.md
   excluded:
-    - authenticated_browser
-    - evidence_freeze
+    - credential_capture
+    - unattended_authenticated_browser
+    - full_manuscript_generation
     - desktop_packaging
+
+d1_end_to_end_demo:
+  status: in_progress
+  home: conversation
+  project_switching: planned
+  library_to_project_bridge: planned
+  public_research_connectors: planned
+  zotero_local_read_only: planned
+  evidence_and_claims: planned
+  human_evidence_freeze: planned
+  frozen_evidence_draft: planned
+  research_browser_receipts: planned
+  memory_candidates: planned
 
 m5_skills_compatible_research_library:
   status: complete
