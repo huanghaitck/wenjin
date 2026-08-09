@@ -1,6 +1,6 @@
 # ADR 0003: Model OCR candidates and human gate
 
-Status: accepted as the M3 direction; provider implementation is not yet authorized  
+Status: accepted; M3 implementation authorized
 Date: 2026-08-09
 
 ## Decision

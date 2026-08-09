@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .db import append_audit, connect, initialize_database, utc_now
+from .vision import (
+    PAGE_OCR_PROMPT,
+    PROMPT_VERSION,
+    OcrSettings,
+    normalize_ocr_content,
+    request_page_ocr,
+)
 
 
 BLOCKING_CATEGORIES = {"content", "location"}
@@ -438,6 +445,10 @@ def project_status(project_root: Path) -> dict[str, Any]:
             "SELECT COUNT(*) FROM anomalies WHERE status = 'open'"
         ).fetchone()[0]
         project["repair_count"] = connection.execute("SELECT COUNT(*) FROM repair_records").fetchone()[0]
+        project["ocr_proposal_count"] = connection.execute("SELECT COUNT(*) FROM ocr_proposals").fetchone()[0]
+        project["pending_ocr_proposal_count"] = connection.execute(
+            "SELECT COUNT(*) FROM ocr_proposals WHERE status = 'pending'"
+        ).fetchone()[0]
         project["audit_event_count"] = connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
         project["sources"] = [dict(row) for row in connection.execute(
             "SELECT source_id, title, processing_state, use_state FROM sources ORDER BY created_at"
@@ -511,7 +522,25 @@ def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
             "SELECT * FROM anomalies WHERE source_id = ? ORDER BY status, created_at, anomaly_id",
             (source_id,),
         ).fetchall()]
-        return {"source": dict(source), "pages": pages, "relations": relations, "anomalies": anomalies}
+        proposals = []
+        for row in connection.execute(
+            """SELECT proposal_id, source_id, page_id, anomaly_id, provider, model,
+                      prompt_version, source_sha256, image_sha256, normalized_payload_json,
+                      normalized_response_hash, status, created_at, decided_at, reviewer,
+                      decision_reason, repair_id
+               FROM ocr_proposals WHERE source_id = ? ORDER BY created_at DESC, proposal_id""",
+            (source_id,),
+        ).fetchall():
+            proposal = dict(row)
+            proposal["normalized_payload"] = json.loads(proposal.pop("normalized_payload_json"))
+            proposals.append(proposal)
+        return {
+            "source": dict(source),
+            "pages": pages,
+            "relations": relations,
+            "anomalies": anomalies,
+            "ocr_proposals": proposals,
+        }
 
 
 def page_image_path(project_root: Path, page_id: str) -> Path:
@@ -527,6 +556,197 @@ def page_image_path(project_root: Path, page_id: str) -> Path:
     if not candidate.is_file():
         raise FileNotFoundError(f"page image is missing: {candidate}")
     return candidate
+
+
+def create_ocr_proposal(
+    project_root: Path,
+    page_id: str,
+    settings: OcrSettings | None = None,
+) -> dict[str, Any]:
+    settings = settings or OcrSettings.from_environment()
+    with connect(project_root) as connection:
+        eligible = connection.execute(
+            """SELECT 1 FROM anomalies
+               WHERE scope_type = 'page' AND target_id = ? AND status = 'open' LIMIT 1""",
+            (page_id,),
+        ).fetchone()
+        if eligible is None:
+            raise ValueError("OCR proposals require an open page anomaly")
+    image_path = page_image_path(project_root, page_id)
+    raw_response, normalized_payload = request_page_ocr(image_path, settings)
+    return record_ocr_proposal(
+        project_root,
+        page_id,
+        settings,
+        raw_response,
+        normalized_payload,
+    )
+
+
+def record_ocr_proposal(
+    project_root: Path,
+    page_id: str,
+    settings: OcrSettings,
+    raw_response: dict[str, Any],
+    normalized_payload: dict[str, Any],
+) -> dict[str, Any]:
+    normalized_payload = normalize_ocr_content(
+        json.dumps(normalized_payload, ensure_ascii=False)
+    )
+    image_path = page_image_path(project_root, page_id)
+    proposal_id = f"OCR_{uuid.uuid4().hex}"
+    with connect(project_root) as connection:
+        page = connection.execute(
+            """SELECT p.page_id, p.source_id, sv.sha256 AS source_sha256
+               FROM pages p JOIN source_versions sv ON sv.source_id = p.source_id
+               WHERE p.page_id = ? ORDER BY sv.created_at DESC LIMIT 1""",
+            (page_id,),
+        ).fetchone()
+        if page is None:
+            raise KeyError(f"unknown page: {page_id}")
+        anomaly = connection.execute(
+            """SELECT anomaly_id FROM anomalies
+               WHERE source_id = ? AND scope_type = 'page' AND target_id = ? AND status = 'open'
+               ORDER BY created_at, anomaly_id LIMIT 1""",
+            (page["source_id"], page_id),
+        ).fetchone()
+        if anomaly is None:
+            raise ValueError("OCR proposals require an open page anomaly")
+        now = utc_now()
+        connection.execute(
+            """INSERT INTO ocr_proposals(
+                   proposal_id, source_id, page_id, anomaly_id, provider, model,
+                   prompt_version, prompt_hash, source_sha256, image_sha256,
+                   raw_response_json, normalized_payload_json, raw_response_hash,
+                   normalized_response_hash, status, created_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)""",
+            (
+                proposal_id,
+                page["source_id"],
+                page_id,
+                anomaly["anomaly_id"],
+                settings.provider,
+                settings.model,
+                PROMPT_VERSION,
+                _json_hash(PAGE_OCR_PROMPT),
+                page["source_sha256"],
+                _file_hash(image_path),
+                json.dumps(raw_response, ensure_ascii=False, sort_keys=True),
+                json.dumps(normalized_payload, ensure_ascii=False, sort_keys=True),
+                _json_hash(raw_response),
+                _json_hash(normalized_payload),
+                now,
+            ),
+        )
+        append_audit(
+            connection,
+            "ocr_proposal_created",
+            "ocr_proposal",
+            proposal_id,
+            {"page_id": page_id, "provider": settings.provider, "model": settings.model},
+        )
+    return {
+        "proposal_id": proposal_id,
+        "page_id": page_id,
+        "provider": settings.provider,
+        "model": settings.model,
+        "prompt_version": PROMPT_VERSION,
+        "status": "pending",
+        "normalized_payload": normalized_payload,
+    }
+
+
+def accept_ocr_proposal(
+    project_root: Path,
+    proposal_id: str,
+    corrected_payload: dict[str, Any],
+    reviewer: str,
+    reason: str,
+) -> dict[str, Any]:
+    if not reviewer.strip() or not reason.strip():
+        raise ValueError("reviewer and reason are required")
+    normalized = normalize_ocr_content(json.dumps(corrected_payload, ensure_ascii=False))
+    with connect(project_root) as connection:
+        proposal = connection.execute(
+            "SELECT * FROM ocr_proposals WHERE proposal_id = ?",
+            (proposal_id,),
+        ).fetchone()
+        if proposal is None:
+            raise KeyError(f"unknown OCR proposal: {proposal_id}")
+        if proposal["status"] != "pending":
+            raise ValueError(f"OCR proposal is already {proposal['status']}")
+        anomaly_id = str(proposal["anomaly_id"])
+        page_id = str(proposal["page_id"])
+    repair = submit_page_repair(project_root, anomaly_id, normalized, reviewer, reason)
+    with connect(project_root) as connection:
+        updated = connection.execute(
+            """UPDATE ocr_proposals
+               SET status = 'accepted', decided_at = ?, reviewer = ?, decision_reason = ?, repair_id = ?
+               WHERE proposal_id = ? AND status = 'pending'""",
+            (utc_now(), reviewer, reason, repair["repair_id"], proposal_id),
+        )
+        if updated.rowcount != 1:
+            raise RuntimeError("OCR proposal state changed during acceptance")
+        superseded = connection.execute(
+            """UPDATE ocr_proposals
+               SET status = 'superseded', decided_at = ?, reviewer = ?,
+                   decision_reason = ?, repair_id = ?
+               WHERE page_id = ? AND proposal_id != ? AND status = 'pending'""",
+            (
+                utc_now(),
+                reviewer,
+                f"Superseded by accepted proposal {proposal_id}",
+                repair["repair_id"],
+                page_id,
+                proposal_id,
+            ),
+        )
+        append_audit(
+            connection,
+            "ocr_proposal_accepted",
+            "ocr_proposal",
+            proposal_id,
+            {"repair_id": repair["repair_id"], "superseded_proposals": superseded.rowcount},
+        )
+    return {
+        "proposal_id": proposal_id,
+        "status": "accepted",
+        "superseded_proposals": superseded.rowcount,
+        **repair,
+    }
+
+
+def reject_ocr_proposal(
+    project_root: Path,
+    proposal_id: str,
+    reviewer: str,
+    reason: str,
+) -> dict[str, Any]:
+    if not reviewer.strip() or not reason.strip():
+        raise ValueError("reviewer and reason are required")
+    with connect(project_root) as connection:
+        updated = connection.execute(
+            """UPDATE ocr_proposals
+               SET status = 'rejected', decided_at = ?, reviewer = ?, decision_reason = ?
+               WHERE proposal_id = ? AND status = 'pending'""",
+            (utc_now(), reviewer, reason, proposal_id),
+        )
+        if updated.rowcount != 1:
+            existing = connection.execute(
+                "SELECT status FROM ocr_proposals WHERE proposal_id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if existing is None:
+                raise KeyError(f"unknown OCR proposal: {proposal_id}")
+            raise ValueError(f"OCR proposal is already {existing['status']}")
+        append_audit(
+            connection,
+            "ocr_proposal_rejected",
+            "ocr_proposal",
+            proposal_id,
+            {},
+        )
+    return {"proposal_id": proposal_id, "status": "rejected"}
 
 
 def submit_relation_repair(

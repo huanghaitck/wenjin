@@ -1,4 +1,4 @@
-const state = { snapshot: null, view: null, pageIndex: 0, zoom: 1 };
+const state = { snapshot: null, capabilities: null, view: null, pageIndex: 0, zoom: 1 };
 const $ = (id) => document.getElementById(id);
 
 async function request(url, options = {}) {
@@ -22,7 +22,10 @@ function reviewerPayload() {
 }
 
 async function loadSnapshot(selectId = '') {
-  state.snapshot = await request('/api/snapshot');
+  [state.snapshot, state.capabilities] = await Promise.all([
+    request('/api/snapshot'),
+    request('/api/capabilities'),
+  ]);
   const select = $('sourceSelect');
   select.replaceChildren();
   if (!state.snapshot.sources.length) {
@@ -45,6 +48,7 @@ async function loadSource(sourceId, keepPage = false) {
 
 function currentPage() { return state.view?.pages[state.pageIndex]; }
 function openAnomalies() { return (state.view?.anomalies || []).filter((item) => item.status === 'open'); }
+function pageAnomaly(page) { return openAnomalies().find((item) => item.scope_type === 'page' && item.target_id === page?.page_id); }
 
 function renderRail() {
   const rail = $('pageRail'); rail.replaceChildren();
@@ -87,10 +91,10 @@ function blockCard(block, pageAnomaly) {
 function renderBlocks() {
   const page = currentPage(); const container = $('blocks'); container.replaceChildren();
   if (!page) { container.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'导入 PDF 后显示逐页文本。'})); return; }
-  const pageAnomaly = openAnomalies().find((item) => item.scope_type === 'page' && item.target_id === page.page_id);
+  const pageIssue = pageAnomaly(page);
   const blocks = page.blocks.length ? page.blocks : [{block_id:'', block_order:1, block_type:'paragraph', effective_text:'', source_region:null}];
-  for (const block of blocks) container.append(blockCard(block, pageAnomaly));
-  $('pageRepair').hidden = !pageAnomaly;
+  for (const block of blocks) container.append(blockCard(block, pageIssue));
+  $('pageRepair').hidden = !pageIssue;
   $('pageRepair').onclick = async () => {
     try {
       const cards = [...container.querySelectorAll('.block-card')];
@@ -99,10 +103,86 @@ function renderBlocks() {
         type: card.querySelector('.block-type').value,
         text: card.querySelector('textarea').value,
       }));
-      await request('/api/repair/page', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({anomaly_id:pageAnomaly.anomaly_id, blocks:repaired, ...reviewerPayload()}) });
+      await request('/api/repair/page', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({anomaly_id:pageIssue.anomaly_id, blocks:repaired, ...reviewerPayload()}) });
       await loadSource(state.view.source.source_id, true); notice('整页修正已提交，并保留原机器结果和修正记录。');
     } catch (error) { notice(error.message, true); }
   };
+}
+
+function proposalBlock(block) {
+  const card = document.createElement('article'); card.className = 'proposal-block'; card.dataset.order = block.order;
+  card.dataset.region = JSON.stringify(block.region || null);
+  const meta = document.createElement('div'); meta.className = 'block-meta';
+  const label = document.createElement('span'); label.textContent = `建议块 ${block.order}`;
+  const type = document.createElement('select'); type.className = 'block-type';
+  for (const value of ['paragraph', 'heading', 'footnote', 'header', 'footer', 'page_number']) type.append(new Option(value, value));
+  type.value = block.type; meta.append(label, type);
+  const textarea = document.createElement('textarea'); textarea.value = block.text;
+  card.append(meta, textarea); return card;
+}
+
+function renderOcrProposal() {
+  const page = currentPage();
+  const container = $('ocrProposal'); container.replaceChildren();
+  const button = $('ocrPropose');
+  const capability = state.capabilities?.vision_ocr;
+  if (capability?.available) {
+    $('ocrCapability').textContent = `${capability.provider} · ${capability.model} · 输出只作为待审建议`;
+  } else {
+    const missing = capability?.missing?.join('、') || '尚未配置';
+    $('ocrCapability').textContent = `视觉模型不可用：${missing}`;
+  }
+  if (!page) { button.hidden = true; return; }
+  const proposals = (state.view?.ocr_proposals || []).filter((item) => item.page_id === page.page_id);
+  const pending = proposals.find((item) => item.status === 'pending');
+  const anomaly = pageAnomaly(page);
+  button.hidden = !capability?.available || !anomaly || Boolean(pending);
+  button.onclick = async () => {
+    button.disabled = true;
+    try {
+      notice(`正在让 ${capability.model} 分析当前原页；结果不会自动写入正文……`);
+      await request('/api/ocr/propose', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({page_id:page.page_id})});
+      await loadSource(state.view.source.source_id, true); notice('模型建议已保存为待复核记录，请对照左侧原页修改。');
+    } catch (error) { notice(error.message, true); }
+    finally { button.disabled = false; }
+  };
+  if (!pending) {
+    const latest = proposals[0];
+    const text = latest ? `最近建议：${latest.provider} · ${latest.model} · ${latest.status}` : '当前页还没有模型建议。';
+    container.append(Object.assign(document.createElement('p'), {className:'empty', textContent:text}));
+    return;
+  }
+  const card = document.createElement('article'); card.className = 'proposal-card';
+  const meta = document.createElement('p'); meta.className = 'proposal-meta';
+  meta.textContent = `${pending.provider} · ${pending.model} · ${pending.prompt_version} · 尚未进入正文`;
+  card.append(meta);
+  const blocks = document.createElement('div'); blocks.className = 'proposal-blocks';
+  for (const block of pending.normalized_payload.blocks) blocks.append(proposalBlock(block));
+  card.append(blocks);
+  const warnings = pending.normalized_payload.warnings || [];
+  if (warnings.length) card.append(Object.assign(document.createElement('small'), {textContent:`模型警告：${warnings.join('；')}`}));
+  const actions = document.createElement('div'); actions.className = 'proposal-actions';
+  const accept = document.createElement('button'); accept.className = 'primary-inline'; accept.textContent = '核对后接受修正';
+  accept.onclick = async () => {
+    try {
+      const edited = [...blocks.querySelectorAll('.proposal-block')].map((item, index) => ({
+        order: Number(item.dataset.order || index + 1),
+        type: item.querySelector('.block-type').value,
+        text: item.querySelector('textarea').value,
+        region: JSON.parse(item.dataset.region),
+      }));
+      await request('/api/ocr/accept', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({proposal_id:pending.proposal_id, blocks:edited, ...reviewerPayload()})});
+      await loadSource(state.view.source.source_id, true); notice('模型建议经人工核对后已作为整页修正提交。');
+    } catch (error) { notice(error.message, true); }
+  };
+  const reject = document.createElement('button'); reject.textContent = '拒绝这份建议';
+  reject.onclick = async () => {
+    try {
+      await request('/api/ocr/reject', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({proposal_id:pending.proposal_id, ...reviewerPayload()})});
+      await loadSource(state.view.source.source_id, true); notice('模型建议已拒绝，页面异常仍保持待复核。');
+    } catch (error) { notice(error.message, true); }
+  };
+  actions.append(accept, reject); card.append(actions); container.append(card);
 }
 
 function renderAnomalies() {
@@ -135,7 +215,7 @@ function renderAnomalies() {
 }
 
 function render() {
-  renderRail(); renderBlocks(); renderAnomalies();
+  renderRail(); renderOcrProposal(); renderBlocks(); renderAnomalies();
   const page = currentPage(); const source = state.view?.source;
   $('sourceTitle').textContent = source?.title || '尚未导入文献';
   $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : '等待材料';

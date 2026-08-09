@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学研究工作台</strong><span>M2 · 原页与文本核验</span></div>
+    <div><strong>史学研究工作台</strong><span>M3 · 模型建议与人工修复</span></div>
     <div class="importer">
       <input id="pdfFile" type="file" accept="application/pdf">
       <button id="importButton">导入 PDF</button>
@@ -37,6 +37,13 @@
         <label>复核人<input id="reviewer" value="human-reviewer"></label>
         <label>修正依据<input id="reason" placeholder="例如：逐字核对当前原页"></label>
       </div>
+      <section class="model-assist">
+        <div class="model-heading">
+          <div><h2>模型修复建议</h2><p id="ocrCapability">正在检查视觉模型……</p></div>
+          <button id="ocrPropose" hidden>生成当前页建议</button>
+        </div>
+        <div id="ocrProposal"></div>
+      </section>
       <div id="blocks" class="blocks"></div>
       <button id="pageRepair" class="primary" hidden>提交整页修正</button>
       <section class="anomaly-section"><h2>待复核项</h2><div id="anomalies"></div></section>

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -131,6 +131,29 @@ CREATE TABLE staging_receipts (
     applied_at TEXT
 );
 
+CREATE TABLE ocr_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    page_id TEXT NOT NULL REFERENCES pages(page_id),
+    anomaly_id TEXT NOT NULL REFERENCES anomalies(anomaly_id),
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    image_sha256 TEXT NOT NULL,
+    raw_response_json TEXT NOT NULL,
+    normalized_payload_json TEXT NOT NULL,
+    raw_response_hash TEXT NOT NULL,
+    normalized_response_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    reviewer TEXT,
+    decision_reason TEXT,
+    repair_id TEXT REFERENCES repair_records(repair_id)
+);
+
 CREATE TABLE audit_events (
     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id TEXT NOT NULL REFERENCES projects(project_id),
@@ -144,12 +167,53 @@ CREATE TABLE audit_events (
 CREATE INDEX idx_pages_source ON pages(source_id);
 CREATE INDEX idx_blocks_page ON blocks(page_id);
 CREATE INDEX idx_anomalies_source_status ON anomalies(source_id, status);
+CREATE INDEX idx_ocr_proposals_page_status ON ocr_proposals(page_id, status);
 CREATE INDEX idx_audit_project ON audit_events(project_id, event_id);
+"""
+
+
+MIGRATION_2 = """
+CREATE TABLE IF NOT EXISTS ocr_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    page_id TEXT NOT NULL REFERENCES pages(page_id),
+    anomaly_id TEXT NOT NULL REFERENCES anomalies(anomaly_id),
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    prompt_hash TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    image_sha256 TEXT NOT NULL,
+    raw_response_json TEXT NOT NULL,
+    normalized_payload_json TEXT NOT NULL,
+    raw_response_hash TEXT NOT NULL,
+    normalized_response_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    reviewer TEXT,
+    decision_reason TEXT,
+    repair_id TEXT REFERENCES repair_records(repair_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ocr_proposals_page_status ON ocr_proposals(page_id, status);
 """
 
 
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
+
+
+def _migrate(connection: sqlite3.Connection) -> None:
+    row = connection.execute("SELECT MAX(version) AS version FROM schema_meta").fetchone()
+    version = int(row["version"] or 0)
+    if version > SCHEMA_VERSION:
+        raise RuntimeError(f"project schema {version} is newer than supported schema {SCHEMA_VERSION}")
+    if version < 2:
+        connection.executescript(MIGRATION_2)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (2, utc_now()),
+        )
 
 
 @contextmanager
@@ -161,6 +225,7 @@ def connect(project_root: Path) -> Iterator[sqlite3.Connection]:
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     try:
+        _migrate(connection)
         yield connection
         connection.commit()
     except Exception:

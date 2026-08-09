@@ -7,16 +7,20 @@ from typing import Any
 
 from .pdf_ingestion import ingest_pdf
 from .service import (
+    accept_ocr_proposal,
+    create_ocr_proposal,
     import_structure,
     initialize_project,
     list_anomalies,
     list_blocks,
     project_status,
     register_source,
+    reject_ocr_proposal,
     submit_block_repair,
     submit_page_repair,
     submit_relation_repair,
 )
+from .vision import capability
 from .web import serve
 
 
@@ -25,7 +29,7 @@ def _emit(value: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M2")
+    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M3")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a research project")
@@ -79,6 +83,25 @@ def build_parser() -> argparse.ArgumentParser:
     blocks.add_argument("project_root", type=Path)
     blocks.add_argument("source_id")
 
+    commands.add_parser("ocr-capability", help="show the configured visual OCR role without secrets")
+
+    ocr_propose = commands.add_parser("ocr-propose", help="create a pending OCR proposal for a blocked page")
+    ocr_propose.add_argument("project_root", type=Path)
+    ocr_propose.add_argument("page_id")
+
+    ocr_accept = commands.add_parser("ocr-accept", help="accept an edited OCR proposal as a human page repair")
+    ocr_accept.add_argument("project_root", type=Path)
+    ocr_accept.add_argument("proposal_id")
+    ocr_accept.add_argument("--payload", type=Path, required=True)
+    ocr_accept.add_argument("--reviewer", required=True)
+    ocr_accept.add_argument("--reason", required=True)
+
+    ocr_reject = commands.add_parser("ocr-reject", help="reject an OCR proposal without changing source text")
+    ocr_reject.add_argument("project_root", type=Path)
+    ocr_reject.add_argument("proposal_id")
+    ocr_reject.add_argument("--reviewer", required=True)
+    ocr_reject.add_argument("--reason", required=True)
+
     web = commands.add_parser("serve", help="open the local PDF repair workbench")
     web.add_argument("project_root", type=Path)
     web.add_argument("--host", default="127.0.0.1")
@@ -126,6 +149,25 @@ def main(argv: list[str] | None = None) -> int:
         result = project_status(args.project_root)
     elif args.command == "blocks":
         result = list_blocks(args.project_root, args.source_id)
+    elif args.command == "ocr-capability":
+        result = capability()
+    elif args.command == "ocr-propose":
+        result = create_ocr_proposal(args.project_root, args.page_id)
+    elif args.command == "ocr-accept":
+        result = accept_ocr_proposal(
+            args.project_root,
+            args.proposal_id,
+            json.loads(args.payload.read_text(encoding="utf-8")),
+            args.reviewer,
+            args.reason,
+        )
+    elif args.command == "ocr-reject":
+        result = reject_ocr_proposal(
+            args.project_root,
+            args.proposal_id,
+            args.reviewer,
+            args.reason,
+        )
     elif args.command == "serve":
         serve(args.project_root, args.host, args.port)
         return 0

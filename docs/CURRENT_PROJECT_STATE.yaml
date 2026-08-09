@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-09"
-current_stage: M2_PDF_INTAKE_AND_REPAIR_WORKBENCH_COMPLETE_AWAITING_M3_APPROVAL
-last_completed_stage: M2_PDF_INTAKE_AND_REPAIR_WORKBENCH
-active_human_gate: M3_OCR_AND_MODEL_ASSIST_APPROVAL
+current_stage: M3_MODEL_ASSISTED_PAGE_REPAIR_COMPLETE_AWAITING_M4_SCOPE
+last_completed_stage: M3_MODEL_ASSISTED_PAGE_REPAIR
+active_human_gate: M4_SCOPE_APPROVAL
 
 m1:
   status: complete
@@ -39,9 +39,9 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: M3
+  stage: M4
   authorized: false
-  objective: OCR and role-based visual assistance for pages blocked by M2
+  objective: not_yet_defined
 
 m2:
   status: complete
@@ -86,3 +86,26 @@ m2_2_glm_4_6v_flash_live_check:
   pairwise_wer: 0.015267
   confirmed_material_errors: 3
   model_outputs_applied_to_source_text: 0
+
+m3_model_assisted_page_repair:
+  status: complete
+  database_schema: 2
+  schema_v1_migration: implemented_and_tested
+  providers:
+    - openai_compatible
+    - ollama
+    - mock_test_only
+  explicit_provider_no_fallback: true
+  proposal_provenance: implemented
+  human_accept_reject_gate: implemented
+  gui_review_panel: implemented
+  cli_commands: implemented
+  targeted_tests: 22_passed
+  histra_pages_inspected: 3
+  histra_originals_modified: 0
+  ollama_live_calls: 1
+  ollama_pending_proposals: 1
+  glm_live_attempts: 2
+  glm_live_result: http_429_rate_limited
+  credentials_copied_or_logged: false
+  model_outputs_applied_without_human_acceptance: 0

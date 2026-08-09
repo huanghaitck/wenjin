@@ -8,28 +8,23 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M2_PDF_INTAKE_AND_REPAIR_WORKBENCH_COMPLETE`.
+Current milestone: `M3_MODEL_ASSISTED_PAGE_REPAIR_COMPLETE`.
 
-M2 is complete. Until the user explicitly approves M3, changes may only fix an M2 acceptance
-failure or improve its documentation and targeted tests.
+The user approved and completed M3 on 2026-08-09. Its scope is limited to explicit visual-model OCR
+proposals for pages already blocked by M2, proposal provenance, and human accept/reject decisions that
+reuse the M1 repair records. See `docs/M3_TASK_SPEC.md`.
 
-M2 may implement only:
+M3 must not implement translation, evidence extraction, research drafting, journal export, a generic
+multi-agent framework, packaged desktop distribution or broad Bookflow code copying. Model output may
+not silently replace effective source text or bypass the existing human repair gate.
 
-- deterministic PDF page rendering and text-layer extraction;
-- physical-page, printed-page candidate, text block and region preservation;
-- conservative cross-page continuation candidates;
-- local and systemic quality gates before research use;
-- a local page/anomaly repair interface over the M1 application service;
-- targeted fixtures, CLI commands and tests for this intake loop.
-
-M2 must not implement OCR model calls, networking, paid APIs, translation, evidence extraction,
-research drafting, journal export, a packaged Tauri application or broad Bookflow code copying.
+Do not enter M4 or expand the research workflow until the user approves a concrete M4 scope.
 
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read the active milestone specification.
+3. Read the active milestone specification (`docs/M3_TASK_SPEC.md`).
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles
@@ -41,7 +36,8 @@ research drafting, journal export, a packaged Tauri application or broad Bookflo
 - Do not create an abstraction until a second real implementation or caller exists.
 - Do not add microservices, distributed queues, vector stores, graph stores or speculative plugin layers.
 - Never hide a failed state behind a successful-looking artifact.
-- M2 may use PyMuPDF as its single PDF dependency. Keep the local web interface build-free.
+- PyMuPDF remains the single PDF dependency. Keep provider HTTP calls dependency-free and the local
+  web interface build-free.
 
 ## File safety
 
@@ -60,4 +56,5 @@ conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench pyth
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench python -m unittest discover -s tests -v
 ```
 
-Run M1 and M2 target tests. Stop after they pass; do not enter M3 without explicit user approval.
+Run M1, M2 and M3 target tests. Real provider checks are bounded integration tests and must never
+print or persist credentials.
