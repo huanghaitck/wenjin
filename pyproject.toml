@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "historical-research-workbench"
+version = "0.2.0.dev1"
+description = "Local-first page-aware PDF intake and repair workbench for historical research"
+requires-python = ">=3.13"
+dependencies = ["PyMuPDF>=1.26,<2"]
+
+[project.scripts]
+hrw = "research_workbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+research_workbench = ["web_assets/*.html", "web_assets/*.js", "web_assets/*.css"]

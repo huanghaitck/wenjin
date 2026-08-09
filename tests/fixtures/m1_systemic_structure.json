@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "pages": [
+    {
+      "id": "P1",
+      "physical_page": 1,
+      "printed_page": null,
+      "page_type": "unknown",
+      "blocks": [
+        {"id": "B1", "order": 1, "type": "unknown", "text": "garbled text"}
+      ]
+    }
+  ],
+  "relations": [],
+  "anomalies": [
+    {
+      "id": "A_SYSTEMIC",
+      "scope_type": "source",
+      "target_id": "SOURCE",
+      "severity": "systemic",
+      "category": "location",
+      "message": "The page order and text layer are globally misaligned."
+    }
+  ]
+}
+

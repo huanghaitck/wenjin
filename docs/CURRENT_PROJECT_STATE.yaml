@@ -1,0 +1,88 @@
+project: historical-research-workbench
+updated_at: "2026-08-09"
+current_stage: M2_PDF_INTAKE_AND_REPAIR_WORKBENCH_COMPLETE_AWAITING_M3_APPROVAL
+last_completed_stage: M2_PDF_INTAKE_AND_REPAIR_WORKBENCH
+active_human_gate: M3_OCR_AND_MODEL_ASSIST_APPROVAL
+
+m1:
+  status: complete
+  python: "3.13"
+  external_dependencies: 0
+  network_calls: 0
+  real_model_calls: 0
+  paid_api_calls: 0
+  database: sqlite
+  single_writer_import: implemented
+  source_registration: implemented
+  page_block_relation_import: implemented
+  local_block_repair: implemented
+  full_page_repair: implemented
+  audit_events: implemented
+  targeted_tests: 7_passed
+
+future_constraints:
+  ollama_local_models: required
+  role_based_model_pairing: required
+  text_main_with_visual_helper: required
+  translation_helper_role: required
+  bookflow_translation_reuse: evaluate_and_extract_after_m1
+  production_credentials: windows_credential_manager
+  development_env_fallback: allowed_but_not_committed
+  preferred_remote_ocr_candidate: glm-4.6v-flash
+  local_ocr_comparator: ollama/qwen3-vl:4b-instruct-q4_K_M
+  model_ocr_output_requires_human_repair_gate: true
+
+protected_sibling_projects:
+  - D:\AI_Workflows\bilingual_book
+  - D:\HistRA-Bench
+  - D:\AI_Workflows\codex-plugins
+  - D:\AI_Workflows\rare-source-history-lab
+
+next_scope:
+  stage: M3
+  authorized: false
+  objective: OCR and role-based visual assistance for pages blocked by M2
+
+m2:
+  status: complete
+  pdf_engine: pymupdf
+  external_dependencies: 1
+  network_calls: 0
+  real_model_calls: 0
+  paid_api_calls: 0
+  page_png_rendering: implemented
+  coordinate_text_extraction: implemented
+  printed_page_candidate: implemented
+  page_markdown: implemented
+  fragmented_layout_gate: implemented
+  image_only_systemic_gate: implemented
+  cross_page_relation_gate: implemented
+  block_page_relation_repairs: implemented
+  local_loopback_workbench: implemented
+  targeted_tests: 13_passed
+  visual_pdf_check: passed
+  browser_ui_check: passed
+
+m2_1_environment_and_ocr_evaluation:
+  status: complete
+  conda_prefix: D:\AI_Workflows\conda-envs\historical-research-workbench
+  python: 3.13.14
+  user_site_enabled: false
+  gpt_5_6_sol_exact_reference_pages: 4
+  gpt_5_6_sol_exact_reference_cer: 0.0
+  historical_pages_qualitatively_reviewed: 1
+  model_outputs_applied_to_source_text: 0
+
+m2_2_glm_4_6v_flash_live_check:
+  status: complete
+  credential_source: existing_disaster_history_project_runtime_only
+  credential_copied_or_logged: false
+  model: glm-4.6v-flash
+  historical_pages_tested: 1
+  api_calls: 2
+  repeated_call_reason: windows_console_encoding_failure_after_first_response
+  pairwise_reference: gpt-5.6-sol_visual_transcription
+  pairwise_cer: 0.008029
+  pairwise_wer: 0.015267
+  confirmed_material_errors: 3
+  model_outputs_applied_to_source_text: 0

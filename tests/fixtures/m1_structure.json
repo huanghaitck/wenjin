@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "pages": [
+    {
+      "id": "P1",
+      "physical_page": 1,
+      "printed_page": "1",
+      "page_type": "body",
+      "blocks": [
+        {
+          "id": "B1",
+          "order": 1,
+          "type": "paragraph",
+          "text": "The expedition left the station in spring.",
+          "region": [72, 100, 520, 180]
+        },
+        {
+          "id": "B2",
+          "order": 2,
+          "type": "paragraph",
+          "text": "The sentence continues toward the page boundary",
+          "region": [72, 200, 520, 720]
+        }
+      ]
+    },
+    {
+      "id": "P2",
+      "physical_page": 2,
+      "printed_page": "2",
+      "page_type": "body",
+      "blocks": [
+        {
+          "id": "B3",
+          "order": 1,
+          "type": "paragraph",
+          "text": "and ends on the following page.",
+          "region": [72, 100, 520, 160]
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "R1",
+      "from_block": "B2",
+      "to_block": "B3",
+      "type": "continues_to",
+      "value": true
+    }
+  ],
+  "anomalies": [
+    {
+      "id": "A_BLOCK",
+      "scope_type": "block",
+      "target_id": "B1",
+      "severity": "local",
+      "category": "content",
+      "message": "A word in the first paragraph needs human correction."
+    },
+    {
+      "id": "A_PAGE",
+      "scope_type": "page",
+      "target_id": "P2",
+      "severity": "local",
+      "category": "location",
+      "message": "The second page layout and continuation need full-page review."
+    },
+    {
+      "id": "A_DISPLAY",
+      "scope_type": "page",
+      "target_id": "P1",
+      "severity": "advisory",
+      "category": "display",
+      "message": "The thumbnail contrast is low but text and location remain usable."
+    }
+  ]
+}
+

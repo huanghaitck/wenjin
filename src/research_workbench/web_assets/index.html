@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>史学研究工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><strong>史学研究工作台</strong><span>M2 · 原页与文本核验</span></div>
+    <div class="importer">
+      <input id="pdfFile" type="file" accept="application/pdf">
+      <button id="importButton">导入 PDF</button>
+      <select id="sourceSelect" aria-label="选择文献"></select>
+    </div>
+  </header>
+
+  <div id="notice" role="status">正在读取本地项目……</div>
+  <main class="workbench">
+    <aside class="page-panel surface">
+      <h2>物理页</h2>
+      <div id="pageRail" class="page-rail"></div>
+    </aside>
+
+    <section class="source-panel surface">
+      <header class="panel-heading">
+        <div><h1 id="sourceTitle">尚未导入文献</h1><p id="pageLabel">原 PDF 页面始终是校对依据</p></div>
+        <div class="zoom-controls"><button id="zoomOut">−</button><span id="zoomValue">100%</span><button id="zoomIn">＋</button></div>
+      </header>
+      <div class="page-canvas"><img id="pageImage" alt="当前 PDF 原页"></div>
+    </section>
+
+    <section class="repair-panel surface">
+      <header class="panel-heading"><div><h2>提取文本</h2><p id="sourceState">等待材料</p></div></header>
+      <div class="review-fields">
+        <label>复核人<input id="reviewer" value="human-reviewer"></label>
+        <label>修正依据<input id="reason" placeholder="例如：逐字核对当前原页"></label>
+      </div>
+      <div id="blocks" class="blocks"></div>
+      <button id="pageRepair" class="primary" hidden>提交整页修正</button>
+      <section class="anomaly-section"><h2>待复核项</h2><div id="anomalies"></div></section>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
