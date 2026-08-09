@@ -1,6 +1,6 @@
 # ADR 0005｜Skills-Compatible Library and Version Identity
 
-状态：Accepted  
+状态：Accepted
 日期：2026-08-10
 
 ## 决定
