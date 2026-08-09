@@ -49,6 +49,8 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ### M5｜Skills-Compatible Research Library
 
+状态：已完成（2026-08-10）。
+
 - 发现并展示 `SKILL.md` 指令型技能，记录技能文件哈希；
 - 用户明确选择目录后进行只读盘点，先预览、后批准、默认原地索引；
 - 区分 Work、Edition、File、File Version，完整展示路径、时间、大小和哈希；

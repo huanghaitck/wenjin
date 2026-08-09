@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_IN_PROGRESS
-last_completed_stage: M4_AGENT_WORKSPACE_FOUNDATION
-active_human_gate: M5_LIBRARY_CANDIDATE_APPROVAL
+current_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE_AWAITING_M6_SCOPE
+last_completed_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY
+active_human_gate: M6_SCOPE_APPROVAL
 
 m1:
   status: complete
@@ -39,15 +39,51 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: M5
-  authorized: true
-  objective: skills_compatible_research_library_demo
-  specification: docs/M5_TASK_SPEC.md
+  stage: M6
+  authorized: false
+  objective: open_research_retrieval_records_and_public_source_acquisition
+  proposed_scope: docs/ROADMAP.md
   excluded:
-    - network_research
     - authenticated_browser
     - evidence_freeze
     - desktop_packaging
+
+m5_skills_compatible_research_library:
+  status: complete
+  package_version: 0.5.0.dev1
+  library_database: separate_sqlite
+  skill_md_discovery: implemented
+  skill_execution: instructions_only
+  intake_sample: historical-material-intake
+  explicit_folder_scan: implemented
+  scan_mode: recursive_read_only_preview
+  approval_mode: selected_candidates_index_in_place
+  originals_moved_or_modified: 0
+  identity_layers:
+    - work
+    - edition
+    - file
+    - file_version
+  sha256_scope: exact_file_version_and_duplicate_only
+  one_character_change_keeps_work_identity: implemented_and_tested
+  exact_duplicate_keeps_each_path: implemented_and_tested
+  supported_triage_formats:
+    - pdf
+    - markdown
+    - txt
+  pdf_triage_page_limit: 10
+  fts_and_tag_search: implemented
+  project_link: implemented
+  complete_version_display: implemented
+  current_byte_availability_check: implemented
+  full_test_suite: 35_passed
+  real_histra_inventory_candidates: 977
+  real_histra_supported_candidates_expanded: 14
+  real_histra_pdf_approved: 1
+  real_histra_originals_modified: 0
+  browser_ui_check: passed
+  accessibility_check: no_violations_reported
+  demo_url: http://127.0.0.1:8765/
 
 product_direction:
   identity: local_first_model_selectable_historian_research_codex

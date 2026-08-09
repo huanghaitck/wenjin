@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_IN_PROGRESS`
+`M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE_AWAITING_M6_SCOPE`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -43,7 +43,7 @@ M3 deliberately stopped before translation, evidence extraction, manuscript writ
 
 M4 now adds the minimum Research Codex runtime: persistent conversation threads, Goals/Runs, ordered
 tool and approval events, role-based text-model selection, and a human-gated research-note write path.
-M5 is now adding the pre-desktop research library: SKILL.md discovery, explicitly scoped folder inventory,
+M5 adds the pre-desktop research library: SKILL.md discovery, explicitly scoped folder inventory,
 human-approved index-in-place, durable work/edition/file/version identity, ten-page triage, tags and search.
 Hashes identify exact file versions only; they do not define a work's identity.
 
@@ -78,6 +78,17 @@ Open the local repair workbench:
 ```powershell
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw serve D:\research\my-project
 ```
+
+Use one reusable library location across projects before desktop packaging:
+
+```powershell
+conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw serve D:\research\my-project --library-root D:\research\historian-library
+```
+
+In **研究图书馆**, paste only the folder you want to inventory. The first action is read-only preview;
+selected candidates enter the library only after a second approval. Files remain in place. Exact hashes,
+all observed file versions, the intake Skill hash and whether each recorded byte version is still available
+at the current path are shown in the work detail panel.
 
 Then open `http://127.0.0.1:8765`. The interface can also import a PDF directly. The server binds
 to loopback only. CLI commands continue to emit JSON so a later Tauri bridge can call the same

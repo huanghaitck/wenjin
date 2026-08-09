@@ -8,14 +8,15 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_IN_PROGRESS`.
+Current milestone: `M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY_COMPLETE`.
 
-The user authorized M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
+The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
 work/edition/file/version identity, ten-page triage, tags, search and complete version display. See
 `docs/M5_TASK_SPEC.md` and ADR 0005.
 
-Do not expand M5 into network research, authenticated browser control, evidence freezing, long-term memory
+Do not enter M6 without a concrete user-approved scope. Network research, authenticated browser control,
+evidence freezing, long-term memory
 writes, translation, formal manuscript drafting, journal export, arbitrary skill-script execution, desktop
 packaging or broad Bookflow code copying.
 
