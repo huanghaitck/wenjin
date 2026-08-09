@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS
-last_completed_stage: M5_SKILLS_COMPATIBLE_RESEARCH_LIBRARY
-active_human_gate: D1_IMPLEMENTATION_AND_ACCEPTANCE
+current_stage: D1_CONVERSATION_FIRST_END_TO_END_DEMO_COMPLETE_AWAITING_USE_FEEDBACK
+last_completed_stage: D1_CONVERSATION_FIRST_END_TO_END_DEMO
+active_human_gate: NEXT_SCOPE_FROM_USE_FEEDBACK
 
 m1:
   status: complete
@@ -39,10 +39,10 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: D1
-  authorized: true
-  objective: conversation_first_end_to_end_research_demo
-  proposed_scope: docs/D1_END_TO_END_DEMO_TASK_SPEC.md
+  stage: feedback_selected_increment
+  authorized: false
+  objective: choose_the_next_reliability_or_workflow_increment_after_demo_use
+  proposed_scope: docs/ROADMAP.md
   excluded:
     - credential_capture
     - unattended_authenticated_browser
@@ -50,17 +50,26 @@ next_scope:
     - desktop_packaging
 
 d1_end_to_end_demo:
-  status: in_progress
+  status: complete
+  package_version: 0.6.0.dev1
+  database_schema: 4
   home: conversation
-  project_switching: planned
-  library_to_project_bridge: planned
-  public_research_connectors: planned
-  zotero_local_read_only: planned
-  evidence_and_claims: planned
-  human_evidence_freeze: planned
-  frozen_evidence_draft: planned
-  research_browser_receipts: planned
-  memory_candidates: planned
+  project_switching: implemented
+  library_to_project_bridge: implemented
+  public_research_connectors:
+    crossref: implemented_and_live_checked
+    openalex: implemented_requires_api_key
+  zotero_local_read_only: implemented_unavailable_when_desktop_api_off
+  evidence_and_claims: implemented
+  human_evidence_freeze: implemented
+  frozen_evidence_draft_review_export: implemented
+  research_browser_receipts: implemented_user_controlled_external_open
+  embedded_browser_webview: deferred_to_desktop_stage
+  memory_candidates: implemented_no_external_auto_write
+  translation_helper: implemented_openai_compatible_and_ollama
+  full_test_suite: 42_passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/
 
 m5_skills_compatible_research_library:
   status: complete

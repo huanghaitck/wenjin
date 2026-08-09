@@ -71,7 +71,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ### D1｜Conversation-first End-to-End Demo
 
-状态：实施中。范围与门禁见 `docs/D1_END_TO_END_DEMO_TASK_SPEC.md`。
+状态：已完成（2026-08-10）。范围、门禁和验收记录见 `docs/D1_END_TO_END_DEMO_TASK_SPEC.md`。
 
 - 对话首页、项目新建/切换和可恢复线程；
 - 图书馆具体文件版本加入项目并进入页面处理；

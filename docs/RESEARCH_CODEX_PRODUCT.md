@@ -1,6 +1,6 @@
 # Historian Research Codex｜产品与需求基线
 
-状态：M5 经 ADR 0005 更新
+状态：D1 Demo 经 ADR 0006 验证
 日期：2026-08-10
 
 ## 1. 产品定义

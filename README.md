@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS`
+`D1_CONVERSATION_FIRST_END_TO_END_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
 
 M1 provides the project state kernel. M2 adds:
 

@@ -1,6 +1,6 @@
 # Historian Research Codex｜V1 架构
 
-状态：M5 经 ADR 0005 更新
+状态：D1 经 ADR 0006 更新
 日期：2026-08-10
 
 ## 1. 架构原则
@@ -136,6 +136,17 @@ DISCOVERED
 借用 Bookflow 已验证的模式，而不依赖其目录：应用服务提供命令、完整快照和有序事件；客户端
 发现事件缺口时请求新快照。后续 Tauri 只替换当前 loopback HTTP 外壳，领域服务不重写。
 
+### 2.7 D1 已落地的纵向切片
+
+D1 保持一个 Python 进程和 build-free Web UI，新增 `workspace.json` 作为明确登记的项目列表；项目
+数据库升级为 schema 4，保存 Retrieval Record、Claim、Evidence Item、Claim-Evidence 关系、
+Evidence Freeze、Artifact Version、Review、Browser Session Receipt 和 Memory Candidate。图书馆文件
+只有在用户选择具体当前版本后才复制到项目并进入既有 PDF 管线。
+
+开放检索使用依赖为零的 Crossref/OpenAlex connector；Zotero 只读探测本机 `23119` API。研究浏览器
+当前是域名受限回执加用户控制的外开页面，不保存登录态。`main_reasoning`、`vision_ocr` 和
+`translation_helper` 可以分别配置 OpenAI-compatible 或 Ollama 模型，未配置时显式不可用。
+
 ## 3. 事件与数据模型
 
 M4 在现有 `audit_events` 之外增加面向运行时的类型化事件。`audit_events` 继续记录领域状态改变；
@@ -206,12 +217,12 @@ Research Codex 仅保存查询/写入收据和卡片引用。项目代码、ADR 
 
 ## 7. 客户端信息架构
 
-桌面端采用四区布局：
+客户端采用对话优先的三区布局，并把运行细节折叠到上下文栏底部：
 
-- 左侧：项目、对话线程、来源与研究产物；
+- 左侧：项目和对话线程；
 - 中间：主对话和当前 Goal/Run；
-- 右侧：原页/网页、证据、主张、模型配置或审批详情；
-- 底部活动区：工具时间线、错误、成本/调用量和恢复状态。
+- 右侧：项目文献、图书馆、联网研究、证据、冻结写作、浏览器、记忆候选和审批详情；
+- 折叠活动区：工具时间线、错误和恢复状态。
 
 教授无需先学习状态机。系统在需要决定时用普通问题呈现：查看原页、接受修正、缩小检索、允许
 下载、把材料提升为证据或批准冻结。高级状态和原始 JSON 放在可展开详情中。

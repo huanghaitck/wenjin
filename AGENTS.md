@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D1_CONVERSATION_FIRST_END_TO_END_DEMO_IN_PROGRESS`.
+Current milestone: `D1_CONVERSATION_FIRST_END_TO_END_DEMO_COMPLETE`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -19,6 +19,11 @@ The user approved D1 on 2026-08-10. Follow `docs/D1_END_TO_END_DEMO_TASK_SPEC.md
 implement bounded slices of later milestones only to complete the documented vertical workflow. It does not
 authorize credential capture, arbitrary skill-script execution, unattended authenticated browsing, broad
 Bookflow code copying, full-paper generation or desktop packaging.
+
+D1 completed on 2026-08-10 with 42 passing tests, a bounded live Crossref retrieval, loopback API/UI
+checks and a visible conversation-first demo. Do not treat D1 as completion of production M6-M11. The
+next scope must be chosen from real use feedback before expanding browser automation, connectors,
+scholarly dialogue, citation styles, memory adapters or desktop packaging.
 
 ## Startup order
 

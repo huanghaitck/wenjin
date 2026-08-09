@@ -1,6 +1,6 @@
 # D1 Task Spec｜Conversation-first End-to-End Demo
 
-状态：已批准，实施中
+状态：已完成
 日期：2026-08-10
 
 ## 目标
@@ -53,3 +53,13 @@
 ## 明确不做
 
 桌面安装包、任意 Skill 脚本执行、后台全盘扫描、自动登录数据库、自动绕过验证码或付费墙、无人批准的证据冻结、整篇论文自动生成、自动写入外部长时记忆、生产级向量数据库。
+
+## 验收记录
+
+- 包版本：`0.6.0.dev1`；项目数据库 schema 4；
+- 自动化测试：42 项通过；
+- 真实 connector：Crossref 有界检索成功并保存 `completed` Retrieval Record；
+- GUI：对话首页、项目选择、七类研究上下文、审批区和折叠运行回执完成可视检查；
+- Demo 地址：`http://127.0.0.1:8765/`；
+- OpenAlex 在未提供 API key 时明确显示不可用；Zotero Desktop 未开启本地 API 时明确显示不可用；
+- 研究浏览器在 D1 只实现用户控制的外开页面与域名回执，内嵌 WebView/Chromium 留到桌面阶段。
