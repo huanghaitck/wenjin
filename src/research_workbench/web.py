@@ -17,6 +17,18 @@ from .agent_runtime import (
     thread_view,
 )
 from .pdf_ingestion import ingest_pdf
+from .library import (
+    approve_candidates,
+    library_file_path,
+    library_status,
+    link_work_to_project,
+    scan_directory,
+    scan_session,
+    search_library,
+    update_work,
+    work_detail,
+)
+from .library_store import resolve_library_root
 from .service import (
     accept_ocr_proposal,
     create_ocr_proposal,
@@ -38,6 +50,7 @@ WEB_ROOT = Path(__file__).parent / "web_assets"
 
 class WorkbenchServer(ThreadingHTTPServer):
     project_root: Path
+    library_root: Path
 
 
 class WorkbenchHandler(BaseHTTPRequestHandler):
@@ -70,6 +83,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "sources": list_sources(self.server.project_root),
                     "threads": list_threads(self.server.project_root),
                     "model_profiles": sync_model_profiles(self.server.project_root),
+                    "library": library_status(self.server.project_root, self.server.library_root),
+                    "library_works": search_library(self.server.project_root, library_root=self.server.library_root),
                 })
                 return
             if parsed.path == "/api/capabilities":
@@ -82,6 +97,32 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/thread":
                 thread_id = parse_qs(parsed.query).get("id", [""])[0]
                 self._json(thread_view(self.server.project_root, thread_id))
+                return
+            if parsed.path == "/api/library/search":
+                query = parse_qs(parsed.query)
+                self._json(search_library(
+                    self.server.project_root,
+                    query.get("q", [""])[0],
+                    query.get("tag", []),
+                    self.server.library_root,
+                ))
+                return
+            if parsed.path == "/api/library/work":
+                work_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._json(work_detail(self.server.project_root, work_id, self.server.library_root))
+                return
+            if parsed.path == "/api/library/scan":
+                session_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._json(scan_session(self.server.project_root, session_id, self.server.library_root))
+                return
+            if parsed.path == "/api/library/file":
+                file_id = parse_qs(parsed.query).get("id", [""])[0]
+                source = library_file_path(self.server.project_root, file_id, self.server.library_root)
+                content_type = {
+                    ".pdf": "application/pdf", ".txt": "text/plain; charset=utf-8",
+                    ".md": "text/markdown; charset=utf-8",
+                }.get(source.suffix.lower(), "application/octet-stream")
+                self._send(200, source.read_bytes(), content_type)
                 return
             if parsed.path == "/api/page-image":
                 page_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -192,6 +233,35 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["reason"]),
                     edited if isinstance(edited, dict) else None,
                 )
+            elif parsed.path == "/api/library/scan":
+                result = scan_directory(
+                    self.server.project_root,
+                    Path(str(payload["source_root"])),
+                    self.server.library_root,
+                    str(payload.get("skill_name", "historical-material-intake")),
+                )
+            elif parsed.path == "/api/library/approve":
+                candidate_ids = payload.get("candidate_ids")
+                result = approve_candidates(
+                    self.server.project_root,
+                    str(payload["session_id"]),
+                    [str(item) for item in candidate_ids] if isinstance(candidate_ids, list) else None,
+                    self.server.library_root,
+                )
+            elif parsed.path == "/api/library/work/update":
+                result = update_work(
+                    self.server.project_root,
+                    str(payload["work_id"]),
+                    payload.get("fields", {}) if isinstance(payload.get("fields"), dict) else {},
+                    [str(item) for item in payload.get("tags", [])],
+                    self.server.library_root,
+                )
+            elif parsed.path == "/api/library/link":
+                result = link_work_to_project(
+                    self.server.project_root,
+                    str(payload["work_id"]),
+                    self.server.library_root,
+                )
             else:
                 self._json({"error": "not_found"}, 404)
                 return
@@ -202,7 +272,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self._json({"error": str(error)}, 500)
 
 
-def build_server(project_root: Path, host: str = "127.0.0.1", port: int = 8765) -> WorkbenchServer:
+def build_server(
+    project_root: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    library_root: Path | None = None,
+) -> WorkbenchServer:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("workbench may only bind to a loopback address")
     project_root = project_root.resolve()
@@ -210,11 +285,17 @@ def build_server(project_root: Path, host: str = "127.0.0.1", port: int = 8765) 
         raise FileNotFoundError(f"project database does not exist: {project_root}")
     server = WorkbenchServer((host, port), WorkbenchHandler)
     server.project_root = project_root
+    server.library_root = resolve_library_root(project_root, library_root)
     return server
 
 
-def serve(project_root: Path, host: str = "127.0.0.1", port: int = 8765) -> None:
-    server = build_server(project_root, host, port)
+def serve(
+    project_root: Path,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    library_root: Path | None = None,
+) -> None:
+    server = build_server(project_root, host, port, library_root)
     try:
         print(f"Historical Research Workbench: http://{host}:{server.server_port}")
         server.serve_forever()

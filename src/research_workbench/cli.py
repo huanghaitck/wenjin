@@ -15,6 +15,17 @@ from .agent_runtime import (
     thread_view,
 )
 from .pdf_ingestion import ingest_pdf
+from .library import (
+    approve_candidates,
+    library_status,
+    link_work_to_project,
+    scan_directory,
+    scan_session,
+    search_library,
+    update_work,
+    work_detail,
+)
+from .skill_registry import discover_skills
 from .service import (
     accept_ocr_proposal,
     create_ocr_proposal,
@@ -38,7 +49,7 @@ def _emit(value: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M4")
+    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench M5")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a research project")
@@ -142,10 +153,56 @@ def build_parser() -> argparse.ArgumentParser:
     approve.add_argument("--reason", required=True)
     approve.add_argument("--payload", type=Path)
 
+    commands.add_parser("skills", help="list discovered instruction-only SKILL.md packages")
+
+    library_status_command = commands.add_parser("library-status", help="show the research library")
+    library_status_command.add_argument("project_root", type=Path)
+    library_status_command.add_argument("--library-root", type=Path)
+
+    library_scan = commands.add_parser("library-scan", help="create a read-only folder inventory preview")
+    library_scan.add_argument("project_root", type=Path)
+    library_scan.add_argument("source_root", type=Path)
+    library_scan.add_argument("--library-root", type=Path)
+    library_scan.add_argument("--skill", default="historical-material-intake")
+
+    library_session = commands.add_parser("library-session", help="show one inventory preview")
+    library_session.add_argument("project_root", type=Path)
+    library_session.add_argument("session_id")
+    library_session.add_argument("--library-root", type=Path)
+
+    library_approve = commands.add_parser("library-approve", help="approve selected candidates in place")
+    library_approve.add_argument("project_root", type=Path)
+    library_approve.add_argument("session_id")
+    library_approve.add_argument("candidate_ids", nargs="*")
+    library_approve.add_argument("--library-root", type=Path)
+
+    library_search = commands.add_parser("library-search", help="search titles, authors, text and tags")
+    library_search.add_argument("project_root", type=Path)
+    library_search.add_argument("--query", default="")
+    library_search.add_argument("--tag", action="append", default=[])
+    library_search.add_argument("--library-root", type=Path)
+
+    library_work = commands.add_parser("library-work", help="show complete edition and file version details")
+    library_work.add_argument("project_root", type=Path)
+    library_work.add_argument("work_id")
+    library_work.add_argument("--library-root", type=Path)
+
+    library_update = commands.add_parser("library-update", help="update approved bibliography and user tags")
+    library_update.add_argument("project_root", type=Path)
+    library_update.add_argument("work_id")
+    library_update.add_argument("--payload", type=Path, required=True)
+    library_update.add_argument("--library-root", type=Path)
+
+    library_link = commands.add_parser("library-link", help="link an approved work to the current project")
+    library_link.add_argument("project_root", type=Path)
+    library_link.add_argument("work_id")
+    library_link.add_argument("--library-root", type=Path)
+
     web = commands.add_parser("serve", help="open the local PDF repair workbench")
     web.add_argument("project_root", type=Path)
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--library-root", type=Path)
     return parser
 
 
@@ -230,8 +287,31 @@ def main(argv: list[str] | None = None) -> int:
             args.reason,
             edited,
         )
+    elif args.command == "skills":
+        result = discover_skills()
+    elif args.command == "library-status":
+        result = library_status(args.project_root, args.library_root)
+    elif args.command == "library-scan":
+        result = scan_directory(args.project_root, args.source_root, args.library_root, args.skill)
+    elif args.command == "library-session":
+        result = scan_session(args.project_root, args.session_id, args.library_root)
+    elif args.command == "library-approve":
+        result = approve_candidates(
+            args.project_root, args.session_id, args.candidate_ids or None, args.library_root
+        )
+    elif args.command == "library-search":
+        result = search_library(args.project_root, args.query, args.tag, args.library_root)
+    elif args.command == "library-work":
+        result = work_detail(args.project_root, args.work_id, args.library_root)
+    elif args.command == "library-update":
+        payload = json.loads(args.payload.read_text(encoding="utf-8"))
+        result = update_work(
+            args.project_root, args.work_id, payload.get("fields", {}), payload.get("tags", []), args.library_root
+        )
+    elif args.command == "library-link":
+        result = link_work_to_project(args.project_root, args.work_id, args.library_root)
     elif args.command == "serve":
-        serve(args.project_root, args.host, args.port)
+        serve(args.project_root, args.host, args.port, args.library_root)
         return 0
     else:
         raise AssertionError(args.command)
