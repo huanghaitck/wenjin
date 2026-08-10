@@ -359,14 +359,18 @@ function renderResearchDesign(container) {
   const shared = design.shared_design;
   const summary = document.createElement('section'); summary.className = 'context-form';
   summary.append(
-    card('研究者基线（不向 Agent 提供）', baseline ? `${baseline.title} · ${baseline.design_id}` : '尚未批准'),
-    card('共同批准计划（执行时加载）', shared ? `${shared.title} · ${shared.design_id}` : '尚未批准'),
+    card('研究者意图基线（不向独立构思 Agent 提供）', baseline
+      ? `${baseline.title} · ${baseline.design_id}。这是研究者对方向、比较与停止边界的当前理解，不是来源证据。`
+      : '尚未批准。可从旧对话恢复，但须区分原话、复原和推断待确认。'),
+    card('共同批准研究设计（执行时加载）', shared
+      ? `${shared.title} · ${shared.design_id}。这是人机讨论后由研究者批准的可执行版本。`
+      : '尚未批准。研究者意图不会自动变成共同研究设计。'),
   );
   container.append(summary);
 
   const form = document.createElement('section'); form.className = 'context-form';
   const role = document.createElement('select'); role.id = 'designRole';
-  role.append(new Option('研究者基线（隐藏）','researcher_baseline'), new Option('共同计划','shared_design'));
+  role.append(new Option('研究者意图基线（隐藏）','researcher_baseline'), new Option('共同研究设计','shared_design'));
   const roleLabel = document.createElement('label'); roleLabel.textContent = '计划角色'; roleLabel.append(role);
   const title = formField('标题', 'designTitle');
   const content = formField('计划正文（可粘贴 Markdown / 纯文本）', 'designContent', '', true);
@@ -388,7 +392,7 @@ function renderResearchDesign(container) {
   container.append(form);
 
   for (const item of design.versions || []) {
-    const node=card(`${item.plan_role === 'researcher_baseline' ? '研究者基线' : '共同计划'} · ${item.title}`,
+    const node=card(`${item.plan_role === 'researcher_baseline' ? '研究者意图基线' : '共同研究设计'} · ${item.title}`,
       `${item.status} · ${item.origin} · ${item.design_id} · ${new Date(item.created_at).toLocaleString()}`);
     const text=document.createElement('textarea'); text.value=item.content; text.readOnly=item.status!=='draft'; node.append(text);
     if(item.change_summary)node.append(Object.assign(document.createElement('small'),{textContent:`变更摘要：${item.change_summary}`}));
@@ -1498,7 +1502,7 @@ $('modelProfile').onchange = async (event) => {
 $('planningMode').onchange = (event) => {
   state.planningMode = event.target.value;
   notice(state.planningMode === 'independent_planning'
-    ? '独立构思：本次运行不会把研究者基线、共同计划或旧线程对话发给模型。'
+    ? '独立构思：本次运行不会把研究者意图基线、共同研究设计或旧线程对话发给模型。'
     : '按计划执行：本次运行会加载共同批准计划和最近的有界线程对话；对话不是来源证据。');
 };
 $('sendMessage').onclick = async () => {

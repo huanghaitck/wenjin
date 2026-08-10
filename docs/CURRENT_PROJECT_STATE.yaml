@@ -7,6 +7,12 @@ active_human_gate: CORE_EVENT_BATCH_READING_AND_BOUNDED_ARCHIVE_TICKETS
 research_design_workflow:
   status: implemented_and_real_gui_tested
   project_database_schema: 11
+  researcher_baseline_ui_name: 研究者意图基线
+  researcher_intent_definition: restored_human_direction_not_psychological_profile_or_source_evidence
+  researcher_intent_epistemic_markers:
+    - explicit_human_statement
+    - recovered_context
+    - inferred_pending_confirmation
   researcher_baseline_hidden_from_agent: true
   planning_modes:
     - independent_planning
