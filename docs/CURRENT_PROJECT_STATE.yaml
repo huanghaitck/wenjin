@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE
-last_completed_stage: D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO
-active_human_gate: REAL_USE_FEEDBACK_BEFORE_NEXT_AUTHORING_INCREMENT_OR_DESKTOP_PACKAGING
+current_stage: D5_IMPLEMENTATION_COMPLETE_TEMPLATE_RECHECK_PENDING
+last_completed_stage: D5_WINDOWS_DESKTOP_PACKAGING_IMPLEMENTATION
+active_human_gate: CLOSE_SOURCE_DOCX_THEN_REVERIFY_HISTORICAL_RESEARCH_TEMPLATE
 
 m1:
   status: complete
@@ -39,7 +39,7 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: post_D4_use_feedback
+  stage: post_D5_use_feedback
   authorized: false
   objective: use_the_demo_then_choose_one_bounded_increment
   proposed_scope: null
@@ -47,7 +47,45 @@ next_scope:
     - credential_capture
     - unattended_authenticated_browser
     - full_manuscript_generation
-    - desktop_packaging
+
+d5_windows_desktop_packaging:
+  status: implementation_complete_template_recheck_pending
+  package_version: 1.0.0.dev1
+  desktop_build: 1.0.0-dev.1
+  project_database_schema: 7
+  shell: tauri_2
+  sidecar: pyinstaller_onefile
+  installer: nsis_current_user
+  target_requires_python: false
+  permanent_local_shell: true
+  research_ui_transport: loopback_iframe_with_allowlisted_postmessage
+  native_commands:
+    - desktop_status
+    - choose_folder
+    - choose_file
+    - open_in_word
+  sidecar_exit_tree_cleanup: passed
+  word_external_editor_bridge: implemented
+  word_reimport_as_new_revision: implemented
+  credential_store: windows_credential_manager
+  api_keys_in_config_or_project: 0
+  model_roles:
+    - main_reasoning
+    - vision_ocr
+    - translation_helper
+  providers:
+    - ollama
+    - openai_compatible
+  live_ollama_connection: passed_histra_qwen3_5_9b_64k_fast
+  full_test_suite: 61_passed
+  rust_release_build: passed
+  portable_startup: passed
+  installed_startup: passed
+  native_bridge_handshake: passed
+  installer_code_signed: false
+  automatic_updates: false
+  historical_research_source_docx: locked_by_external_process
+  historical_research_template_recheck: pending
 
 d4_practical_authoring_and_citations:
   status: complete_awaiting_use_feedback

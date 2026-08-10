@@ -1,6 +1,6 @@
 # D5 Task Spec｜Windows Desktop Packaging and Practical Bridges
 
-状态：已授权，实施中
+状态：实现与打包完成；《历史研究》源 DOCX 复核等待解除文件占用
 日期：2026-08-10
 
 ## 目标
@@ -59,3 +59,16 @@
 4. sidecar/安装包构建脚本；
 5. 安装、启动、Word 往返和状态文档。
 
+## 验收记录（2026-08-10）
+
+- Python 全量测试：61 项通过；
+- Tauri release 与 NSIS current-user 安装包构建通过；
+- portable 和安装版均能启动打包后的 sidecar，不依赖系统 Python；
+- 本地壳与研究页面通过来源校验、命令白名单和 `postMessage` 完成原生桥接；
+- 关闭主窗口后本次 sidecar 进程树为 0；
+- 主模型已用本地 Ollama `histra-qwen3.5:9b-64k-fast` 完成保存和连接测试；
+- 非秘密模型配置仅写入应用数据目录，API Key 的真实 Credential Manager 往返测试通过且测试项已删除；
+- Word 导出、外部打开入口和重新导入为新修订已实现；D4 已完成真实 Word 脚注渲染检查；
+- 用户提供的《历史研究》DOCX 当前被 Word/WPS 或其他进程独占，无法取得稳定字节版本，模板仍保持
+  `public_reference_requires_pre_submission_recheck`，不得伪称已按该文件完成复核；
+- 安装包尚未代码签名，也没有自动更新，这是本 Demo 的已知发布限制。

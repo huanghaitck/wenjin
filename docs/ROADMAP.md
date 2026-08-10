@@ -124,6 +124,21 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 本阶段不等同于完整 Word、全期刊模板库或自动事实核验。真实 Library Processing 跨库迁移、复杂
 DOCX 往返和桌面打包仍保持未授权。
 
+### D5｜Windows Desktop Packaging and Practical Bridges
+
+状态：实现与打包完成；等待解除《历史研究》源 DOCX 的文件占用后做精确模板复核（2026-08-10）。
+
+- Tauri 2 本地安全壳管理 PyInstaller sidecar、首启目录和进程树退出；
+- 产出 Windows current-user NSIS 安装包，目标电脑不要求另装 Python；
+- 系统目录/PDF/DOCX 选择、Word 外部打开和修改稿新修订导入采用白名单桥接；
+- 主推理、视觉/OCR、翻译三角色支持 Ollama 与 OpenAI-compatible；
+- API Key 进入 Windows Credential Manager，普通配置和项目库不保存密钥；
+- 设置页显示客户端、sidecar、schema、模板与实际模型快照；
+- 真实本地 Ollama 连接、安装后启动、原生桥接和退出无残留均已通过。
+
+本阶段没有内嵌 Word、完整 DOCX 无损往返、代码签名、自动更新、已登录数据库自动化或任意 shell。
+《历史研究》预设仍沿用 D4 的公开参考状态，直到用户提供的 DOCX 不再被其他程序占用并完成核验。
+
 ### M6｜Open Research Retrieval
 
 - OpenAlex 与 Crossref connector；
@@ -188,6 +203,9 @@ DOCX 往返和桌面打包仍保持未授权。
 - PDF、检索、证据、讨论、写作全链路 benchmark。
 
 验收：安装后的桌面应用完成第一可用版本闭环，并在真实项目副本上通过回归评测。
+
+D5 已提前完成其中 Tauri、Credential Manager 和安装版第一闭环的纵向切片；M11 仍负责正式的迁移、
+备份、长期记忆适配、评测、发布安全与故障恢复，不因 D5 自动视为完成。
 
 ## M5 后的优先级规则
 

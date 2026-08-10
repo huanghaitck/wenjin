@@ -23,6 +23,10 @@ Python harness 用 PyInstaller 打包为 sidecar，不要求目标电脑另装 P
 建立 workspace、library、projects、config 和 logs，选择一个空闲回环端口，启动 sidecar，等待健康检查
 通过后再显示主窗口。退出桌面程序时同步结束由它启动的 sidecar。
 
+Tauri 自带的本地页面永久作为顶层安全壳，Python 工作台加载在同窗 iframe 中。研究页面不直接获得
+Tauri 内部对象，只能用 `postMessage` 请求白名单命令；壳同时校验消息来源、回环 origin 和命令名。
+这避免把本机权限扩散给研究浏览器或以后打开的远程网页。
+
 ### 2. 本机桥接边界
 
 桌面页只能调用明确列出的桥接动作：
@@ -71,4 +75,5 @@ Manager，非秘密配置保存在应用数据目录。项目 SQLite、导出稿
   自动化；
 - 期刊格式会随期刊规则变化，导出时继续显示模板版本和提交前复核状态；
 - 桌面壳不复制 Python 业务逻辑，后续仍可独立测试 harness。
-
+- 顶层壳通过 `desktop_url` 拉取 sidecar 地址；研究页面完成 `desktop_status` 握手后才隐藏启动页，
+  因而 sidecar 启动竞态不会产生空白或永久停留的成功假象。

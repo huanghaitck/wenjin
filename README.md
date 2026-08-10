@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
+`D5_IMPLEMENTATION_COMPLETE_TEMPLATE_RECHECK_PENDING`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -75,6 +75,13 @@ anchor invalidation after relevant prose changes, Markdown footnotes and true Wo
 public reference that must be rechecked before submission. The article layout, template selector, note sidebar,
 revision status and dynamic package/schema display are available at `http://127.0.0.1:8765/?mode=article`.
 
+D5 packages that harness as a Windows desktop Demo. A Tauri local shell starts and stops the bundled Python
+sidecar, exposes only allowlisted file/Word commands, and keeps the research UI on loopback. The settings page
+configures independent main-reasoning, visual/OCR and translation roles for Ollama or OpenAI-compatible APIs;
+remote secrets go to Windows Credential Manager. Word remains an external editor: export a DOCX, open it in
+Microsoft Word, then reimport the saved file as a new immutable revision with a fidelity report. The supplied
+`《历史研究》` rules DOCX is still locked by another process, so that preset remains pending exact recheck.
+
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,
 `HRW_AGENT_MODEL` and, for an OpenAI-compatible endpoint, `HRW_AGENT_API_KEY`. Supported providers are
@@ -107,7 +114,7 @@ Open the local repair workbench:
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw serve D:\research\my-project
 ```
 
-Use one reusable library location across projects before desktop packaging:
+Use one reusable library location across projects in browser development mode:
 
 ```powershell
 conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw serve D:\research\my-project --library-root D:\research\historian-library
@@ -126,6 +133,18 @@ original-page repair view also live here rather than in the global navigation.
 Then open `http://127.0.0.1:8765`. The interface can also import a PDF directly. The server binds
 to loopback only. CLI commands continue to emit JSON so a later Tauri bridge can call the same
 application service.
+
+## Windows desktop Demo
+
+Build the packaged sidecar and current-user NSIS installer with:
+
+```powershell
+& .\scripts\build_desktop.ps1
+```
+
+The installer is written under `src-tauri\target\release\bundle\nsis`. It creates the workspace, library,
+projects, configuration and logs beneath the current user's application-data directory. The Demo is unsigned;
+there is no automatic updater yet.
 
 If the Demo service is not running, start or restart it with:
 

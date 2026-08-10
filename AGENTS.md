@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D5_WINDOWS_DESKTOP_PACKAGING_AND_BRIDGE_IN_PROGRESS`.
+Current milestone: `D5_IMPLEMENTATION_COMPLETE_TEMPLATE_RECHECK_PENDING`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -62,6 +62,12 @@ The user authorized D5 on 2026-08-10. Follow ADR 0010 and
 sidecar, explicit native file/Word bridges and model-role configuration. It does not authorize embedded
 Microsoft Word, arbitrary shell access, authenticated browser automation, license bypass, code signing,
 automatic updates or the remaining M6-M11 product roadmap.
+
+D5 implementation completed on 2026-08-10 with package 1.0.0.dev1, project schema 7, 61 passing tests,
+an NSIS installer, verified installed/portable startup and shutdown, a working allowlisted desktop bridge,
+Microsoft Word round-trip adapters, Windows Credential Manager support and a live local Ollama connection.
+The user-provided `《历史研究》` DOCX remains locked by another process, so its exact template recheck is the
+only open D5 human gate. Do not describe that preset as reverified until the source file can be read.
 
 ## Startup order
 
