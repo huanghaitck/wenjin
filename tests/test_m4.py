@@ -258,6 +258,10 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         action = _parse_action("候选页已定位；请人工核对原页。")
         self.assertEqual(action, {"type": "final", "content": "候选页已定位；请人工核对原页。"})
 
+    def test_parser_accepts_provider_json_with_literal_newline_in_content(self) -> None:
+        action = _parse_action('{"type":"final","content":"第一条\n第二条"}')
+        self.assertEqual(action, {"type": "final", "content": "第一条\n第二条"})
+
     def test_source_search_returns_page_and_block_anchors(self) -> None:
         results = _search_source_blocks(self.project, "page boundary")
         self.assertEqual(len(results), 1)

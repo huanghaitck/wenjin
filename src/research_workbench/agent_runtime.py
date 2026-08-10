@@ -568,7 +568,7 @@ def _parse_action(content: str) -> dict[str, Any]:
         text = re.sub(r"\s*```$", "", text)
     if not text.startswith(("{", "[")):
         return {"type": "final", "content": text}
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(strict=False)
     action, end = decoder.raw_decode(text)
     remainder = text[end:].strip()
     while remainder:
