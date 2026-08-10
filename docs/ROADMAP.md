@@ -82,6 +82,18 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ## 后续阶段
 
+### D2｜Evidence-preserving Reading and Section Writing
+
+状态：实施中。来自 D1 的首轮真实使用反馈，范围见 `docs/D2_AUTHORING_READING_TASK_SPEC.md`。
+
+- Markdown 稿件导入、章节和不可变版本；
+- 保留引文、数字、脚注与来源标记的润色提案；
+- 只依据已批准冻结包的分节试写；
+- 有界批量阅读札记、学术史条目和期刊模板第一版；
+- 原文/提案对照、人工批准、组合导出。
+
+以下编号阶段仍用于后续生产化加固，不因 D2 的纵向切片而自动宣布完成。
+
 ### M6｜Open Research Retrieval
 
 - OpenAlex 与 Crossref connector；

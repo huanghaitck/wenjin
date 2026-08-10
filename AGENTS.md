@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D1_CONVERSATION_FIRST_END_TO_END_DEMO_COMPLETE`.
+Current milestone: `D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_IN_PROGRESS`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -25,11 +25,16 @@ checks and a visible conversation-first demo. Do not treat D1 as completion of p
 next scope must be chosen from real use feedback before expanding browser automation, connectors,
 scholarly dialogue, citation styles, memory adapters or desktop packaging.
 
+The user selected the next increment on 2026-08-10: article polishing and section writing first, with
+bounded reading, historiography entries and journal templates as supporting objects. Follow
+`docs/D2_AUTHORING_READING_TASK_SPEC.md` and ADR 0007. Do not implement license bypass or unattended
+full-manuscript generation.
+
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read `docs/D1_END_TO_END_DEMO_TASK_SPEC.md`, ADR 0006 and `docs/ROADMAP.md`.
+3. Read `docs/D2_AUTHORING_READING_TASK_SPEC.md`, ADR 0007 and `docs/ROADMAP.md`.
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles
