@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -743,6 +743,56 @@ CREATE INDEX IF NOT EXISTS idx_research_design_role_status
 ON research_design_versions(plan_role, status, created_at);
 """
 
+MIGRATION_11 = """
+CREATE TABLE IF NOT EXISTS research_event_rows (
+    event_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    start_place TEXT NOT NULL,
+    end_place TEXT NOT NULL,
+    route TEXT NOT NULL,
+    movement_time TEXT NOT NULL,
+    distance_original TEXT NOT NULL,
+    distance_normalized TEXT NOT NULL,
+    investigation_object TEXT NOT NULL,
+    recording_technique TEXT NOT NULL,
+    chinese_participants TEXT NOT NULL,
+    institutional_task TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    source_version_id TEXT NOT NULL REFERENCES source_versions(source_version_id),
+    page_ids_json TEXT NOT NULL,
+    block_ids_json TEXT NOT NULL,
+    physical_pages_json TEXT NOT NULL,
+    printed_pages_json TEXT NOT NULL,
+    original_text TEXT NOT NULL,
+    translation TEXT NOT NULL,
+    missing_reason TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    qualification TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_by TEXT,
+    decision_reason TEXT,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_research_events_case_status
+ON research_event_rows(case_id, status, created_at);
+CREATE INDEX IF NOT EXISTS idx_research_events_source
+ON research_event_rows(source_id, created_at);
+CREATE TABLE IF NOT EXISTS research_event_field_anchors (
+    event_id TEXT NOT NULL REFERENCES research_event_rows(event_id),
+    field_name TEXT NOT NULL,
+    block_id TEXT NOT NULL REFERENCES blocks(block_id),
+    anchor_order INTEGER NOT NULL,
+    PRIMARY KEY(event_id, field_name, block_id)
+);
+CREATE INDEX IF NOT EXISTS idx_research_event_field_anchors
+ON research_event_field_anchors(event_id, field_name, anchor_order);
+"""
+
 
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
@@ -815,6 +865,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (10, utc_now()),
         )
+        version = 10
+    if version < 11:
+        connection.executescript(MIGRATION_11)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (11, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -843,6 +900,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
             )
     connection.executescript(MIGRATION_9)
     connection.executescript(MIGRATION_10)
+    connection.executescript(MIGRATION_11)
 
 
 @contextmanager
@@ -876,6 +934,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_8)
         connection.executescript(MIGRATION_9)
         connection.executescript(MIGRATION_10)
+        connection.executescript(MIGRATION_11)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

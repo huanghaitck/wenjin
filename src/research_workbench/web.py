@@ -52,6 +52,7 @@ from .library_store import resolve_library_root
 from .project_library import add_library_file_to_project
 from .research import connector_capabilities, list_retrievals, retrieval_record, search
 from .research_design import create_design_draft, decide_design, design_state
+from .research_events import decide_event, event_state
 from .scholarship import (
     approve_freeze,
     create_browser_session,
@@ -144,6 +145,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "research": research_state(self.server.project_root),
                     "authoring": authoring_state(self.server.project_root),
                     "research_design": design_state(self.server.project_root),
+                    "research_events": event_state(self.server.project_root),
                     "runtime": {
                         "mode": "desktop" if self.server.desktop_mode else "browser",
                         "desktop_build": os.getenv("HRW_DESKTOP_BUILD", ""),
@@ -180,6 +182,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/research-design":
                 self._json(design_state(self.server.project_root))
+                return
+            if parsed.path == "/api/research-events":
+                self._json(event_state(self.server.project_root))
                 return
             if parsed.path == "/api/manuscript/document":
                 manuscript_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -424,6 +429,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["reviewer"]), str(payload["reason"]),
                     str(payload["title"]) if "title" in payload else None,
                     str(payload["content"]) if "content" in payload else None,
+                )
+            elif parsed.path == "/api/research-event/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_event(
+                    self.server.project_root, str(payload["event_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]), str(payload["reason"]),
+                    payload.get("edits") if isinstance(payload.get("edits"), dict) else None,
                 )
             elif parsed.path == "/api/approval/decide":
                 edited = payload.get("edited_request")

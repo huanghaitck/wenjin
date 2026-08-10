@@ -409,6 +409,33 @@ function renderResearchDesign(container) {
   }
 }
 
+function renderResearchEvents(container) {
+  const stateValue=state.snapshot.research_events||{events:[],counts:{}};
+  container.append(card('逐事件比较表',
+    `待核 ${stateValue.counts.draft||0} · 已批准 ${stateValue.counts.approved||0} · 已拒绝 ${stateValue.counts.rejected||0}。批准事件仍不是冻结证据。`));
+  if(!stateValue.events.length){container.append(card('尚无事件候选','在研究对话中让 Agent 定位来源页并提交 research_event.propose_batch。'));return;}
+  const labels={case_id:'比较个案',event_date:'日期',start_place:'起点',end_place:'终点',route:'路线/通道',movement_time:'移动时间',distance_original:'原载距离',distance_normalized:'换算',investigation_object:'调查对象',recording_technique:'记录技术',chinese_participants:'中国参与者',institutional_task:'机构任务',translation:'译文',missing_reason:'缺失原因',notes:'备注'};
+  for(const item of stateValue.events){
+    const node=card(`${item.case_id} · ${item.event_date||'日期待核'}`,`${item.status} · 物理页 ${(item.physical_pages||[]).join('–')||'待核'} · ${item.event_id}`);
+    const editors={};
+    for(const [key,label] of Object.entries(labels)){
+      const wrapper=document.createElement('label');wrapper.textContent=label;
+      const input=document.createElement(['translation','notes'].includes(key)?'textarea':'input');input.value=item[key]||'';input.readOnly=item.status!=='draft';editors[key]=input;wrapper.append(input);node.append(wrapper);
+      if((item.field_anchors?.[key]||[]).length)node.append(Object.assign(document.createElement('small'),{textContent:`字段锚点：${item.field_anchors[key].join('、')}`}));
+    }
+    const quoteLabel=document.createElement('label');quoteLabel.textContent='原文（必须逐字存在于所引文本块）';
+    const quote=document.createElement('textarea');quote.value=item.original_text;quote.readOnly=item.status!=='draft';editors.original_text=quote;quoteLabel.append(quote);node.append(quoteLabel);
+    if((item.field_anchors?.original_text||[]).length)node.append(Object.assign(document.createElement('small'),{textContent:`原文锚点：${item.field_anchors.original_text.join('、')}`}));
+    node.append(Object.assign(document.createElement('small'),{textContent:`来源 ${item.source_id} · 版本 ${item.source_version_id} · Blocks ${item.block_ids.join('、')} · ${item.qualification}`}));
+    node.append(actionButton('打开原页并人工核对',async()=>{await loadSource(item.source_id);const pageId=item.page_ids?.[0];const index=state.view.pages.findIndex((page)=>page.page_id===pageId);if(index>=0)state.pageIndex=index;setMode('source');render();notice('请对照原图核验并确认候选引用的文本块；返回逐事件表后再批准。');}));
+    if(item.status==='draft'){
+      const decide=async(approved)=>{const reviewer=window.prompt('决定人','Professor');if(!reviewer)return;const reason=window.prompt(approved?'批准依据':'拒绝依据',approved?'已核原页与事件编码':'候选不符合比较口径');if(!reason)return;const edits=Object.fromEntries(Object.entries(editors).map(([key,input])=>[key,input.value]));await request('/api/research-event/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:item.event_id,approved,reviewer,reason,edits})});await refreshResearch(approved?'事件行已人工批准；仍须另建主张和冻结证据。':'事件候选已拒绝，记录保留。');state.contextMode='events';renderContext();};
+      node.append(actionButton('核页后批准',()=>decide(true),true),actionButton('拒绝候选',()=>decide(false)));
+    } else if(item.decision_reason){node.append(Object.assign(document.createElement('small'),{textContent:`人工决定：${item.decided_by}｜${item.decision_reason}`}));}
+    container.append(node);
+  }
+}
+
 async function refreshResearch(message = '') {
   state.snapshot = await request('/api/snapshot');
   state.libraryWorks = state.snapshot.library_works || [];
@@ -460,6 +487,8 @@ function renderContext() {
     }
   } else if (state.contextMode === 'design') {
     renderResearchDesign(container);
+  } else if (state.contextMode === 'events') {
+    renderResearchEvents(container);
   } else if (state.contextMode === 'retrieval') {
     const form = document.createElement('section'); form.className = 'context-form';
     const provider = document.createElement('select'); provider.id = 'researchProvider';

@@ -18,6 +18,7 @@ from .db import connect, utc_now
 from .authoring import authoring_state
 from .research import list_retrievals
 from .research_design import create_design_draft, current_shared_design
+from .research_events import create_event_candidates, event_state
 from .scholarship import research_state
 from .service import list_sources, project_status, source_view
 
@@ -40,11 +41,17 @@ Available actions:
 {"type":"tool_call","tool":"authoring.state","arguments":{}}
 {"type":"tool_call","tool":"research_design.current","arguments":{}}
 {"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
+{"type":"tool_call","tool":"research_event.list","arguments":{}}
+{"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"original_text":["block-id"]},"original_text":"...","route":"...","investigation_object":"...","recording_technique":"...","chinese_participants":"...","institutional_task":"..."}]}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
 Follow an explicit user tool scope. Do not call unrelated state tools merely because they are available.
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
+Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
+and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
+Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
+Do not cite one set of blocks while taking dates, places, participants or tasks from unanchored page context.
 For source.list, use_state describes page-processing usability, not whether a work is relevant,
 missing, or a prerequisite. When research_context is present, use its source_type, carrier,
 witness_relation, reading_status and notes to distinguish an original witness, derivative locator,
@@ -597,7 +604,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.propose_batch", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -656,6 +663,20 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 str(snapshot.get("model", "research-agent")),
                 str(arguments.get("change_summary", "")),
                 current["design_id"] if current else "", run_id, snapshot,
+            )
+        elif tool_name == "research_event.list":
+            result = event_state(project_root)
+        elif tool_name == "research_event.propose_batch":
+            events = arguments.get("events", [])
+            if not isinstance(events, list):
+                raise ValueError("research_event.propose_batch requires an events list")
+            with connect(project_root) as connection:
+                run = connection.execute(
+                    "SELECT model_snapshot_json FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            snapshot = _decode(run["model_snapshot_json"], {}) if run else {}
+            result = create_event_candidates(
+                project_root, events, str(snapshot.get("model", "research-agent")), "model", snapshot,
             )
         else:
             title = str(arguments.get("title", "")).strip()
@@ -730,6 +751,7 @@ def _planning_context(project_root: Path) -> dict[str, Any]:
             "evidence": sum(len(item.get("evidence", [])) for item in research.get("claims", [])),
             "freezes": len(research.get("freezes", [])),
             "approved_freezes": sum(item.get("status") == "approved" for item in research.get("freezes", [])),
+            "event_rows": event_state(project_root)["counts"],
         },
         "freeze_summaries": [
             {
