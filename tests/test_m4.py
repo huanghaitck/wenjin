@@ -19,11 +19,13 @@ from research_workbench.agent_runtime import (
     create_thread,
     decide_approval,
     list_threads,
+    recover_interrupted_runs,
     send_message,
     sync_model_profiles,
     thread_view,
 )
 from research_workbench.db import database_path
+from research_workbench.research_design import create_design_draft, decide_design
 from research_workbench.service import import_structure, initialize_project, register_source
 from research_workbench.service import list_sources, source_view
 from research_workbench.web import build_server
@@ -133,6 +135,52 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(summary["message_count"], 1)
         self.assertEqual(summary["latest_run_status"], "WAITING_FOR_APPROVAL")
 
+    def test_interrupted_running_run_is_failed_on_recovery(self) -> None:
+        with patch("research_workbench.agent_runtime._mock_action", side_effect=RuntimeError("stop")):
+            with self.assertRaises(RuntimeError):
+                send_message(self.project, self.thread["thread_id"], "会失败")
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            connection.execute("UPDATE runs SET status = 'RUNNING', error = NULL, completed_at = NULL")
+            connection.commit()
+        finally:
+            connection.close()
+        self.assertEqual(recover_interrupted_runs(self.project), 1)
+        recovered = thread_view(self.project, self.thread["thread_id"])["runs"][0]
+        self.assertEqual(recovered["status"], "FAILED")
+        self.assertIn("application restart", recovered["error"])
+
+    def test_independent_planning_hides_baseline_and_guided_mode_injects_only_shared_design(self) -> None:
+        baseline = create_design_draft(
+            self.project, "隐藏基线", "五年核心窗口秘密", "researcher_baseline", "imported", "Professor"
+        )
+        decide_design(self.project, baseline["design_id"], True, "Professor", "旧讨论恢复")
+        shared = create_design_draft(
+            self.project, "共同计划", "共同执行边界", "shared_design", "manual", "Professor"
+        )
+        decide_design(self.project, shared["design_id"], True, "Professor", "共同批准")
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        contexts: list[str] = []
+
+        def final(*args: object) -> dict[str, str]:
+            contexts.append(str(args[4]))
+            return {"type": "final", "content": "ok"}
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime._model_action", side_effect=final):
+                send_message(self.project, self.thread["thread_id"], "独立想方案", planning_mode="independent_planning")
+                send_message(self.project, self.thread["thread_id"], "按计划推进", planning_mode="guided_execution")
+        self.assertIn("intentionally withheld", contexts[0])
+        self.assertNotIn("五年核心窗口秘密", contexts[0])
+        self.assertNotIn("共同执行边界", contexts[0])
+        self.assertIn("共同执行边界", contexts[1])
+        self.assertNotIn("五年核心窗口秘密", contexts[1])
+
     def test_source_list_exposes_optional_research_context(self) -> None:
         source_id = list_sources(self.project)[0]["source_id"]
         research = self.project / "research"
@@ -168,7 +216,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 9)
+        self.assertEqual(version, 10)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:

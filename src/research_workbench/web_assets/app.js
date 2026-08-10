@@ -5,6 +5,7 @@ const state = {
   manuscriptId: '', sectionId: '', authoringMode: 'dialogue', proposalId: '',
   document: null, documentManuscriptId: '', selection: null, browserSession: null,
   modelSettings: null, sessionToken: '', lastDocxExport: '', nativeBridge: '',
+  planningMode: 'independent_planning',
 };
 const $ = (id) => document.getElementById(id);
 
@@ -272,6 +273,7 @@ async function refreshLibrary() {
 }
 
 function renderAgentShell() {
+  $('planningMode').value = state.planningMode;
   const projectSelect = $('projectSelect'); projectSelect.replaceChildren();
   for (const project of (state.snapshot?.workspace?.projects || [])) {
     const option = new Option(`${project.title} · ${project.source_count} 项文献`, project.project_id);
@@ -310,7 +312,7 @@ function latestRun() { return state.thread?.runs?.[0]; }
 function renderThread() {
   $('threadTitle').textContent = state.thread?.thread?.title || '新建一个研究线程';
   const run = latestRun();
-  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model}` : '对话与运行状态会保存在本地项目中';
+  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '独立构思' : '按计划执行'}` : '对话与运行状态会保存在本地项目中';
   const messages = $('messages'); messages.replaceChildren();
   for (const message of (state.thread?.messages || [])) {
     const card = document.createElement('article'); card.className = `message ${message.role}`;
@@ -348,6 +350,63 @@ function formField(label, id, value = '', area = false) {
   const wrapper = document.createElement('label'); wrapper.textContent = label;
   const input = document.createElement(area ? 'textarea' : 'input'); input.id = id; input.value = value;
   wrapper.append(input); return wrapper;
+}
+
+function renderResearchDesign(container) {
+  const design = state.snapshot.research_design || {versions:[]};
+  const baseline = design.researcher_baseline;
+  const shared = design.shared_design;
+  const summary = document.createElement('section'); summary.className = 'context-form';
+  summary.append(
+    card('研究者基线（不向 Agent 提供）', baseline ? `${baseline.title} · ${baseline.design_id}` : '尚未批准'),
+    card('共同批准计划（执行时加载）', shared ? `${shared.title} · ${shared.design_id}` : '尚未批准'),
+  );
+  container.append(summary);
+
+  const form = document.createElement('section'); form.className = 'context-form';
+  const role = document.createElement('select'); role.id = 'designRole';
+  role.append(new Option('研究者基线（隐藏）','researcher_baseline'), new Option('共同计划','shared_design'));
+  const roleLabel = document.createElement('label'); roleLabel.textContent = '计划角色'; roleLabel.append(role);
+  const title = formField('标题', 'designTitle');
+  const content = formField('计划正文（可粘贴 Markdown / 纯文本）', 'designContent', '', true);
+  const file = document.createElement('input'); file.type='file'; file.accept='.md,.txt,text/plain,text/markdown';
+  const fileLabel = document.createElement('label'); fileLabel.textContent='或导入文本计划'; fileLabel.append(file);
+  file.onchange = async () => {
+    const selected=file.files[0]; if(!selected)return;
+    $('designContent').value=await selected.text();
+    if(!$('designTitle').value.trim())$('designTitle').value=selected.name.replace(/\.(md|txt)$/i,'');
+  };
+  form.append(roleLabel, title, content, fileLabel, actionButton('保存为待审草案', async () => {
+    await request('/api/research-design/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      title:$('designTitle').value,content:$('designContent').value,plan_role:role.value,
+      origin:file.files[0]?'imported':'manual',created_by:'Professor',
+      base_design_id:role.value==='researcher_baseline'?(baseline?.design_id||''):(shared?.design_id||''),
+    })});
+    await refreshResearch('研究计划草案已保存；尚未改变任何批准版本。'); state.contextMode='design'; renderContext();
+  }, true));
+  container.append(form);
+
+  for (const item of design.versions || []) {
+    const node=card(`${item.plan_role === 'researcher_baseline' ? '研究者基线' : '共同计划'} · ${item.title}`,
+      `${item.status} · ${item.origin} · ${item.design_id} · ${new Date(item.created_at).toLocaleString()}`);
+    const text=document.createElement('textarea'); text.value=item.content; text.readOnly=item.status!=='draft'; node.append(text);
+    if(item.change_summary)node.append(Object.assign(document.createElement('small'),{textContent:`变更摘要：${item.change_summary}`}));
+    if(item.status==='draft'){
+      const decide=async(approved)=>{
+        const reviewer=window.prompt('决定人','Professor'); if(!reviewer)return;
+        const reason=window.prompt(approved?'批准依据':'拒绝依据','与研究者当前判断核对'); if(!reason)return;
+        await request('/api/research-design/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          design_id:item.design_id,approved,reviewer,reason,title:item.title,content:text.value,
+        })});
+        await refreshResearch(approved?'新计划版本已人工批准；旧批准版仍保留。':'草案已拒绝；当前批准版未改变。');
+        state.contextMode='design'; renderContext();
+      };
+      node.append(actionButton('修改后批准',()=>decide(true),true),actionButton('拒绝',()=>decide(false)));
+    } else if(item.decision_reason) {
+      node.append(Object.assign(document.createElement('small'),{textContent:`人工决定：${item.decided_by}｜${item.decision_reason}`}));
+    }
+    container.append(node);
+  }
 }
 
 async function refreshResearch(message = '') {
@@ -399,6 +458,8 @@ function renderContext() {
         await addLibraryFile(work.work_id, file.file_id);
       }, true)); container.append(node);
     }
+  } else if (state.contextMode === 'design') {
+    renderResearchDesign(container);
   } else if (state.contextMode === 'retrieval') {
     const form = document.createElement('section'); form.className = 'context-form';
     const provider = document.createElement('select'); provider.id = 'researchProvider';
@@ -1404,6 +1465,12 @@ $('modelProfile').onchange = async (event) => {
     await refreshAgentSnapshot(); notice('主模型配置已更新；只影响之后的新 Run。');
   } catch (error) { notice(error.message, true); }
 };
+$('planningMode').onchange = (event) => {
+  state.planningMode = event.target.value;
+  notice(state.planningMode === 'independent_planning'
+    ? '独立构思：本次运行不会把研究者基线或共同计划发给模型。'
+    : '按计划执行：本次运行会加载当前共同批准计划。');
+};
 $('sendMessage').onclick = async () => {
   const content = $('messageInput').value.trim();
   if (!state.threadId) { notice('请先创建一个研究线程。', true); return; }
@@ -1420,7 +1487,7 @@ $('sendMessage').onclick = async () => {
   }, 1000);
   try {
     notice('Agent 正在读取项目并调用工具……');
-    state.thread = await request('/api/agent/message', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId, content})});
+    state.thread = await request('/api/agent/message', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId, content, planning_mode:state.planningMode})});
     $('messageInput').value = ''; await refreshAgentSnapshot(); notice(latestRun()?.status === 'WAITING_FOR_APPROVAL' ? 'Agent 已暂停，等待你检查右侧提案。' : '本次运行已完成。');
   } catch (error) {
     try { await refreshAgentSnapshot(); } catch (refreshError) { console.warn('Failed run refresh failed', refreshError); }

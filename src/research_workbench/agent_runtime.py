@@ -17,6 +17,7 @@ import certifi
 from .db import connect, utc_now
 from .authoring import authoring_state
 from .research import list_retrievals
+from .research_design import create_design_draft, current_shared_design
 from .scholarship import research_state
 from .service import list_sources, project_status, source_view
 
@@ -34,11 +35,15 @@ Available actions:
 {"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"..."}}
 {"type":"tool_call","tool":"research.state","arguments":{}}
+{"type":"tool_call","tool":"research.plan_context","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{}}
 {"type":"tool_call","tool":"authoring.state","arguments":{}}
+{"type":"tool_call","tool":"research_design.current","arguments":{}}
+{"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
+Follow an explicit user tool scope. Do not call unrelated state tools merely because they are available.
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
 For source.list, use_state describes page-processing usability, not whether a work is relevant,
 missing, or a prerequisite. When research_context is present, use its source_type, carrier,
@@ -261,6 +266,26 @@ def list_threads(project_root: Path) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def recover_interrupted_runs(project_root: Path) -> int:
+    now = utc_now()
+    with connect(project_root) as connection:
+        rows = connection.execute(
+            "SELECT run_id, goal_id FROM runs WHERE status = 'RUNNING'"
+        ).fetchall()
+        for row in rows:
+            message = "Run was interrupted by an application restart."
+            connection.execute(
+                "UPDATE runs SET status = 'FAILED', error = ?, updated_at = ?, completed_at = ? WHERE run_id = ?",
+                (message, now, now, row["run_id"]),
+            )
+            connection.execute(
+                "UPDATE goals SET status = 'failed', completed_at = ? WHERE goal_id = ?",
+                (now, row["goal_id"]),
+            )
+            _append_run_event(connection, str(row["run_id"]), "run_failed", {"error": message})
+    return len(rows)
+
+
 def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
     with connect(project_root) as connection:
         thread = connection.execute("SELECT * FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
@@ -310,16 +335,22 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
 
 
 def send_message(project_root: Path, thread_id: str, content: str,
-                 context: dict[str, Any] | None = None) -> dict[str, Any]:
+                 context: dict[str, Any] | None = None,
+                 planning_mode: str = "guided_execution") -> dict[str, Any]:
     content = content.strip()
     if not content:
         raise ValueError("message content is required")
+    if planning_mode not in {"independent_planning", "guided_execution"}:
+        raise ValueError(f"unknown planning mode: {planning_mode}")
     profile = _assigned_profile(project_root)
+    shared_design = current_shared_design(project_root) if planning_mode == "guided_execution" else None
     now = utc_now()
     message_id, goal_id, run_id = _id("MSG"), _id("GOL"), _id("RUN")
     snapshot = {
         "role": MAIN_ROLE, "profile_id": profile.profile_id, "provider": profile.provider,
         "model": profile.model, "endpoint": profile.endpoint,
+        "planning_mode": planning_mode,
+        "shared_design_id": shared_design["design_id"] if shared_design else "",
     }
     with connect(project_root) as connection:
         thread = connection.execute("SELECT thread_id FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
@@ -371,7 +402,9 @@ def send_message(project_root: Path, thread_id: str, content: str,
             (run_id, thread_id, goal_id, _json(snapshot), now, now),
         )
         connection.execute("UPDATE threads SET updated_at = ? WHERE thread_id = ?", (now, thread_id))
-        _append_run_event(connection, run_id, "run_started", {"objective": content, "model": snapshot})
+        _append_run_event(connection, run_id, "run_started", {
+            "objective": content, "model": snapshot, "planning_mode": planning_mode,
+        })
         _append_run_event(connection, run_id, "user_message", {"message_id": message_id})
     try:
         objective = content
@@ -384,7 +417,14 @@ def send_message(project_root: Path, thread_id: str, content: str,
                 "selection_text": context.get("selection_text", ""),
                 "attached_refs": context.get("attached_refs", []),
             })
-        _advance_run(project_root, run_id, objective, profile)
+        design_context = (
+            "INDEPENDENT_PLANNING: The researcher baseline and shared design are intentionally withheld. "
+            "Develop a proposal from the stated task and inspected sources; do not claim knowledge of a hidden plan."
+            if planning_mode == "independent_planning"
+            else "APPROVED_SHARED_RESEARCH_DESIGN " + _json(shared_design) if shared_design
+            else "GUIDED_EXECUTION: This project has no approved shared research design."
+        )
+        _advance_run(project_root, run_id, objective, profile, design_context)
     except Exception as error:
         with connect(project_root) as connection:
             connection.execute(
@@ -399,12 +439,13 @@ def send_message(project_root: Path, thread_id: str, content: str,
     return thread_view(project_root, thread_id)
 
 
-def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile) -> None:
+def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile,
+                 design_context: str = "") -> None:
     observations: list[dict[str, Any]] = []
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
         action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
-            profile, objective, observations, remaining
+            profile, objective, observations, remaining, design_context
         )
         action_type = action.get("type")
         if action_type == "final":
@@ -474,6 +515,7 @@ def _model_action(
     objective: str,
     observations: list[dict[str, Any]],
     remaining_tool_calls: int = MAX_TOOL_CALLS,
+    design_context: str = "",
 ) -> dict[str, Any]:
     budget_instruction = (
         "No tool calls remain. Return a final answer now using only the tool results already provided."
@@ -483,6 +525,7 @@ def _model_action(
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": budget_instruction},
+        {"role": "system", "content": design_context},
         {"role": "user", "content": objective},
     ]
     for observation in observations:
@@ -554,7 +597,7 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "retrieval.list", "authoring.state", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -582,10 +625,38 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result = _read_page(project_root, str(arguments.get("page_id", "")))
         elif tool_name == "research.state":
             result = research_state(project_root)
+        elif tool_name == "research.plan_context":
+            result = _planning_context(project_root)
         elif tool_name == "retrieval.list":
             result = list_retrievals(project_root)
         elif tool_name == "authoring.state":
             result = authoring_state(project_root)
+        elif tool_name == "research_design.current":
+            with connect(project_root) as connection:
+                run = connection.execute(
+                    "SELECT model_snapshot_json FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            snapshot = _decode(run["model_snapshot_json"], {}) if run else {}
+            result = ({"withheld": True, "reason": "independent_planning"}
+                      if snapshot.get("planning_mode") == "independent_planning"
+                      else current_shared_design(project_root))
+        elif tool_name == "research_design.propose":
+            title = str(arguments.get("title", "")).strip()
+            content = str(arguments.get("content", "")).strip()
+            if not title or not content:
+                raise ValueError("research_design.propose requires title and content")
+            with connect(project_root) as connection:
+                run = connection.execute(
+                    "SELECT model_snapshot_json FROM runs WHERE run_id = ?", (run_id,)
+                ).fetchone()
+            snapshot = _decode(run["model_snapshot_json"], {}) if run else {}
+            current = current_shared_design(project_root)
+            result = create_design_draft(
+                project_root, title, content, "shared_design", "model",
+                str(snapshot.get("model", "research-agent")),
+                str(arguments.get("change_summary", "")),
+                current["design_id"] if current else "", run_id, snapshot,
+            )
         else:
             title = str(arguments.get("title", "")).strip()
             content = str(arguments.get("content", "")).strip()
@@ -634,6 +705,42 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             connection, run_id, "tool_completed", {"tool_call_id": call_id, "tool": tool_name}
         )
     return result
+
+
+def _planning_context(project_root: Path) -> dict[str, Any]:
+    status = project_status(project_root)
+    sources = list_sources(project_root)
+    research = research_state(project_root)
+    return {
+        "project": {
+            "title": status.get("title", ""),
+            "source_count": status.get("source_count", len(sources)),
+            "open_anomaly_count": status.get("open_anomaly_count", 0),
+        },
+        "sources": [
+            {
+                "source_id": item["source_id"], "title": item["title"],
+                "use_state": item["use_state"], "page_count": item.get("page_count", 0),
+                "research_context": item.get("research_context", {}),
+            }
+            for item in sources
+        ],
+        "research_counts": {
+            "claims": len(research.get("claims", [])),
+            "evidence": sum(len(item.get("evidence", [])) for item in research.get("claims", [])),
+            "freezes": len(research.get("freezes", [])),
+            "approved_freezes": sum(item.get("status") == "approved" for item in research.get("freezes", [])),
+        },
+        "freeze_summaries": [
+            {
+                "freeze_id": item.get("freeze_id", ""), "title": item.get("title", ""),
+                "status": item.get("status", ""),
+                "claim_count": len(item.get("payload", {}).get("claims", [])),
+            }
+            for item in research.get("freezes", [])
+        ],
+        "boundary": "This compact planning context is project state, not source evidence. Inspect original pages before evidence use.",
+    }
 
 
 def _read_page(project_root: Path, page_id: str) -> dict[str, Any]:

@@ -14,6 +14,7 @@ from .agent_runtime import (
     create_thread,
     decide_approval,
     list_threads,
+    recover_interrupted_runs,
     send_message,
     sync_model_profiles,
     thread_view,
@@ -50,6 +51,7 @@ from .library import (
 from .library_store import resolve_library_root
 from .project_library import add_library_file_to_project
 from .research import connector_capabilities, list_retrievals, retrieval_record, search
+from .research_design import create_design_draft, decide_design, design_state
 from .scholarship import (
     approve_freeze,
     create_browser_session,
@@ -141,6 +143,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "retrievals": list_retrievals(self.server.project_root),
                     "research": research_state(self.server.project_root),
                     "authoring": authoring_state(self.server.project_root),
+                    "research_design": design_state(self.server.project_root),
                     "runtime": {
                         "mode": "desktop" if self.server.desktop_mode else "browser",
                         "desktop_build": os.getenv("HRW_DESKTOP_BUILD", ""),
@@ -174,6 +177,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/thread":
                 thread_id = parse_qs(parsed.query).get("id", [""])[0]
                 self._json(thread_view(self.server.project_root, thread_id))
+                return
+            if parsed.path == "/api/research-design":
+                self._json(design_state(self.server.project_root))
                 return
             if parsed.path == "/api/manuscript/document":
                 manuscript_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -400,6 +406,24 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["thread_id"]),
                     str(payload["content"]),
                     payload.get("context") if isinstance(payload.get("context"), dict) else None,
+                    str(payload.get("planning_mode", "guided_execution")),
+                )
+            elif parsed.path == "/api/research-design/draft":
+                result = create_design_draft(
+                    self.server.project_root,
+                    str(payload["title"]), str(payload["content"]), str(payload["plan_role"]),
+                    str(payload.get("origin", "manual")), str(payload["created_by"]),
+                    str(payload.get("change_summary", "")), str(payload.get("base_design_id", "")),
+                    str(payload.get("origin_ref", "")),
+                )
+            elif parsed.path == "/api/research-design/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_design(
+                    self.server.project_root, str(payload["design_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]), str(payload["reason"]),
+                    str(payload["title"]) if "title" in payload else None,
+                    str(payload["content"]) if "content" in payload else None,
                 )
             elif parsed.path == "/api/approval/decide":
                 edited = payload.get("edited_request")
@@ -639,6 +663,7 @@ def build_server(
     server.desktop_bridge_ready = False
     registry = initialize_workspace(server.workspace_root, project_root)
     server.project_root = Path(registry["current_project"])
+    recover_interrupted_runs(server.project_root)
     return server
 
 

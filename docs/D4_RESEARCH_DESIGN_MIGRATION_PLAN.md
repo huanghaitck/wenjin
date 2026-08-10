@@ -1,6 +1,6 @@
 # D4 Migration Plan｜Versioned Research Design
 
-状态：实施前方案  
+状态：最小闭环已实现并通过真实项目验收
 日期：2026-08-11
 
 ## 1. 目标与完成标准
@@ -61,9 +61,10 @@ research_design_versions
 
 ### 提交 B｜Agent 上下文与工具
 
-- 每次模型调用注入当前批准版及 `design_id`；
+- 运行回执记录模式和共同计划 `design_id`；
 - 默认只注入批准的 `shared_design`，绝不注入 `researcher_baseline`；
 - 增加显式运行模式 `independent_planning / guided_execution`；
+- 增加精简 `research.plan_context`，避免独立规划默认装载旧冻结全文；
 - 增加只读 `research_design.current`；
 - 增加需人工批准的 `research_design.propose`；
 - 测试模型建议不会改变批准版。
@@ -118,3 +119,11 @@ research_design_versions
 - 多人实时协作冲突合并；
 - PDF/DOCX 复杂计划导入；
 - 计划自动触发联网抓取、证据冻结或文章改写。
+
+## 8. 秦岭项目验收结果
+
+- 研究者基线：`RDP_5c6e2e95b561421f9d51998dd0589bc8`；
+- DeepSeek 独立提案：`RDP_986e079fc4f740b1829fb6c349396ef0`，人工拒绝并保留；
+- 共同批准计划：`RDP_cfc716742ef3407ba1ab384d510f487d`；
+- 执行模式回归正确读出1871—1875核心窗、三组个案和“中间人可见度”的次级地位；
+- 研究者基线没有进入模型上下文；重启后版本链仍可恢复。

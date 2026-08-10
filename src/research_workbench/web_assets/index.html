@@ -70,7 +70,10 @@
     <section class="conversation-panel surface">
       <header class="agent-heading">
         <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
-        <label>主模型<select id="modelProfile"></select></label>
+        <div>
+          <label>对话状态<select id="planningMode"><option value="independent_planning">独立构思（隐藏研究者基线）</option><option value="guided_execution">按共同计划执行</option></select></label>
+          <label>主模型<select id="modelProfile"></select></label>
+        </div>
       </header>
       <div id="messages" class="messages"></div>
       <div class="composer">
@@ -83,6 +86,7 @@
       <header class="agent-heading"><div><h2>研究上下文</h2><p>来源状态始终和对话并列可见</p></div></header>
       <nav id="contextTabs" class="context-tabs">
         <button data-context="sources" class="selected">项目文献</button>
+        <button data-context="design">研究计划</button>
         <button data-context="library">图书馆</button>
         <button data-context="retrieval">联网研究</button>
         <button data-context="evidence">证据与论点</button>

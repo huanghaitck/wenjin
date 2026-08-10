@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -721,6 +721,28 @@ CREATE INDEX IF NOT EXISTS idx_manuscript_reviews_group
 ON manuscript_reviews(review_group_id, reviewer_role);
 """
 
+MIGRATION_10 = """
+CREATE TABLE IF NOT EXISTS research_design_versions (
+    design_id TEXT PRIMARY KEY,
+    base_design_id TEXT REFERENCES research_design_versions(design_id),
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    change_summary TEXT NOT NULL,
+    plan_role TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    origin_ref TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_by TEXT,
+    decision_reason TEXT,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_research_design_role_status
+ON research_design_versions(plan_role, status, created_at);
+"""
+
 
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
@@ -786,6 +808,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (9, utc_now()),
         )
+        version = 9
+    if version < 10:
+        connection.executescript(MIGRATION_10)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (10, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -813,6 +842,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
                    WHERE ea.evidence_id IS NULL"""
             )
     connection.executescript(MIGRATION_9)
+    connection.executescript(MIGRATION_10)
 
 
 @contextmanager
@@ -845,6 +875,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_7)
         connection.executescript(MIGRATION_8)
         connection.executescript(MIGRATION_9)
+        connection.executescript(MIGRATION_10)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
