@@ -75,6 +75,10 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         revision = revise_note(self.project, approved["note_id"], "REFORMAT_EXISTING", {
             "user_supplied_text": "张三：《考察记》，北京：史学出版社，1908年，第12页。",
         })
+        self.assertEqual(revision["status"], "active")
+        self.assertEqual(revision["pending"]["verification_state"], "PAGE_VERIFIED_REFORMATTED")
+        during_review = export_document(self.project, self.manuscript["manuscript_id"], "markdown")
+        self.assertIn("[^note1]", (self.project / during_review["project_path"]).read_text(encoding="utf-8"))
         decide_note(self.project, revision["pending"]["note_version_id"], True, "human-reviewer")
         self.assertEqual(len(note_detail(self.project, approved["note_id"])["versions"]), 2)
         tree = self.document["document"]

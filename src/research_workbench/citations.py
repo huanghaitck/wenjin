@@ -125,6 +125,12 @@ def revise_note(project_root: Path, note_id: str, mode: str, citation_data: dict
     if any(item["status"] == "pending" for item in note["versions"]):
         raise ValueError("this note already has a pending revision")
     rendered, verification_state = render_citation(citation_data, mode)
+    current = note.get("current")
+    if mode == "REFORMAT_EXISTING" and current:
+        if current["verification_state"] in {"PAGE_VERIFIED_INSERTED", "PAGE_VERIFIED_REFORMATTED"}:
+            verification_state = "PAGE_VERIFIED_REFORMATTED"
+        elif current["verification_state"] == "METADATA_VERIFIED_PAGE_PENDING":
+            verification_state = "METADATA_VERIFIED_PAGE_PENDING"
     version_id, now = _id("NVER"), utc_now()
     with connect(project_root) as connection:
         connection.execute(
@@ -134,7 +140,7 @@ def revise_note(project_root: Path, note_id: str, mode: str, citation_data: dict
             (version_id, note_id, note.get("current_version_id"), mode, _json(citation_data), rendered,
              _json(note.get("source_refs", [])), verification_state, note["template_id"], now),
         )
-        connection.execute("UPDATE manuscript_notes SET status = 'pending_revision', updated_at = ? WHERE note_id = ?",
+        connection.execute("UPDATE manuscript_notes SET status = 'active', updated_at = ? WHERE note_id = ?",
                            (now, note_id))
     return note_detail(project_root, note_id)
 
