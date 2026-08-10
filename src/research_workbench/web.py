@@ -28,6 +28,7 @@ from .authoring import (
     export_manuscript,
     import_manuscript,
     manuscript_detail,
+    run_manuscript_review,
 )
 from .document_model import (
     document_detail, ensure_document, export_document, import_docx, reimport_docx, save_document,
@@ -587,6 +588,11 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/manuscript/export":
                 result = export_manuscript(
                     self.server.project_root, str(payload["manuscript_id"]), str(payload["template_id"]),
+                )
+            elif parsed.path == "/api/manuscript/review/run":
+                result = run_manuscript_review(
+                    self.server.project_root, str(payload["manuscript_id"]), str(payload["template_id"]),
+                    bool(payload.get("use_secondary", False)),
                 )
             elif parsed.path == "/api/memory/decide":
                 if not isinstance(payload.get("approved"), bool):
