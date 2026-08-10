@@ -27,6 +27,7 @@ from .authoring import (
     import_manuscript,
 )
 from .document_model import document_detail, ensure_document, export_document, import_docx, save_document
+from .citations import create_note, decide_note, revise_note
 from .pdf_ingestion import ingest_pdf
 from .library import (
     approve_candidates,
@@ -409,6 +410,27 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/manuscript/document/export":
                 result = export_document(
                     self.server.project_root, str(payload["manuscript_id"]), str(payload["format"]),
+                    str(payload.get("template_id", "builtin-history-research")),
+                )
+            elif parsed.path == "/api/note/create":
+                result = create_note(
+                    self.server.project_root, str(payload["manuscript_id"]), str(payload["anchor_node_id"]),
+                    int(payload["anchor_offset"]), str(payload.get("anchor_text", "")),
+                    str(payload["template_id"]), str(payload["mode"]),
+                    payload.get("citation_data", {}) if isinstance(payload.get("citation_data"), dict) else {},
+                    str(payload.get("evidence_id", "")),
+                )
+            elif parsed.path == "/api/note/revise":
+                result = revise_note(
+                    self.server.project_root, str(payload["note_id"]), str(payload["mode"]),
+                    payload.get("citation_data", {}) if isinstance(payload.get("citation_data"), dict) else {},
+                )
+            elif parsed.path == "/api/note/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_note(
+                    self.server.project_root, str(payload["note_version_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]),
                 )
             elif parsed.path == "/api/writing/propose":
                 result = create_writing_proposal(

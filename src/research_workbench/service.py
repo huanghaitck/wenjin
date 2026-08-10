@@ -7,7 +7,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .db import append_audit, connect, initialize_database, utc_now
+from . import __version__
+from .db import SCHEMA_VERSION, append_audit, connect, initialize_database, utc_now
 from .vision import (
     PAGE_OCR_PROMPT,
     PROMPT_VERSION,
@@ -450,6 +451,8 @@ def project_status(project_root: Path) -> dict[str, Any]:
             "SELECT COUNT(*) FROM ocr_proposals WHERE status = 'pending'"
         ).fetchone()[0]
         project["audit_event_count"] = connection.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0]
+        project["app_version"] = __version__
+        project["schema_version"] = SCHEMA_VERSION
         project["sources"] = [dict(row) for row in connection.execute(
             "SELECT source_id, title, processing_state, use_state FROM sources ORDER BY created_at"
         ).fetchall()]

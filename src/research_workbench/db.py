@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -642,6 +642,51 @@ CREATE INDEX IF NOT EXISTS idx_document_io_manuscript ON document_io_receipts(ma
 """
 
 
+MIGRATION_7 = """
+CREATE TABLE IF NOT EXISTS journal_template_revisions (
+    template_revision_id TEXT PRIMARY KEY,
+    template_id TEXT NOT NULL REFERENCES journal_templates(template_id),
+    version_label TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    verified_at TEXT NOT NULL,
+    requirements_json TEXT NOT NULL,
+    verification_status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(template_id, version_label)
+);
+CREATE TABLE IF NOT EXISTS manuscript_notes (
+    note_id TEXT PRIMARY KEY,
+    manuscript_id TEXT NOT NULL REFERENCES manuscripts(manuscript_id),
+    anchor_node_id TEXT NOT NULL,
+    anchor_offset INTEGER NOT NULL,
+    anchor_text TEXT NOT NULL,
+    current_version_id TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS manuscript_note_versions (
+    note_version_id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL REFERENCES manuscript_notes(note_id),
+    base_version_id TEXT,
+    mode TEXT NOT NULL,
+    citation_data_json TEXT NOT NULL,
+    rendered_text TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    verification_state TEXT NOT NULL,
+    template_id TEXT NOT NULL REFERENCES journal_templates(template_id),
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    reviewer TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_template_revisions_template ON journal_template_revisions(template_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_manuscript_notes_manuscript ON manuscript_notes(manuscript_id, anchor_node_id);
+CREATE INDEX IF NOT EXISTS idx_note_versions_note ON manuscript_note_versions(note_id, created_at);
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -685,6 +730,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (6, utc_now()),
         )
+        version = 6
+    if version < 7:
+        connection.executescript(MIGRATION_7)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (7, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -692,6 +744,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_4)
     connection.executescript(MIGRATION_5)
     connection.executescript(MIGRATION_6)
+    connection.executescript(MIGRATION_7)
 
 
 @contextmanager
@@ -721,6 +774,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_4)
         connection.executescript(MIGRATION_5)
         connection.executescript(MIGRATION_6)
+        connection.executescript(MIGRATION_7)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

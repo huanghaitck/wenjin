@@ -32,10 +32,10 @@ button:hover { border-color: var(--accent); }
 #notice.error { color: var(--danger); }
 .agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(480px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
 .library-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: minmax(290px, .8fr) minmax(420px, 1.1fr) minmax(390px, 1fr); gap: 10px; padding: 0 12px 12px; }
-.article-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 300px minmax(560px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
+.article-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(500px, 1fr) 360px; gap: 10px; padding: 0 12px 12px; }
 .manuscript-panel, .section-editor, .authoring-control { display: grid; min-height: 0; }
 .manuscript-panel { grid-template-rows: auto auto minmax(0, 1fr); }
-.section-editor { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.section-editor { grid-template-rows: auto auto minmax(0, 1fr) auto auto; background: #e7e2d8; }
 .authoring-control { grid-template-rows: auto auto minmax(0, 1fr); }
 .import-manuscript { margin: 0; padding: 10px; border-bottom: 1px solid var(--line); }
 .import-manuscript label { margin-top: 7px; }
@@ -48,10 +48,17 @@ button:hover { border-color: var(--accent); }
 .compare-editor { min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
 .compare-editor label { min-height: 0; }
 .compare-editor textarea { height: 100%; min-height: 520px; }
-.editor-toolbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f1ece3; }
-.document-canvas { overflow: auto; width: min(820px, calc(100% - 36px)); margin: 16px auto; padding: 54px 64px; outline: none; color: #211f1b; background: #fff; border: 1px solid #ddd5c8; box-shadow: 0 8px 30px #3b30261c; font: 16px/1.9 Georgia, "Songti SC", "SimSun", serif; }
+.editor-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: #f8f5ee; }
+.toolbar-select { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-size: 11px; }
+.toolbar-select select { max-width: 190px; }
+.document-canvas { overflow: auto; width: min(860px, calc(100% - 30px)); min-height: calc(100% - 32px); margin: 16px auto; padding: 58px 54px; outline: none; color: #211f1b; background: #fff; border: 1px solid #d5ccbc; box-shadow: 0 10px 34px #3b302627; font: 16px/1.95 "Songti SC", "SimSun", Georgia, serif; caret-color: var(--accent); }
 .document-canvas p, .document-canvas blockquote { min-height: 1.9em; margin: 0 0 1em; }
 .document-canvas blockquote { padding-left: 18px; color: #595148; border-left: 3px solid var(--accent-soft); }
+.note-marker { margin: 0 1px; color: #8b4e2f; font: 700 10px/1 Inter, sans-serif; cursor: pointer; user-select: none; }
+.note-marker.pending { color: #ad7a37; }
+.manuscript-status { padding: 7px 12px; color: var(--muted); background: #f8f5ee; border-top: 1px solid var(--line); font-size: 11px; }
+.note-state { display: inline-block; margin-top: 5px; padding: 2px 6px; border-radius: 999px; background: #efe8dc; color: var(--muted); font-size: 9px; }
+.note-state.active { color: var(--ok); background: #e8f1e9; }
 .proposal-drawer { margin: 0; padding: 8px 12px; border-top: 1px solid var(--line); }
 .proposal-drawer textarea { width: 100%; min-height: 130px; margin-top: 7px; }
 .inventory-panel, .catalog-panel, .work-detail-panel { display: grid; min-height: 0; }
@@ -126,6 +133,7 @@ pre { overflow-x: auto; margin: 6px 0 0; padding: 7px; color: #49443d; backgroun
 .context-tabs { display: flex; gap: 5px; overflow-x: auto; padding: 8px; border-bottom: 1px solid var(--line); }
 .context-tabs button { min-height: 29px; padding: 4px 7px; white-space: nowrap; font-size: 10px; }
 .context-tabs button.selected { color: #fff; background: var(--accent); border-color: var(--accent); }
+#authoringTabs { flex-wrap: wrap; overflow-x: visible; }
 .context-content { overflow: auto; padding: 10px; }
 .context-card { display: grid; gap: 6px; margin-bottom: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 .context-card h3, .context-card p { margin: 0; }

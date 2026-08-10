@@ -82,7 +82,7 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         word = export_document(self.project, imported["manuscript_id"], "docx")
         self.assertTrue((self.project / markdown["project_path"]).is_file())
         self.assertTrue((self.project / word["project_path"]).is_file())
-        self.assertEqual(word["fidelity"]["level"], "limited")
+        self.assertEqual(word["fidelity"]["level"], "structured_with_true_footnotes")
 
     def test_ui_has_four_permanent_workspaces_and_nested_repair(self) -> None:
         html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")

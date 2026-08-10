@@ -15,6 +15,43 @@ from .scholarship import freeze_detail
 Writer = Callable[[str], str]
 OPERATIONS = {"polish", "section_draft"}
 
+BUILTIN_JOURNAL_TEMPLATES = (
+    {
+        "template_id": "builtin-history-research",
+        "revision_id": "JTR_history_research_public_reference",
+        "name": "《历史研究》",
+        "citation_style": "页下注；①②③；每页单独编号；序号置于相关标点之后",
+        "section_rules": ["中文题目", "摘要", "关键词", "正文", "页下注释"],
+        "version_label": "公开规范参考版（2026-08-10 核验）",
+        "effective_date": "公开版本日期未能从期刊官网确认",
+        "source_url": "https://www.ynu.edu.cn/__local/3/C4/E8/48C0EFB258EA4A95C7F446EC740_06110F24_37381.pdf?e=.pdf",
+        "verification_status": "REFERENCE_NEEDS_PRE_SUBMISSION_RECHECK",
+        "requirements": {
+            "note_placement": "footnote", "number_restart": "each_page", "marker": "circled_arabic",
+            "anchor_position": "after_punctuation", "warning": "公开镜像未证明仍是期刊当前最新版，投稿前必须复核",
+        },
+    },
+    {
+        "template_id": "builtin-chinese-social-sciences-2026",
+        "revision_id": "JTR_chinese_social_sciences_2026",
+        "name": "《中国社会科学》",
+        "citation_style": "页下注；①②；每页单独编号；2026 年修订引文注释规定",
+        "section_rules": ["中英文题目", "中英文摘要（各 300 字以内）", "中英文关键词（3—5 个）", "正文", "页下注释"],
+        "version_label": "2026 年修订版",
+        "effective_date": "2026",
+        "source_url": "https://sscp.cssn.cn/tsgpt/202510/W020260609553247288896.pdf",
+        "verification_status": "OFFICIAL_CURRENT_CHECKED_2026_08_10",
+        "requirements": {
+            "max_words": 20000, "paper": "A4", "body_font": "宋体", "body_size_pt": 12,
+            "body_grid": "36字×35行", "note_placement": "footnote", "number_restart": "each_page",
+            "marker": "circled_arabic", "note_font": "仿宋", "note_size_pt": 10.5,
+            "anchor_position": "after_punctuation", "warning": "投稿前仍须核对期刊最新公告",
+            "submission_guide_url": "https://sscp.cssn.cn/tzgg/202502/t20250227_5849425.shtml",
+            "citation_rules_url": "https://sscp.cssn.cn/tsgpt/202510/W020260609553247288896.pdf",
+        },
+    },
+)
+
 
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
@@ -332,18 +369,38 @@ def list_historiography(project_root: Path) -> list[dict[str, Any]]:
 
 def ensure_journal_templates(project_root: Path) -> list[dict[str, Any]]:
     with connect(project_root) as connection:
-        if connection.execute("SELECT COUNT(*) FROM journal_templates").fetchone()[0] == 0:
+        now = utc_now()
+        for item in BUILTIN_JOURNAL_TEMPLATES:
             connection.execute(
-                """INSERT INTO journal_templates(template_id, name, citation_style, section_rules_json,
-                   format_rules_json, origin, created_at) VALUES ('builtin-chinese-history', ?, ?, ?, ?, 'builtin', ?)""",
-                ("中文史学通用（待按期刊核对）", "中文脚注，版本与页码必填",
-                 _json(["标题", "摘要", "关键词", "正文", "注释"]),
-                 _json({"warning": "投稿前必须导入目标期刊最新规范并人工复核"}), utc_now()),
+                """INSERT OR IGNORE INTO journal_templates(template_id, name, citation_style,
+                   section_rules_json, format_rules_json, origin, created_at)
+                   VALUES (?, ?, ?, ?, ?, 'builtin', ?)""",
+                (item["template_id"], item["name"], item["citation_style"], _json(item["section_rules"]),
+                 _json(item["requirements"]), now),
             )
-        rows = [dict(row) for row in connection.execute("SELECT * FROM journal_templates ORDER BY origin, name")]
+            connection.execute(
+                """INSERT OR IGNORE INTO journal_template_revisions(template_revision_id, template_id,
+                   version_label, effective_date, source_url, verified_at, requirements_json,
+                   verification_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (item["revision_id"], item["template_id"], item["version_label"], item["effective_date"],
+                 item["source_url"], "2026-08-10", _json(item["requirements"]),
+                 item["verification_status"], now),
+            )
+        rows = [dict(row) for row in connection.execute(
+            """SELECT t.*, r.template_revision_id, r.version_label, r.effective_date, r.source_url,
+                      r.verified_at, r.requirements_json, r.verification_status
+               FROM journal_templates t
+               LEFT JOIN journal_template_revisions r ON r.template_revision_id = (
+                   SELECT r2.template_revision_id FROM journal_template_revisions r2
+                   WHERE r2.template_id = t.template_id ORDER BY r2.created_at DESC LIMIT 1
+               )
+               WHERE t.origin = 'user' OR r.template_revision_id IS NOT NULL
+               ORDER BY t.origin, t.name"""
+        )]
     for row in rows:
         row["section_rules"] = json.loads(row["section_rules_json"])
         row["format_rules"] = json.loads(row["format_rules_json"])
+        row["requirements"] = json.loads(row["requirements_json"]) if row.get("requirements_json") else row["format_rules"]
     return rows
 
 

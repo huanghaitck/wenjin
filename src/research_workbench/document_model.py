@@ -8,8 +8,15 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt
+from docx.shared import RGBColor
 
+from .authoring import ensure_journal_templates
+from .citations import check_note_anchors, list_notes
 from .db import append_audit, connect, utc_now
+from .docx_notes import add_footnote_reference, attach_footnotes
 
 
 def _id(prefix: str) -> str:
@@ -131,6 +138,7 @@ def document_detail(project_root: Path, manuscript_id: str) -> dict[str, Any]:
     for item in receipts:
         item["fidelity"] = json.loads(item.pop("fidelity_json"))
     result["revisions"], result["io_receipts"] = revisions, receipts
+    result["notes"] = list_notes(project_root, manuscript_id)
     return result
 
 
@@ -182,16 +190,47 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any]) 
                            (str(tree.get("title", "")).strip() or "未命名稿件", now, manuscript_id))
         append_audit(connection, "document_revision_saved", "manuscript", manuscript_id,
                      {"revision_id": revision_id, "base_revision_id": current["current_revision_id"]})
+    check_note_anchors(project_root, manuscript_id, tree)
     return document_detail(project_root, manuscript_id)
 
 
-def markdown_from_tree(tree: dict[str, Any]) -> str:
+def _numbered_notes(notes: list[dict[str, Any]], tree: dict[str, Any]) -> tuple[dict[str, list[tuple[int, dict[str, Any]]]], list[dict[str, Any]]]:
+    by_node: dict[str, list[tuple[int, dict[str, Any]]]] = {}
+    node_order = {
+        str(node.get("node_id")): position
+        for position, node in enumerate(
+            node for section in tree.get("children", []) for node in section.get("children", [])
+        )
+    }
+    ordered = sorted(notes, key=lambda item: (
+        node_order.get(str(item["anchor_node_id"]), 10**9), int(item["anchor_offset"]), item["created_at"]
+    ))
+    for number, note in enumerate(ordered, start=1):
+        by_node.setdefault(str(note["anchor_node_id"]), []).append((number, note))
+    return by_node, ordered
+
+
+def _markdown_text(text: str, placements: list[tuple[int, dict[str, Any]]]) -> str:
+    for number, note in sorted(placements, key=lambda item: int(item[1]["anchor_offset"]), reverse=True):
+        offset = min(max(0, int(note["anchor_offset"])), len(text))
+        text = text[:offset] + f"[^note{number}]" + text[offset:]
+    return text
+
+
+def markdown_from_tree(tree: dict[str, Any], notes: list[dict[str, Any]] | None = None) -> str:
+    by_node, ordered = _numbered_notes(notes or [], tree)
     lines = [f"# {tree.get('title', '未命名稿件')}", ""]
     for section in tree.get("children", []):
         lines.extend([f"## {section.get('heading', '正文')}", ""])
         for node in section.get("children", []):
             prefix = "> " if node.get("type") == "quote" else ""
-            lines.extend([prefix + str(node.get("text", "")), ""])
+            text = _markdown_text(str(node.get("text", "")), by_node.get(str(node.get("node_id")), []))
+            lines.extend([prefix + text, ""])
+    if ordered:
+        lines.append("---")
+        lines.append("")
+        for number, note in enumerate(ordered, start=1):
+            lines.append(f"[^note{number}]: {note['rendered_text']}")
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -225,31 +264,72 @@ def import_docx(project_root: Path, title: str, data: bytes) -> dict[str, Any]:
     return result
 
 
-def export_document(project_root: Path, manuscript_id: str, format_name: str) -> dict[str, Any]:
+def export_document(project_root: Path, manuscript_id: str, format_name: str,
+                    template_id: str = "builtin-history-research") -> dict[str, Any]:
     detail = ensure_document(project_root, manuscript_id)
     tree = detail["document"]
+    templates = {item["template_id"]: item for item in ensure_journal_templates(project_root)}
+    if template_id not in templates:
+        raise KeyError(f"unknown journal template: {template_id}")
+    template = templates[template_id]
+    notes = list_notes(project_root, manuscript_id, approved_only=True)
+    by_node, ordered_notes = _numbered_notes(notes, tree)
     export_root = project_root / "exports"
     export_root.mkdir(parents=True, exist_ok=True)
     warnings: list[str] = []
     if format_name == "markdown":
         path = export_root / f"{manuscript_id}-{detail['current_revision_id']}.md"
-        path.write_text(markdown_from_tree(tree), encoding="utf-8")
+        path.write_text(markdown_from_tree(tree, notes), encoding="utf-8")
         level = "native_text"
     elif format_name == "docx":
         path = export_root / f"{manuscript_id}-{detail['current_revision_id']}.docx"
         document = Document()
-        document.add_heading(str(tree.get("title", "未命名稿件")), level=0)
+        requirements = template.get("requirements", {})
+        section_properties = document.sections[0]
+        section_properties.page_width, section_properties.page_height = Cm(21), Cm(29.7)
+        normal = document.styles["Normal"]
+        normal.font.name = "SimSun"
+        normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        normal.font.size = Pt(float(requirements.get("body_size_pt", 12)))
+        for style_name, size in (("Heading 1", 14),):
+            style = document.styles[style_name]
+            style.font.name = "SimSun"
+            style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+            style.font.size = Pt(size)
+            style.font.color.rgb = RGBColor(0, 0, 0)
+        title = document.add_paragraph()
+        title_run = title.add_run(str(tree.get("title", "未命名稿件")))
+        title_run.bold = True
+        title_run.font.name = "SimSun"
+        title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+        title_run.font.size = Pt(18)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
         for section in tree.get("children", []):
             document.add_heading(str(section.get("heading", "正文")), level=1)
             for node in section.get("children", []):
                 style = "Quote" if node.get("type") == "quote" else None
-                document.add_paragraph(str(node.get("text", "")), style=style)
+                paragraph = document.add_paragraph(style=style)
+                text = str(node.get("text", ""))
+                cursor = 0
+                for number, note in sorted(by_node.get(str(node.get("node_id")), []), key=lambda item: int(item[1]["anchor_offset"])):
+                    offset = min(max(cursor, int(note["anchor_offset"])), len(text))
+                    paragraph.add_run(text[cursor:offset])
+                    add_footnote_reference(paragraph, number)
+                    cursor = offset
+                paragraph.add_run(text[cursor:])
         document.save(path)
-        level = "limited"
-        warnings.append("导出保留标题与段落；批注、修订、域代码和复杂脚注需在 Word 中人工复核")
+        attach_footnotes(path, [note["rendered_text"] for note in ordered_notes],
+                         requirements.get("number_restart") == "each_page")
+        level = "structured_with_true_footnotes"
+        warnings.append("已写入真实 Word 脚注；圈码外观、每页重编号及最终分页仍须在目标 Word 版本中复核")
+        warnings.append("LibreOffice 无界面转换在中文标点后紧接脚注时可能失败；Microsoft Word 渲染已通过")
     else:
         raise ValueError("format must be markdown or docx")
-    fidelity = {"level": level, "warnings": warnings}
+    fidelity = {
+        "level": level, "warnings": warnings, "approved_note_count": len(ordered_notes),
+        "template_id": template_id, "template_revision_id": template.get("template_revision_id"),
+        "template_verification_status": template.get("verification_status"),
+    }
     receipt = _record_receipt(project_root, manuscript_id, detail["current_revision_id"],
                               "export", format_name, path.relative_to(project_root).as_posix(), fidelity)
     return {**receipt, "download_url": "/api/export/file?path=" + path.relative_to(project_root).as_posix()}

@@ -99,9 +99,9 @@ class D2AuthoringReadingTests(unittest.TestCase):
         exported = export_manuscript(self.project, self.manuscript["manuscript_id"], template["template_id"])
         self.assertTrue((self.project / exported["project_path"]).is_file())
 
-    def test_schema_six_is_current(self) -> None:
+    def test_schema_seven_is_current(self) -> None:
         with connect(self.project) as connection:
-            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 6)
+            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 7)
 
     def test_loopback_authoring_api_imports_and_proposes_without_overwriting(self) -> None:
         server = build_server(

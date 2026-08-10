@@ -455,9 +455,23 @@ function renderDocumentCanvas() {
     canvas.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'选择稿件章节后开始编辑。'}));
     return;
   }
+  const activeNotes = (state.document?.notes || []).filter((note) => note.status === 'active');
   for (const node of section.children || []) {
     const element = document.createElement(node.type === 'quote' ? 'blockquote' : 'p');
-    element.dataset.nodeId = node.node_id; element.dataset.nodeType = node.type; element.textContent = node.text;
+    element.dataset.nodeId = node.node_id; element.dataset.nodeType = node.type;
+    const placements = activeNotes.map((note, index) => ({note, number:index + 1}))
+      .filter((item) => item.note.anchor_node_id === node.node_id)
+      .sort((a,b) => a.note.anchor_offset - b.note.anchor_offset);
+    let cursor = 0;
+    for (const item of placements) {
+      const offset = Math.min(Math.max(cursor, item.note.anchor_offset), node.text.length);
+      element.append(document.createTextNode(node.text.slice(cursor, offset)));
+      const marker = document.createElement('sup'); marker.className='note-marker'; marker.contentEditable='false';
+      marker.textContent=String(item.number); marker.title=item.note.current?.rendered_text || item.note.rendered_text;
+      marker.onclick=()=>{state.authoringMode='notes'; renderAuthoringControl(section, null);};
+      element.append(marker); cursor=offset;
+    }
+    element.append(document.createTextNode(node.text.slice(cursor)));
     canvas.append(element);
   }
 }
@@ -468,17 +482,22 @@ function captureDocumentSection() {
   section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li')).map((node) => ({
     type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : 'paragraph'),
     node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
-    text: node.innerText.trim(),
+    text: (() => { const clone=node.cloneNode(true); clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove()); return clone.innerText.trim(); })(),
   }));
   if (!section.children.length) section.children.push({type:'paragraph', node_id:`NOD_${crypto.randomUUID().replaceAll('-', '')}`, text:''});
 }
 
 function currentSelectionContext() {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !$('documentCanvas').contains(selection.anchorNode)) return state.selection || {text:'', nodeId:''};
+  if (!selection || selection.isCollapsed || !$('documentCanvas').contains(selection.anchorNode)) return state.selection || {text:'', nodeId:'', offset:0};
   const text = selection.toString().trim();
-  const element = selection.anchorNode?.parentElement?.closest('[data-node-id]');
-  state.selection = {text, nodeId:element?.dataset.nodeId || ''};
+  const range=selection.getRangeAt(0);
+  const startElement=(range.startContainer.nodeType===Node.ELEMENT_NODE?range.startContainer:range.startContainer.parentElement)?.closest?.('[data-node-id]');
+  const endElement=(range.endContainer.nodeType===Node.ELEMENT_NODE?range.endContainer:range.endContainer.parentElement)?.closest?.('[data-node-id]');
+  if (!startElement || startElement !== endElement) { notice('注释选区必须位于同一段落内。', true); return state.selection || {text:'',nodeId:'',offset:0}; }
+  const before=range.cloneRange(); before.selectNodeContents(startElement); before.setEnd(range.endContainer,range.endOffset);
+  const fragment=before.cloneContents(); fragment.querySelectorAll?.('.note-marker').forEach((marker)=>marker.remove());
+  state.selection = {text, nodeId:startElement.dataset.nodeId || '', offset:fragment.textContent.length};
   $('selectionContext').textContent = text ? `已固定选区：“${text.slice(0, 42)}${text.length > 42 ? '…' : ''}”` : '当前稿件、修订、章节与选区会随消息保存';
   return state.selection;
 }
@@ -523,6 +542,12 @@ function renderAuthoring() {
   let proposal = proposals.find((item) => item.proposal_id === state.proposalId) || proposals.find((item) => item.status === 'pending') || proposals[0];
   if (proposal) state.proposalId = proposal.proposal_id;
   $('sectionProposal').value = proposal?.proposed_content || '';
+  const templateSelect=$('exportTemplate'); const previous=templateSelect.value; templateSelect.replaceChildren();
+  for(const template of state.snapshot.authoring?.journal_templates||[]) templateSelect.append(new Option(template.name,template.template_id));
+  templateSelect.value=previous||'builtin-history-research';
+  const text=state.document?.document ? state.document.document.children.flatMap((part)=>part.children||[]).map((node)=>node.text).join('') : '';
+  const notes=state.document?.notes||[];
+  $('manuscriptStats').textContent=state.document ? `${text.length} 字符 · ${state.document.document.children.length} 节 · ${notes.filter((note)=>note.status==='active').length} 条已批准注释 · ${notes.filter((note)=>note.pending).length} 条待审` : '尚未选择稿件';
   renderDocumentCanvas();
   renderAuthoringControl(section, proposal);
 }
@@ -553,6 +578,40 @@ function renderAuthoringControl(section, proposal) {
       await refreshAuthoring('消息已保存，并固定到当前稿件修订与选区；不会自动写入正文。');
     }, true)); container.append(form);
     container.append(card('上下文边界', `稿件 ${state.manuscriptId || '—'}\n修订 ${state.document?.current_revision_id || '—'}\n章节 ${state.sectionId || '—'}\n灵感讨论默认只留在对话。`));
+  } else if (state.authoringMode === 'notes') {
+    const selection=state.selection||{text:'',nodeId:'',offset:0};
+    container.append(card('当前注释位置', selection.nodeId ? `选区：“${selection.text || '光标位置'}”\n段落 ${selection.nodeId} · 字符位置 ${selection.offset}` : '先在正文同一段落中选中文字，再点击“插入注释”。'));
+    const form=document.createElement('section'); form.className='context-form';
+    const template=document.createElement('select'); template.id='noteTemplate';
+    for(const item of authoring.journal_templates||[]) template.append(new Option(`${item.name} · ${item.version_label||'人工模板'}`,item.template_id));
+    template.value=$('exportTemplate').value||'builtin-history-research';
+    const templateLabel=document.createElement('label'); templateLabel.textContent='注释模板'; templateLabel.append(template);
+    const mode=document.createElement('select'); mode.id='noteMode';
+    mode.append(new Option('核对原页后插入','VERIFY_AND_INSERT'),new Option('元数据已核，页码稍后补','METADATA_FIRST_PAGE_LATER'),new Option('只整理现有注释文字','REFORMAT_EXISTING'));
+    const modeLabel=document.createElement('label'); modeLabel.textContent='处理模式'; modeLabel.append(mode);
+    const evidence=document.createElement('select'); evidence.id='noteEvidence'; evidence.append(new Option('未选择页块证据',''));
+    for(const claim of state.snapshot.research?.claims||[]) for(const item of claim.evidence||[]) evidence.append(new Option(`${item.source_title||item.source_id} · 物理页 ${item.physical_page||'—'} · ${item.quote.slice(0,32)}`,item.evidence_id));
+    const evidenceLabel=document.createElement('label'); evidenceLabel.textContent='已冻结到原页的证据'; evidenceLabel.append(evidence);
+    form.append(templateLabel,modeLabel,evidenceLabel,
+      formField('来源类型（book/article/archive/classic）','noteSourceType','book'),formField('作者','noteAuthor'),formField('题名','noteTitle'),
+      formField('出版地','notePlace'),formField('出版者','notePublisher'),formField('年份','noteYear'),
+      formField('原书页码或稳定定位','noteOriginalPage'),formField('数字文件页（仅辅助定位）','noteDigitalPage'),
+      formField('已有注释原文（仅“整理现有注释”使用）','noteExisting','',true));
+    form.append(actionButton('生成待审注释',async()=>{
+      if(!state.manuscriptId||!selection.nodeId) throw new Error('请先在正文同一段落中选中文字。');
+      const citation_data={source_type:$('noteSourceType').value,author:$('noteAuthor').value,title:$('noteTitle').value,place:$('notePlace').value,publisher:$('notePublisher').value,year:$('noteYear').value,original_page:$('noteOriginalPage').value,digital_page:$('noteDigitalPage').value,user_supplied_text:$('noteExisting').value};
+      await request('/api/note/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,anchor_node_id:selection.nodeId,anchor_offset:selection.offset,anchor_text:selection.text,template_id:template.value,mode:mode.value,citation_data,evidence_id:evidence.value})});
+      await refreshAuthoring('注释已生成待审版本；批准前不会进入正文或导出文件。');
+    },true)); container.append(form);
+    for(const note of state.document?.notes||[]){
+      const shown=note.pending||note.current||note.versions[0];
+      const templateName=(authoring.journal_templates||[]).find((item)=>item.template_id===shown.template_id)?.name||shown.template_id;
+      const locator=[shown.citation_data?.original_page&&`原书页 ${shown.citation_data.original_page}`,shown.citation_data?.digital_page&&`数字页 ${shown.citation_data.digital_page}`].filter(Boolean).join(' · ');
+      const node=card(shown.rendered_text,`${templateName} · ${shown.verification_state} · ${note.status}${locator?` · ${locator}`:''}`);
+      const badge=document.createElement('span');badge.className=`note-state ${note.status}`;badge.textContent=note.status;node.append(badge);
+      if(shown.source_refs?.length) node.append(actionButton('打开原 PDF 对应页',async()=>{const ref=shown.source_refs[0];state.view=await request(`/api/source?id=${encodeURIComponent(ref.source_id)}`);state.pageIndex=Math.max(0,state.view.pages.findIndex((page)=>page.page_id===ref.page_id));renderWorkbench();setMode('source');}));
+      if(note.pending){const row=document.createElement('div');row.className='row';row.append(actionButton('人工核对后批准',async()=>{await request('/api/note/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note_version_id:note.pending.note_version_id,approved:true,reviewer:'human-reviewer'})});await refreshAuthoring('注释版本已批准并进入正文视图。');},true),actionButton('拒绝',async()=>{await request('/api/note/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({note_version_id:note.pending.note_version_id,approved:false,reviewer:'human-reviewer'})});await refreshAuthoring('注释提案已拒绝。');}));node.append(row);} container.append(node);
+    }
   } else if (state.authoringMode === 'evidence') {
     const claims = state.snapshot.research?.claims || [];
     if (!claims.length) container.append(card('还没有主张与证据', '先在研究对话的“证据与论点”中建立主张，并回到原页固定证据。'));
@@ -600,10 +659,10 @@ function renderAuthoringControl(section, proposal) {
     for(const [label,id,area] of [['著作/论文','histWork',false],['核心立场','histPosition',true],['贡献','histContribution',true],['限制','histLimitation',true],['与当前问题关系','histRelevance',true],['来源引用（逗号分隔）','histRefs',false]]) form.append(formField(label,id,'',area));
     form.append(actionButton('保存学术史候选条目',async()=>{await request('/api/historiography/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({work_title:$('histWork').value,position:$('histPosition').value,contribution:$('histContribution').value,limitation:$('histLimitation').value,relevance:$('histRelevance').value,source_refs:$('histRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('学术史候选条目已保存，等待研究判断。');},true));container.append(form);
     for(const item of authoring.historiography||[]){const node=card(item.work_title,`${item.status} · 来源 ${item.source_refs.join('、')}`);node.append(Object.assign(document.createElement('p'),{textContent:`立场：${item.position}\n贡献：${item.contribution}\n限制：${item.limitation}\n关系：${item.relevance}`}));container.append(node);}
-  } else {
+  } else if (state.authoringMode === 'journal') {
     const form=document.createElement('section');form.className='context-form';form.append(formField('模板名称','journalName'),formField('注释规则','journalCitation'),formField('章节顺序（逗号分隔）','journalSections'));
     form.append(actionButton('保存人工模板',async()=>{await request('/api/journal/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('journalName').value,citation_style:$('journalCitation').value,section_rules:$('journalSections').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('期刊模板已保存；投稿前仍须核对最新规范。');},true));container.append(form);
-    for(const item of authoring.journal_templates||[]){const node=card(item.name,`${item.origin} · ${item.citation_style}`);node.append(Object.assign(document.createElement('p'),{textContent:item.section_rules.join(' → ')}));if(state.manuscriptId)node.append(actionButton('按此模板导出当前稿件',async()=>{const result=await request('/api/manuscript/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,template_id:item.template_id})});notice(`已导出：${result.project_path}`);},true));container.append(node);}
+    for(const item of authoring.journal_templates||[]){const node=card(item.name,`${item.version_label||'人工模板'} · ${item.verification_status||'USER_DEFINED'}`);node.append(Object.assign(document.createElement('p'),{textContent:`${item.citation_style}\n${item.section_rules.join(' → ')}\n核验：${item.verified_at||'由用户维护'}`}));if(item.source_url){const link=document.createElement('a');link.href=item.source_url;link.target='_blank';link.rel='noreferrer';link.textContent='查看规则来源';node.append(link);}container.append(node);}
   }
 }
 
@@ -840,7 +899,7 @@ function renderAnomalies() {
 function renderSettings() {
   const container = $('settingsContent'); if (!container || !state.snapshot) return; container.replaceChildren();
   const project = state.snapshot.project || {}; const caps = state.capabilities || {};
-  container.append(card('版本与项目', `Historical Research Workbench 0.8.0.dev1 · Project schema 6\n${project.title || ''} · ${project.project_id || ''}\n项目文件保持本地，原始材料只读。`));
+  container.append(card('版本与项目', `Historical Research Workbench ${project.app_version || '—'} · Project schema ${project.schema_version || '—'}\n${project.title || ''} · ${project.project_id || ''}\n项目文件保持本地，原始材料只读。`));
   const models = card('模型角色', '主推理模型可以在研究对话中选择；视觉 OCR 与翻译是辅助角色，输出仍须人工验收。');
   for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? '当前主模型' : profile.status} · ${profile.provider} / ${profile.model}`}));
   models.append(Object.assign(document.createElement('p'), {textContent:`视觉辅助：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : '未配置'}\n翻译辅助：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : '未配置'}`})); container.append(models);
@@ -922,13 +981,14 @@ $('saveDocument').onclick = async () => {
 };
 async function exportCurrentDocument(format) {
   if (!state.manuscriptId) throw new Error('请先选择稿件。');
-  const result = await request('/api/manuscript/document/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,format})});
+  const result = await request('/api/manuscript/document/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,format,template_id:$('exportTemplate').value})});
   const link=document.createElement('a'); link.href=result.download_url; link.download=''; document.body.append(link); link.click(); link.remove();
   await loadDocument(state.manuscriptId); renderAuthoring();
   notice(`${format.toUpperCase()} 已导出。保真级别：${result.fidelity.level}${result.fidelity.warnings.length ? `；${result.fidelity.warnings.join('；')}` : ''}`);
 }
 $('exportMarkdown').onclick = () => exportCurrentDocument('markdown').catch((error)=>notice(error.message,true));
 $('exportDocx').onclick = () => exportCurrentDocument('docx').catch((error)=>notice(error.message,true));
+$('insertNote').onclick = () => { currentSelectionContext(); state.authoringMode='notes'; renderAuthoringControl(selectedSection(),null); };
 for (const button of document.querySelectorAll('[data-command]')) button.onclick = () => document.execCommand(button.dataset.command, false);
 $('paragraphButton').onclick = () => document.execCommand('formatBlock', false, 'p');
 $('quoteButton').onclick = () => document.execCommand('formatBlock', false, 'blockquote');
