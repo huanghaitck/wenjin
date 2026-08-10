@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import shutil
@@ -19,6 +20,27 @@ from .vision import (
 
 
 BLOCKING_CATEGORIES = {"content", "location"}
+
+
+def _source_research_context(project_root: Path) -> dict[str, dict[str, Any]]:
+    manifest = project_root / "research" / "source_manifest.csv"
+    if not manifest.is_file():
+        return {}
+    fields = (
+        "author", "title", "version", "date", "language", "source_type", "carrier",
+        "text_layer", "witness_relation", "rights_scope", "reading_status",
+        "verification_status", "notes",
+    )
+    contexts: dict[str, dict[str, Any]] = {}
+    with manifest.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            source_id = str(row.get("source_id", "")).strip()
+            if not source_id:
+                continue
+            context = {field: str(row.get(field, "")).strip() for field in fields if str(row.get(field, "")).strip()}
+            context["citable"] = str(row.get("citable", "")).strip().lower() == "true"
+            contexts[source_id] = context
+    return contexts
 
 
 def _json_hash(value: Any) -> str:
@@ -638,17 +660,23 @@ def list_blocks(project_root: Path, source_id: str) -> list[dict[str, Any]]:
 
 
 def list_sources(project_root: Path) -> list[dict[str, Any]]:
+    contexts = _source_research_context(project_root)
     with connect(project_root) as connection:
-        return [dict(row) for row in connection.execute(
+        rows = [dict(row) for row in connection.execute(
             """SELECT s.source_id, s.title, s.original_name, s.processing_state, s.use_state,
                       s.created_at, (SELECT COUNT(*) FROM pages p WHERE p.source_id = s.source_id) AS page_count,
                       COALESCE((SELECT sv.byte_count FROM source_versions sv WHERE sv.source_id = s.source_id
                                 ORDER BY sv.created_at DESC LIMIT 1), 0) AS byte_count
                FROM sources s ORDER BY s.created_at, s.source_id"""
         ).fetchall()]
+    for row in rows:
+        if row["source_id"] in contexts:
+            row["research_context"] = contexts[row["source_id"]]
+    return rows
 
 
 def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
+    contexts = _source_research_context(project_root)
     with connect(project_root) as connection:
         source = connection.execute(
             """SELECT source_id, title, original_name, processing_state, use_state
@@ -657,6 +685,9 @@ def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
         ).fetchone()
         if source is None:
             raise KeyError(f"unknown source: {source_id}")
+        source = dict(source)
+        if source_id in contexts:
+            source["research_context"] = contexts[source_id]
         page_rows = connection.execute(
             "SELECT * FROM pages WHERE source_id = ? ORDER BY physical_page",
             (source_id,),
@@ -706,7 +737,7 @@ def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
             proposal["normalized_payload"] = json.loads(proposal.pop("normalized_payload_json"))
             proposals.append(proposal)
         return {
-            "source": dict(source),
+            "source": source,
             "pages": pages,
             "relations": relations,
             "anomalies": anomalies,

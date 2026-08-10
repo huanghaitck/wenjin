@@ -25,6 +25,7 @@ from research_workbench.agent_runtime import (
 )
 from research_workbench.db import database_path
 from research_workbench.service import import_structure, initialize_project, register_source
+from research_workbench.service import list_sources, source_view
 from research_workbench.web import build_server
 
 
@@ -131,6 +132,24 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         summary = list_threads(self.project)[0]
         self.assertEqual(summary["message_count"], 1)
         self.assertEqual(summary["latest_run_status"], "WAITING_FOR_APPROVAL")
+
+    def test_source_list_exposes_optional_research_context(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        research = self.project / "research"
+        research.mkdir(exist_ok=True)
+        (research / "source_manifest.csv").write_text(
+            "source_id,source_type,carrier,witness_relation,reading_status,verification_status,citable,notes\n"
+            f"{source_id},search_carrier,TXT,same witness as original,TARGETED_READ,FILE_VERIFIED,false,"
+            "Only a locator; the original volume remains the citation witness\n",
+            encoding="utf-8",
+        )
+
+        listed = list_sources(self.project)[0]["research_context"]
+        self.assertEqual(listed["source_type"], "search_carrier")
+        self.assertEqual(listed["witness_relation"], "same witness as original")
+        self.assertFalse(listed["citable"])
+        self.assertIn("Only a locator", listed["notes"])
+        self.assertEqual(source_view(self.project, source_id)["source"]["research_context"], listed)
 
     def test_schema_v2_project_migrates_on_open(self) -> None:
         connection = sqlite3.connect(database_path(self.project))
