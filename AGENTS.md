@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`.
+Current milestone: `D5_WINDOWS_DESKTOP_PACKAGING_AND_BRIDGE_IN_PROGRESS`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -56,6 +56,12 @@ a Microsoft Word render check of a true footnote. The two built-in journal prese
 `《历史研究》` public reference remains explicitly gated for pre-submission recheck. The next increment must
 come from real use feedback. Do not start full Word parity, template-library expansion, Library Processing
 migration or desktop packaging without a new bounded scope.
+
+The user authorized D5 on 2026-08-10. Follow ADR 0010 and
+`docs/D5_WINDOWS_DESKTOP_PACKAGING_TASK_SPEC.md`. D5 may add a Tauri Windows shell, a packaged Python
+sidecar, explicit native file/Word bridges and model-role configuration. It does not authorize embedded
+Microsoft Word, arbitrary shell access, authenticated browser automation, license bypass, code signing,
+automatic updates or the remaining M6-M11 product roadmap.
 
 ## Startup order
 
