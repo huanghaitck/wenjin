@@ -154,7 +154,7 @@ class D1EndToEndDemoTests(unittest.TestCase):
         with connect(self.project) as connection:
             version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertTrue({"claims", "evidence_items", "evidence_freezes", "browser_sessions"} <= tables)
 
     def test_loopback_api_exposes_conversation_workspace_and_research_objects(self) -> None:

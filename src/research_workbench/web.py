@@ -26,6 +26,7 @@ from .authoring import (
     export_manuscript,
     import_manuscript,
 )
+from .document_model import document_detail, ensure_document, export_document, import_docx, save_document
 from .pdf_ingestion import ingest_pdf
 from .library import (
     approve_candidates,
@@ -142,6 +143,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 thread_id = parse_qs(parsed.query).get("id", [""])[0]
                 self._json(thread_view(self.server.project_root, thread_id))
                 return
+            if parsed.path == "/api/manuscript/document":
+                manuscript_id = parse_qs(parsed.query).get("id", [""])[0]
+                try:
+                    self._json(document_detail(self.server.project_root, manuscript_id))
+                except KeyError:
+                    self._json(ensure_document(self.server.project_root, manuscript_id))
+                return
             if parsed.path == "/api/library/search":
                 query = parse_qs(parsed.query)
                 self._json(search_library(
@@ -172,6 +180,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 page_id = parse_qs(parsed.query).get("id", [""])[0]
                 image = page_image_path(self.server.project_root, page_id)
                 self._send(200, image.read_bytes(), "image/png")
+                return
+            if parsed.path == "/api/export/file":
+                relative = Path(parse_qs(parsed.query).get("path", [""])[0])
+                export_root = (self.server.project_root / "exports").resolve()
+                target = (self.server.project_root / relative).resolve()
+                if export_root not in target.parents or not target.is_file():
+                    raise FileNotFoundError("export file is unavailable")
+                content_type = {
+                    ".md": "text/markdown; charset=utf-8",
+                    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                }.get(target.suffix.lower(), "application/octet-stream")
+                self._send(200, target.read_bytes(), content_type)
                 return
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
             if name not in {"index.html", "app.js", "styles.css"}:
@@ -205,6 +225,15 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     source = register_source(self.server.project_root, upload, title)
                     intake = ingest_pdf(self.server.project_root, source["source_id"])
                 self._json({"source": source, "intake": intake}, 201)
+                return
+            if parsed.path == "/api/manuscript/import-docx":
+                query = parse_qs(parsed.query)
+                title = query.get("title", ["导入的 DOCX"])[0]
+                length = int(self.headers.get("Content-Length", "0"))
+                data = self.rfile.read(length)
+                if not data.startswith(b"PK"):
+                    raise ValueError("uploaded file is not a DOCX package")
+                self._json(import_docx(self.server.project_root, title, data), 201)
                 return
             payload = self._body_json()
             if parsed.path == "/api/repair/block":
@@ -264,6 +293,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root,
                     str(payload["thread_id"]),
                     str(payload["content"]),
+                    payload.get("context") if isinstance(payload.get("context"), dict) else None,
                 )
             elif parsed.path == "/api/approval/decide":
                 edited = payload.get("edited_request")
@@ -366,6 +396,19 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/manuscript/import":
                 result = import_manuscript(
                     self.server.project_root, str(payload["title"]), str(payload["markdown"]),
+                )
+                result["structured_document"] = ensure_document(
+                    self.server.project_root, str(result["manuscript_id"])
+                )
+            elif parsed.path == "/api/manuscript/document/save":
+                if not isinstance(payload.get("document"), dict):
+                    raise ValueError("document must be an object")
+                result = save_document(
+                    self.server.project_root, str(payload["manuscript_id"]), payload["document"],
+                )
+            elif parsed.path == "/api/manuscript/document/export":
+                result = export_document(
+                    self.server.project_root, str(payload["manuscript_id"]), str(payload["format"]),
                 )
             elif parsed.path == "/api/writing/propose":
                 result = create_writing_proposal(

@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "historical-research-workbench"
-version = "0.7.0.dev1"
+version = "0.8.0.dev1"
 description = "Local-first model-selectable Research Codex for auditable historical research"
 requires-python = ">=3.13"
-dependencies = ["PyMuPDF>=1.26,<2"]
+dependencies = ["PyMuPDF>=1.26,<2", "python-docx>=1.2,<2"]
 
 [project.scripts]
 hrw = "research_workbench.cli:main"

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -594,6 +594,54 @@ CREATE INDEX IF NOT EXISTS idx_reading_notes_job ON reading_notes(job_id, source
 """
 
 
+MIGRATION_6 = """
+CREATE TABLE IF NOT EXISTS manuscript_documents (
+    document_id TEXT PRIMARY KEY,
+    manuscript_id TEXT NOT NULL UNIQUE REFERENCES manuscripts(manuscript_id),
+    current_revision_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS document_revisions (
+    revision_id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES manuscript_documents(document_id),
+    base_revision_id TEXT,
+    document_json TEXT NOT NULL,
+    plain_text_hash TEXT NOT NULL,
+    source_format TEXT NOT NULL,
+    status TEXT NOT NULL,
+    fidelity_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS thread_context_bindings (
+    binding_id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL UNIQUE REFERENCES messages(message_id),
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    manuscript_id TEXT,
+    revision_id TEXT,
+    section_id TEXT,
+    node_id TEXT,
+    selection_hash TEXT NOT NULL,
+    selection_text TEXT NOT NULL,
+    attached_refs_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS document_io_receipts (
+    receipt_id TEXT PRIMARY KEY,
+    manuscript_id TEXT NOT NULL REFERENCES manuscripts(manuscript_id),
+    revision_id TEXT,
+    direction TEXT NOT NULL,
+    format TEXT NOT NULL,
+    project_path TEXT,
+    fidelity_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_document_revisions_document ON document_revisions(document_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_context_bindings_thread ON thread_context_bindings(thread_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_document_io_manuscript ON document_io_receipts(manuscript_id, created_at);
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -630,12 +678,20 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (5, utc_now()),
         )
+        version = 5
+    if version < 6:
+        connection.executescript(MIGRATION_6)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (6, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
     connection.executescript(MIGRATION_3)
     connection.executescript(MIGRATION_4)
     connection.executescript(MIGRATION_5)
+    connection.executescript(MIGRATION_6)
 
 
 @contextmanager
@@ -664,6 +720,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(SCHEMA)
         connection.executescript(MIGRATION_4)
         connection.executescript(MIGRATION_5)
+        connection.executescript(MIGRATION_6)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

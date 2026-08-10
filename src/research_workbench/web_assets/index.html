@@ -8,15 +8,12 @@
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学 Research Codex</strong><span>D1 · 对话、项目、来源、证据与人工决定</span></div>
+    <div><strong>史学 Research Codex</strong><span>D3 · 原页、证据、对话与稿件版本由人工决定</span></div>
     <div class="importer">
       <button id="agentMode" class="mode-active">研究对话</button>
-      <button id="articleMode">文章工作台</button>
       <button id="libraryMode">研究图书馆</button>
-      <button id="sourceMode">文献修复</button>
-      <input id="pdfFile" type="file" accept="application/pdf">
-      <button id="importButton">导入 PDF</button>
-      <select id="sourceSelect" aria-label="选择文献"></select>
+      <button id="articleMode">文章工作台</button>
+      <button id="settingsMode">项目设置</button>
     </div>
   </header>
 
@@ -25,6 +22,9 @@
     <aside class="inventory-panel surface">
       <header class="agent-heading"><div><h2>只读盘点</h2><p id="libraryRoot">正在读取图书馆位置……</p></div></header>
       <div class="inventory-form">
+        <strong>图书馆收件箱</strong>
+        <label>单份 PDF（项目私有兼容导入）<input id="pdfFile" type="file" accept="application/pdf"></label>
+        <button id="importButton">导入、清洗并登记页面关系</button>
         <label>材料所在文件夹<input id="scanRoot" placeholder="例如 D:\History\Books"></label>
         <label>验收 Skill<select id="intakeSkill"></select></label>
         <button id="scanLibrary" class="primary-inline">只读盘点，先不入库</button>
@@ -46,6 +46,12 @@
     <aside class="work-detail-panel surface">
       <header class="agent-heading"><div><h2>作品与版本</h2><p>哈希只标识精确文件版本</p></div></header>
       <div id="workDetail" class="work-detail"></div>
+      <section class="project-source-box">
+        <h3>当前项目文献</h3>
+        <select id="sourceSelect" aria-label="选择项目文献"></select>
+        <button id="openSourceRepair">打开原页与文本复核</button>
+        <small>修复是具体文件版本的下属动作；旧项目处理记录暂以兼容方式读取。</small>
+      </section>
     </aside>
   </main>
 
@@ -92,32 +98,54 @@
     <aside class="manuscript-panel surface">
       <header class="agent-heading"><div><h2>稿件与章节</h2><p>原稿和历史版本不会覆盖</p></div></header>
       <details class="import-manuscript" open>
-        <summary>导入 Markdown 稿件</summary>
+        <summary>新建或导入稿件</summary>
         <label>稿件题名<input id="manuscriptTitle" placeholder="论文题目"></label>
         <label>Markdown 正文<textarea id="manuscriptMarkdown" placeholder="# 导言&#10;&#10;现有正文……"></textarea></label>
         <button id="importManuscript" class="primary-inline">导入并按标题分节</button>
+        <label>或选择 DOCX<input id="manuscriptDocx" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
+        <button id="importDocx">导入 DOCX（生成保真报告）</button>
       </details>
       <div id="manuscriptList" class="manuscript-list"></div>
     </aside>
 
     <section class="section-editor surface">
       <header class="agent-heading"><div><h1 id="sectionHeading">选择一个章节</h1><p id="sectionVersion">人工批准后才产生新版本</p></div></header>
-      <div class="compare-editor">
-        <label>当前批准版本<textarea id="sectionBase" readonly></textarea></label>
-        <label>待审写作提案<textarea id="sectionProposal"></textarea></label>
+      <div class="editor-toolbar">
+        <button id="paragraphButton">正文</button><button id="quoteButton">引文</button>
+        <button id="saveDocument" class="primary-inline">保存新修订</button>
+        <button id="exportMarkdown">导出 Markdown</button><button id="exportDocx">导出 DOCX</button>
       </div>
+      <article id="documentCanvas" class="document-canvas" contenteditable="true" spellcheck="true" aria-label="结构化稿件编辑区"></article>
+      <details class="proposal-drawer"><summary>对照待审写作提案</summary><textarea id="sectionProposal"></textarea></details>
+      <textarea id="sectionBase" hidden></textarea>
     </section>
 
     <aside class="authoring-control surface">
-      <header class="agent-heading"><div><h2>写作与阅读</h2><p>写作提案、阅读札记和模板</p></div></header>
+      <header class="agent-heading"><div><h2>研究侧栏</h2><p id="selectionContext">当前稿件、修订、章节与选区会随消息保存</p></div></header>
       <nav id="authoringTabs" class="context-tabs">
-        <button data-authoring="write" class="selected">润色/分节</button>
+        <button data-authoring="dialogue" class="selected">研究对话</button>
+        <button data-authoring="write">润色/分节</button>
+        <button data-authoring="evidence">证据/主张</button>
         <button data-authoring="reading">批量阅读</button>
         <button data-authoring="historiography">学术史</button>
         <button data-authoring="journal">期刊模板</button>
+        <button data-authoring="versions">版本</button>
       </nav>
       <div id="authoringContent" class="context-content"></div>
     </aside>
+  </main>
+
+  <main id="browserWorkbench" class="browser-workbench" hidden>
+    <section class="browser-center surface">
+      <header class="browser-bar"><input id="browserAddress" value="https://www.crossref.org/"><button id="loadBrowser" class="primary-inline">打开研究网页</button><button id="externalBrowser">系统浏览器打开</button></header>
+      <iframe id="researchFrame" title="研究浏览器预览" sandbox="allow-forms allow-scripts"></iframe>
+      <p class="boundary-note browser-warning">部分数据库禁止嵌入显示；此时使用系统浏览器。Demo 不读取 Cookie，也不绕过登录、验证码、付费墙或许可限制。</p>
+    </section>
+    <aside class="browser-side surface"><header class="agent-heading"><div><h2>浏览会话</h2><p>域名范围、收集篮与回执</p></div></header><div id="browserControls" class="context-content"></div></aside>
+  </main>
+
+  <main id="settingsWorkbench" class="settings-workbench" hidden>
+    <section class="settings-main surface"><header class="agent-heading"><div><h1>项目设置</h1><p>模型、Skills、连接器、隐私和版本信息</p></div></header><div id="settingsContent" class="settings-grid"></div></section>
   </main>
 
   <main id="pdfWorkbench" class="workbench" hidden>
@@ -128,7 +156,7 @@
 
     <section class="source-panel surface">
       <header class="panel-heading">
-        <div><h1 id="sourceTitle">尚未导入文献</h1><p id="pageLabel">原 PDF 页面始终是校对依据</p></div>
+        <div><button id="backToLibrary">← 返回图书馆</button><h1 id="sourceTitle">尚未导入文献</h1><p id="pageLabel">原 PDF 页面始终是校对依据</p></div>
         <div class="zoom-controls"><button id="zoomOut">−</button><span id="zoomValue">100%</span><button id="zoomIn">＋</button></div>
       </header>
       <div class="page-canvas"><img id="pageImage" alt="当前 PDF 原页"></div>

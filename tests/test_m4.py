@@ -147,7 +147,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:

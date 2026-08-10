@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import uuid
@@ -256,6 +257,13 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
         )]
         for message in messages:
             message["content"] = _decode(message.pop("content_json"), {})
+            binding = connection.execute(
+                "SELECT * FROM thread_context_bindings WHERE message_id = ?", (message["message_id"],)
+            ).fetchone()
+            if binding is not None:
+                item = dict(binding)
+                item["attached_refs"] = _decode(item.pop("attached_refs_json"), [])
+                message["context_binding"] = item
         for run in runs:
             run["model_snapshot"] = _decode(run.pop("model_snapshot_json"), {})
             run["events"] = []
@@ -284,7 +292,8 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
     return {"thread": dict(thread), "messages": messages, "runs": runs}
 
 
-def send_message(project_root: Path, thread_id: str, content: str) -> dict[str, Any]:
+def send_message(project_root: Path, thread_id: str, content: str,
+                 context: dict[str, Any] | None = None) -> dict[str, Any]:
     content = content.strip()
     if not content:
         raise ValueError("message content is required")
@@ -309,6 +318,31 @@ def send_message(project_root: Path, thread_id: str, content: str) -> dict[str, 
             "INSERT INTO messages(message_id, thread_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)",
             (message_id, thread_id, _json({"text": content}), now),
         )
+        if context:
+            manuscript_id = str(context.get("manuscript_id", ""))
+            revision_id = str(context.get("revision_id", ""))
+            section_id = str(context.get("section_id", ""))
+            if manuscript_id and connection.execute(
+                "SELECT 1 FROM manuscripts WHERE manuscript_id = ?", (manuscript_id,)
+            ).fetchone() is None:
+                raise KeyError(f"unknown manuscript: {manuscript_id}")
+            if revision_id and connection.execute(
+                "SELECT 1 FROM document_revisions WHERE revision_id = ?", (revision_id,)
+            ).fetchone() is None:
+                raise KeyError(f"unknown document revision: {revision_id}")
+            selection = str(context.get("selection_text", ""))
+            attached = context.get("attached_refs", [])
+            if not isinstance(attached, list):
+                raise ValueError("attached_refs must be a list")
+            connection.execute(
+                """INSERT INTO thread_context_bindings(binding_id, message_id, thread_id, manuscript_id,
+                   revision_id, section_id, node_id, selection_hash, selection_text, attached_refs_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (_id("CTX"), message_id, thread_id, manuscript_id or None, revision_id or None,
+                 section_id or None, str(context.get("node_id", "")) or None,
+                 hashlib.sha256(selection.encode("utf-8")).hexdigest() if selection else "",
+                 selection, _json(attached), now),
+            )
         connection.execute(
             "INSERT INTO goals(goal_id, thread_id, objective, status, created_at) VALUES (?, ?, ?, 'active', ?)",
             (goal_id, thread_id, content, now),
@@ -323,7 +357,17 @@ def send_message(project_root: Path, thread_id: str, content: str) -> dict[str, 
         _append_run_event(connection, run_id, "run_started", {"objective": content, "model": snapshot})
         _append_run_event(connection, run_id, "user_message", {"message_id": message_id})
     try:
-        _advance_run(project_root, run_id, content, profile)
+        objective = content
+        if context:
+            objective += "\n\nCURRENT_RESEARCH_CONTEXT " + _json({
+                "manuscript_id": context.get("manuscript_id", ""),
+                "revision_id": context.get("revision_id", ""),
+                "section_id": context.get("section_id", ""),
+                "node_id": context.get("node_id", ""),
+                "selection_text": context.get("selection_text", ""),
+                "attached_refs": context.get("attached_refs", []),
+            })
+        _advance_run(project_root, run_id, objective, profile)
     except Exception as error:
         with connect(project_root) as connection:
             connection.execute(
