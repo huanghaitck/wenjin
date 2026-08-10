@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE_AWAITING_USE_FEEDBACK
+current_stage: D3_INFORMATION_ARCHITECTURE_AND_DOCUMENT_MODEL_PLANNING_COMPLETE
 last_completed_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING
-active_human_gate: NEXT_SCOPE_FROM_ARTICLE_WORKBENCH_FEEDBACK
+active_human_gate: D3_IMPLEMENTATION_APPROVAL_AFTER_PLAN_REVIEW
 
 m1:
   status: complete
@@ -39,15 +39,33 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: feedback_selected_increment
+  stage: D3_implementation
   authorized: false
-  objective: choose_next_increment_from_article_workbench_use
-  proposed_scope: docs/ROADMAP.md
+  objective: migrate_to_research_object_workspaces_and_structured_document_model
+  proposed_scope: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
   excluded:
     - credential_capture
     - unattended_authenticated_browser
     - full_manuscript_generation
     - desktop_packaging
+
+d3_information_architecture_planning:
+  status: complete_awaiting_implementation_approval
+  adr: docs/adr/0008-research-object-workspaces-and-contextual-dialogue.md
+  migration_plan: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
+  permanent_workspaces:
+    - research_dialogue
+    - research_library
+    - manuscript_workbench
+    - project_settings
+  source_repair_location: library_document_detail
+  manuscript_canonical_format: structured_document_tree
+  docx_and_markdown: import_export_adapters
+  manuscript_research_sidebar: contextual_same_main_agent
+  browser_location: central_object_tab_with_context_sidebar
+  runtime_code_changed: false
+  schema_changed: false
+  real_data_migrated: false
 
 d2_authoring_reading:
   status: complete

@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE`.
+Current milestone: `D3_INFORMATION_ARCHITECTURE_AND_DOCUMENT_MODEL_PLANNING_COMPLETE`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -34,11 +34,17 @@ D2 completed on 2026-08-10. The next increment must come from use of the article
 candidates are real-model writing evaluation, DOCX/journal-template fidelity, historiography synthesis,
 larger reading-job scheduling, or additional lawful database connectors. Do not expand all at once.
 
+The user approved D3 planning on 2026-08-10 after identifying that import and repair belong under the
+library, the manuscript workspace needs a Word-like structured editor, and the browser needs a central
+workspace. ADR 0008 and `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` are accepted planning
+artifacts. D3 implementation is not yet authorized. Do not change runtime code, schemas, real project data
+or UI navigation until the user approves the migration plan.
+
 ## Startup order
 
 1. Read this file.
 2. Read `docs/CURRENT_PROJECT_STATE.yaml`.
-3. Read `docs/D2_AUTHORING_READING_TASK_SPEC.md`, ADR 0007 and `docs/ROADMAP.md`.
+3. Read ADR 0008, `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` and `docs/ROADMAP.md`.
 4. Inspect only files directly relevant to the task.
 
 ## Engineering principles

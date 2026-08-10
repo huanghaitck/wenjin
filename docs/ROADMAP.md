@@ -95,6 +95,19 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 以下编号阶段仍用于后续生产化加固，不因 D2 的纵向切片而自动宣布完成。
 
+### D3｜Research Object Workspaces and Structured Document Model
+
+状态：ADR 与迁移方案完成，等待实施批准。
+
+- 四个永久工作空间：研究对话、研究图书馆、文章工作台、项目设置；
+- 文件导入、收件箱、页面处理和文献修复归入图书馆；
+- 稿件采用结构化文档树，DOCX/Markdown 成为工作台内适配器；
+- 文章侧栏使用绑定稿件版本、章节和选区的同一主 Agent；
+- 研究浏览器作为中央对象标签，右侧保存检索、收集和审批；
+- additive-first 迁移，旧表和旧路径在核验前保持可读。
+
+实施前必须通过 `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` 的人工门禁。
+
 ### M6｜Open Research Retrieval
 
 - OpenAlex 与 Crossref connector；
