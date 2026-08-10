@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D1_CONVERSATION_FIRST_END_TO_END_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
+`D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE_AWAITING_USE_FEEDBACK`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -54,6 +54,12 @@ be linked to claims and human-approved evidence freezes; only approved freezes c
 Markdown drafts. The research-browser panel records a domain-limited, user-controlled session without
 capturing login state. Translation and visual OCR are separate optional model roles, so a text-only main
 model can use a visual or translation helper.
+
+D2 adds an article workbench. Markdown manuscripts are split into versioned sections; polishing and
+frozen-evidence section drafting create reviewable proposals rather than overwriting the approved text.
+Direct quotations, numbers, footnote markers and source identifiers are protected during polishing.
+Bounded reading jobs, page-linked reading notes, historiography candidates and Markdown-first journal
+templates support the writing loop without silently becoming evidence.
 
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,
@@ -105,6 +111,14 @@ at the current path are shown in the work detail panel.
 Then open `http://127.0.0.1:8765`. The interface can also import a PDF directly. The server binds
 to loopback only. CLI commands continue to emit JSON so a later Tauri bridge can call the same
 application service.
+
+If the Demo service is not running, start or restart it with:
+
+```powershell
+& "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -File .\scripts\start_demo.ps1 -Restart
+```
+
+Open the article workbench directly at `http://127.0.0.1:8765/?mode=article`.
 
 Check the configured OCR role without exposing its key:
 

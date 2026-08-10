@@ -139,13 +139,18 @@ DISCOVERED
 ### 2.7 D1 已落地的纵向切片
 
 D1 保持一个 Python 进程和 build-free Web UI，新增 `workspace.json` 作为明确登记的项目列表；项目
-数据库升级为 schema 4，保存 Retrieval Record、Claim、Evidence Item、Claim-Evidence 关系、
+数据库在 D1 升级为 schema 4，保存 Retrieval Record、Claim、Evidence Item、Claim-Evidence 关系、
 Evidence Freeze、Artifact Version、Review、Browser Session Receipt 和 Memory Candidate。图书馆文件
 只有在用户选择具体当前版本后才复制到项目并进入既有 PDF 管线。
 
 开放检索使用依赖为零的 Crossref/OpenAlex connector；Zotero 只读探测本机 `23119` API。研究浏览器
 当前是域名受限回执加用户控制的外开页面，不保存登录态。`main_reasoning`、`vision_ocr` 和
 `translation_helper` 可以分别配置 OpenAI-compatible 或 Ollama 模型，未配置时显式不可用。
+
+D2 将项目数据库升级为 schema 5，增加 Manuscript、Section、Section Version、Writing Proposal、
+Reading Job/Note、Historiography Entry 和 Journal Template。模型写作不会直接更新 Section；只有
+人工批准的 Proposal 才创建新的 immutable Section Version。润色批准前检查受保护引语、数字、
+脚注和来源标记，分节写作则要求已批准 Evidence Freeze。
 
 ## 3. 事件与数据模型
 

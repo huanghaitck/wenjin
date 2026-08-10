@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_IN_PROGRESS`.
+Current milestone: `D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -29,6 +29,10 @@ The user selected the next increment on 2026-08-10: article polishing and sectio
 bounded reading, historiography entries and journal templates as supporting objects. Follow
 `docs/D2_AUTHORING_READING_TASK_SPEC.md` and ADR 0007. Do not implement license bypass or unattended
 full-manuscript generation.
+
+D2 completed on 2026-08-10. The next increment must come from use of the article workbench. Likely
+candidates are real-model writing evaluation, DOCX/journal-template fidelity, historiography synthesis,
+larger reading-job scheduling, or additional lawful database connectors. Do not expand all at once.
 
 ## Startup order
 

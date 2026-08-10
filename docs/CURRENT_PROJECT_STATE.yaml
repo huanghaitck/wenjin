@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_IN_PROGRESS
-last_completed_stage: D1_CONVERSATION_FIRST_END_TO_END_DEMO
-active_human_gate: D2_IMPLEMENTATION_AND_ACCEPTANCE
+current_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE_AWAITING_USE_FEEDBACK
+last_completed_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING
+active_human_gate: NEXT_SCOPE_FROM_ARTICLE_WORKBENCH_FEEDBACK
 
 m1:
   status: complete
@@ -39,10 +39,10 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: D2
-  authorized: true
-  objective: evidence_preserving_article_polish_and_section_writing
-  proposed_scope: docs/D2_AUTHORING_READING_TASK_SPEC.md
+  stage: feedback_selected_increment
+  authorized: false
+  objective: choose_next_increment_from_article_workbench_use
+  proposed_scope: docs/ROADMAP.md
   excluded:
     - credential_capture
     - unattended_authenticated_browser
@@ -50,13 +50,19 @@ next_scope:
     - desktop_packaging
 
 d2_authoring_reading:
-  status: in_progress
-  manuscript_section_versions: planned
-  polish_proposals: planned
-  frozen_evidence_section_draft: planned
-  bounded_reading_jobs: planned
-  historiography_entries: planned
-  journal_templates: planned
+  status: complete
+  package_version: 0.7.0.dev1
+  database_schema: 5
+  manuscript_section_versions: implemented
+  polish_proposals: implemented_with_protected_marker_gate
+  frozen_evidence_section_draft: implemented
+  bounded_reading_jobs: implemented
+  historiography_entries: implemented_as_candidates
+  journal_templates: implemented_markdown_first
+  article_gui: implemented
+  repeatable_demo_launcher: scripts/start_demo.ps1
+  full_test_suite: 47_passed
+  demo_url: http://127.0.0.1:8765/?mode=article
 
 d1_end_to_end_demo:
   status: complete

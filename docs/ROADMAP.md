@@ -84,7 +84,8 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ### D2｜Evidence-preserving Reading and Section Writing
 
-状态：实施中。来自 D1 的首轮真实使用反馈，范围见 `docs/D2_AUTHORING_READING_TASK_SPEC.md`。
+状态：已完成（2026-08-10）。来自 D1 的首轮真实使用反馈，验收见
+`docs/D2_AUTHORING_READING_TASK_SPEC.md`。
 
 - Markdown 稿件导入、章节和不可变版本；
 - 保留引文、数字、脚注与来源标记的润色提案；
