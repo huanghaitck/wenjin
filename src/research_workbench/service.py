@@ -345,6 +345,7 @@ def correct_block(project_root: Path, block_id: str, corrected_text: str,
                WHERE page_id = ? AND verification_state NOT IN ('human_verified', 'human_repaired')""",
             (block["page_id"],),
         )
+        _recalculate_source_state(connection, block["source_id"])
         append_audit(connection, "block_corrected", "block", block_id, {"repair_id": repair_id})
     return {"repair_id": repair_id, "scope_type": "block", "target_id": block_id,
             "block_type": corrected_type}
@@ -571,21 +572,33 @@ def verify_block(project_root: Path, block_id: str, reviewer: str, reason: str) 
             """SELECT COUNT(*) FROM anomalies
                WHERE status = 'open' AND severity != 'advisory'
                  AND ((scope_type = 'block' AND target_id = ?)
-                   OR (scope_type = 'page' AND target_id = ?))""",
-            (block_id, block["page_id"]),
+                   OR (scope_type = 'page' AND target_id = ?)
+                   OR (scope_type = 'relation' AND target_id IN (
+                       SELECT relation_id FROM page_relations
+                       WHERE from_block_id = ? OR to_block_id = ?)))""",
+            (block_id, block["page_id"], block_id, block_id),
         ).fetchone()[0]
         if blocking:
             raise ValueError("resolve this block or page anomaly before verification")
-        if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
+        systemic = connection.execute(
+            """SELECT 1 FROM anomalies WHERE source_id = ? AND status = 'open'
+               AND scope_type = 'source' AND severity = 'systemic' LIMIT 1""",
+            (block["source_id"],),
+        ).fetchone()
+        if ((block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable")
+                and systemic is None):
             raise ValueError("blocked page content cannot be verified")
         connection.execute(
-            "UPDATE blocks SET verification_state = 'human_verified' WHERE block_id = ?", (block_id,)
+            """UPDATE blocks SET verification_state = 'human_verified', use_state = 'research_usable'
+               WHERE block_id = ?""",
+            (block_id,),
         )
         connection.execute(
-            """UPDATE pages SET verification_state = 'human_spot_checked'
+            """UPDATE pages SET verification_state = 'human_spot_checked', use_state = 'research_usable'
                WHERE page_id = ? AND verification_state NOT IN ('human_verified', 'human_repaired')""",
             (block["page_id"],),
         )
+        _recalculate_source_state(connection, block["source_id"])
         append_audit(connection, "block_verified", "block", block_id, {"reviewer": reviewer, "reason": reason})
     return {"block_id": block_id, "page_id": block["page_id"], "verification_state": "human_verified"}
 
@@ -1038,13 +1051,26 @@ def _recalculate_source_state(connection: Any, source_id: str) -> None:
         if row["severity"] == "systemic" or row["category"] in BLOCKING_CATEGORIES
     ]
     if systemic:
-        connection.execute("UPDATE pages SET use_state = 'blocked' WHERE source_id = ?", (source_id,))
         connection.execute(
-            """UPDATE blocks SET use_state = 'blocked'
-               WHERE page_id IN (SELECT page_id FROM pages WHERE source_id = ?)""",
+            """UPDATE pages SET use_state = 'blocked'
+               WHERE source_id = ? AND verification_state NOT IN
+                     ('human_spot_checked', 'human_verified', 'human_repaired')""",
             (source_id,),
         )
-        processing_state, use_state = "needs_review", "blocked"
+        connection.execute(
+            """UPDATE blocks SET use_state = 'blocked'
+               WHERE verification_state NOT IN ('human_verified', 'human_repaired')
+                 AND page_id IN (SELECT page_id FROM pages WHERE source_id = ?)""",
+            (source_id,),
+        )
+        usable_body_blocks = connection.execute(
+            """SELECT COUNT(*) FROM blocks b JOIN pages p ON p.page_id = b.page_id
+               WHERE p.source_id = ? AND b.use_state = 'research_usable'
+                 AND b.block_type NOT IN ('header', 'footer', 'page_number')""",
+            (source_id,),
+        ).fetchone()[0]
+        processing_state = "needs_review"
+        use_state = "partial" if usable_body_blocks else "blocked"
     else:
         for anomaly in blocking:
             if anomaly["scope_type"] == "block":

@@ -435,27 +435,42 @@ function renderContext() {
         const evidenceForm = document.createElement('div'); evidenceForm.className = 'context-form';
         evidenceForm.id = `evidence-form-${claim.claim_id}`;
         const humanStates = new Set(['human_verified', 'human_repaired']);
+        const decorativeTypes = new Set(['header', 'footer', 'page_number']);
         const blocks = state.view.pages.flatMap((page) => page.blocks.map((block) => ({page, block}))).filter((item) =>
           item.block.use_state === 'research_usable' && item.page.use_state === 'research_usable'
-          && humanStates.has(item.block.verification_state));
+          && humanStates.has(item.block.verification_state) && !decorativeTypes.has(item.block.block_type));
         const select = document.createElement('select'); select.dataset.role = 'evidence-block'; select.id = `evidence-block-${claim.claim_id}`;
-        for (const item of blocks) select.append(new Option(
-          `物理页 ${item.page.physical_page}${item.page.printed_page ? ` / 印刷页 ${item.page.printed_page}` : ''} · ${item.block.verification_state} · ${item.block.effective_text.slice(0,42)}`,
-          item.block.block_id,
-        ));
+        const endSelect = document.createElement('select'); endSelect.dataset.role = 'evidence-block-end'; endSelect.id = `evidence-block-end-${claim.claim_id}`;
+        for (const item of blocks) {
+          const label = `物理页 ${item.page.physical_page}${item.page.printed_page ? ` / 印刷页 ${item.page.printed_page}` : ''} · ${item.block.verification_state} · ${item.block.effective_text.slice(0,42)}`;
+          select.append(new Option(label, item.block.block_id)); endSelect.append(new Option(label, item.block.block_id));
+        }
         const quote = document.createElement('textarea'); quote.id = `evidence-quote-${claim.claim_id}`; quote.placeholder = '粘贴所选已核块中的原文；必须逐字存在';
         const note = document.createElement('input'); note.id = `evidence-note-${claim.claim_id}`; note.placeholder = '为何与主张有关';
         const relation = document.createElement('select'); relation.id = `evidence-relation-${claim.claim_id}`; for (const value of ['supports','weakens','background','counterevidence']) relation.append(new Option(value, value));
+        const spanBlocks = () => {
+          const start = blocks.findIndex((item) => item.block.block_id === select.value);
+          const end = blocks.findIndex((item) => item.block.block_id === endSelect.value);
+          if (start < 0 || end < start) throw new Error('结束段必须位于起始段之后。');
+          return blocks.slice(start, end + 1);
+        };
+        const fillSpanQuote = () => { try { quote.value = spanBlocks().map((item) => item.block.effective_text).join('\n'); } catch (_) {} };
+        select.onchange = () => { endSelect.value = select.value; fillSpanQuote(); };
+        endSelect.onchange = fillSpanQuote;
+        if (blocks.length) { endSelect.value = select.value; fillSpanQuote(); }
         if (!blocks.length) evidenceForm.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'当前打开来源还没有人工核验的文本块。请先在原页界面逐段核验。'}));
         const submitEvidence = actionButton('人工提交证据', async () => {
           if (!select.value) throw new Error('请先选择一个人工核验的页面块。');
-          await request('/api/evidence/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({claim_id:claim.claim_id, block_id:select.value, quote:quote.value, note:note.value, relation:relation.value})});
+          const selected = spanBlocks();
+          await request('/api/evidence/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({claim_id:claim.claim_id, block_id:select.value, block_ids:selected.map((item)=>item.block.block_id), quote:quote.value, note:note.value, relation:relation.value})});
           await refreshResearch('证据已固定到精确页面块和来源版本。');
         }, true); submitEvidence.id = `evidence-submit-${claim.claim_id}`;
-        evidenceForm.append(select, quote, note, relation, submitEvidence); node.append(evidenceForm);
+        const startLabel=document.createElement('label'); startLabel.textContent='证据起始段'; startLabel.append(select);
+        const endLabel=document.createElement('label'); endLabel.textContent='证据结束段（单段时与起始段相同）'; endLabel.append(endSelect);
+        evidenceForm.append(startLabel, endLabel, quote, note, relation, submitEvidence); node.append(evidenceForm);
       }
       for (const evidence of claim.evidence) {
-        node.append(Object.assign(document.createElement('p'), {textContent:`${evidence.relation} · 物理页 ${evidence.physical_page} · “${evidence.quote}”`}));
+        node.append(Object.assign(document.createElement('p'), {textContent:`${evidence.relation} · 物理页 ${(evidence.physical_pages || [evidence.physical_page]).join('–')} · “${evidence.quote}”`}));
         const translate = actionButton(translation?.available ? '调用翻译搭档' : '翻译搭档未配置', async () => {
           await request('/api/translation/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({evidence_id:evidence.evidence_id, target_language:'Chinese'})});
           await refreshResearch('译文已保存为派生稿，原文和页面锚点未改变。');
@@ -1189,7 +1204,12 @@ $('libraryMode').onclick = () => setMode('library');
 $('agentMode').onclick = () => setMode('agent');
 $('articleMode').onclick = () => { setMode('article'); renderAuthoring(); };
 $('settingsMode').onclick = () => setMode('settings');
-$('openSourceRepair').onclick = () => { if (!state.view) { notice('当前项目还没有可复核的 PDF。', true); return; } setMode('source'); };
+$('openSourceRepair').onclick = async () => {
+  const sourceId = $('sourceSelect').value;
+  if (!sourceId) { notice('当前项目还没有可复核的文献。', true); return; }
+  if (state.view?.source?.source_id !== sourceId) await loadSource(sourceId);
+  setMode('source');
+};
 $('backToLibrary').onclick = () => setMode('library');
 $('authoringTabs').onclick = (event) => {
   const button = event.target.closest('button[data-authoring]');
