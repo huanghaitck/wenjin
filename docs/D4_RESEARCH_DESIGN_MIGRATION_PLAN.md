@@ -1,0 +1,120 @@
+# D4 Migration Plan｜Versioned Research Design
+
+状态：实施前方案  
+日期：2026-08-11
+
+## 1. 目标与完成标准
+
+在不修改旧线程、札记、证据冻结和稿件的前提下，增加一个项目级、可版本化的研究计划对象。Demo
+完成时应能在界面中导入研究者已有的基线计划，让程序内模型在看不到基线答案的情况下独立提出
+方案，供研究者并排比较和纠偏；讨论后形成共同计划，人工批准新版本，并让模型在执行阶段自动
+读到共同批准版及其版本号。
+
+## 2. 增量数据结构
+
+在项目 SQLite 增加一张表即可：
+
+```text
+research_design_versions
+  design_id
+  base_design_id
+  title
+  content
+  change_summary
+  plan_role           researcher_baseline | shared_design
+  origin              imported | manual | conversation | model
+  origin_ref
+  model_snapshot_json
+  status              draft | approved | rejected | superseded
+  created_by
+  created_at
+  decided_by
+  decision_reason
+  decided_at
+```
+
+约束由服务层保持：每个 `plan_role` 最多一个 `approved` 版本；批准新版本与同角色旧版转为
+`superseded` 在同一事务完成。旧版内容不因修改一个字而失效，版本关系依靠 ID 和人工决定，不依赖
+内容哈希。`researcher_baseline` 默认不进入模型上下文。
+
+## 3. 迁移既有秦岭项目
+
+现有文件和札记保持原样：
+
+- `research/00_question_and_scope.md` 作为导入来源之一；
+- `research/notes/APR_e4dafdc9ba3e478d9166c4730a1e0743.md` 作为恢复旧设计的批准札记；
+- 旧 Demo 冻结、主张和稿件继续保留为测试历史。
+
+迁移时不自动宣称哪一份是真正计划。界面先生成一个 `researcher_baseline` 合并草案，由研究者核对
+后批准，但不提供给独立构思中的 Agent。首个候选应
+明确保留：1861—1879总框架、1871—1875核心连续跨越窗、三组核心个案、逐事件比较单元、每组
+约30—50条的目标、统计分母、补证票与停止边界。
+
+## 4. 实施切片
+
+### 提交 A｜领域对象与服务
+
+- 数据库增量迁移；
+- 创建、列出、查看、批准和拒绝版本；
+- 事务测试：批准新版本会保留并取代旧批准版；
+- 旧项目首次打开只建表，不自动写入计划。
+
+### 提交 B｜Agent 上下文与工具
+
+- 每次模型调用注入当前批准版及 `design_id`；
+- 默认只注入批准的 `shared_design`，绝不注入 `researcher_baseline`；
+- 增加显式运行模式 `independent_planning / guided_execution`；
+- 增加只读 `research_design.current`；
+- 增加需人工批准的 `research_design.propose`；
+- 测试模型建议不会改变批准版。
+
+### 提交 C｜研究计划界面
+
+- 在研究对话上下文增加“研究计划”；
+- 分开显示研究者基线与共同计划；
+- 支持粘贴/文本文件导入、人工草案、版本比较、批准/拒绝；
+- 独立构思结果可与基线并排查看，但不自动评分或合并；
+- 显示来源、基础版本、模型与人工决定；
+- 旧研究札记可以“提升为计划草案”。
+
+### 提交 D｜真实项目迁移与 GUI 验收
+
+- 在秦岭项目中导入现有计划和批准札记，人工形成首个批准版；
+- 只给 DeepSeek 研究任务和获准材料，不给1871—1875等完整答案，让它独立提出时间窗、个案、
+  比较单元和停止边界；
+- 由模拟历史学者把结果与研究者基线比较，记录一致、遗漏、跑偏和启发；
+- 纠偏后形成 `shared_design` 草案；
+- 在按计划执行模式中让 DeepSeek 提出一个新维度，确认它只生成草案；
+- 人工拒绝一次、编辑批准一次，确认完整版本链可见；
+- 重启应用后重复提问，确认批准计划仍自动加载。
+
+## 5. API 与界面边界
+
+建议最小 API：
+
+- `GET /api/research-design`
+- `POST /api/research-design/draft`
+- `POST /api/research-design/decide`
+
+导入文件由客户端读为文本后调用 draft API；最小版本不增加上传服务。Agent 工具复用同一服务层，
+不建立第二套计划数据。
+
+## 6. 验收失败条件
+
+以下任一情况出现即不进入下一阶段：
+
+- 无人工决定便改变当前批准版；
+- 模型把草案或旧聊天说成当前批准版；
+- 独立构思运行能够看到研究者基线或共同计划答案；
+- 批准新版本后旧版不可查看；
+- 计划内容被当成来源证据或自动进入证据冻结；
+- 旧线程、旧札记、旧 Demo 冻结或稿件被覆盖；
+- 重启后当前批准版丢失或版本号变化。
+
+## 7. 暂不纳入
+
+- 自动把整段聊天压缩为研究计划；
+- 计划节点依赖图和自动排程；
+- 多人实时协作冲突合并；
+- PDF/DOCX 复杂计划导入；
+- 计划自动触发联网抓取、证据冻结或文章改写。
