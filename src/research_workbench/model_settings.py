@@ -19,6 +19,7 @@ ROLES = {
     "main_reasoning": {"label": "主推理模型", "prefix": "HRW_AGENT"},
     "vision_ocr": {"label": "视觉 / OCR 模型", "prefix": "HRW_OCR"},
     "translation_helper": {"label": "翻译模型", "prefix": "HRW_TRANSLATION"},
+    "review_secondary": {"label": "交叉评审模型（可选）", "prefix": "HRW_REVIEW"},
 }
 CREDENTIAL_PREFIX = "HistoricalResearchWorkbench"
 

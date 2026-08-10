@@ -786,6 +786,31 @@ function renderAuthoringControl(section, proposal) {
     for(const [label,id,area] of [['著作/论文','histWork',false],['核心立场','histPosition',true],['贡献','histContribution',true],['限制','histLimitation',true],['与当前问题关系','histRelevance',true],['来源引用（逗号分隔）','histRefs',false]]) form.append(formField(label,id,'',area));
     form.append(actionButton('保存学术史候选条目',async()=>{await request('/api/historiography/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({work_title:$('histWork').value,position:$('histPosition').value,contribution:$('histContribution').value,limitation:$('histLimitation').value,relevance:$('histRelevance').value,source_refs:$('histRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('学术史候选条目已保存，等待研究判断。');},true));container.append(form);
     for(const item of authoring.historiography||[]){const node=card(item.work_title,`${item.status} · 来源 ${item.source_refs.join('、')}`);node.append(Object.assign(document.createElement('p'),{textContent:`立场：${item.position}\n贡献：${item.contribution}\n限制：${item.limitation}\n关系：${item.relevance}`}));container.append(node);}
+  } else if (state.authoringMode === 'review') {
+    const manuscript=selectedManuscript();
+    if(!manuscript){container.append(card('尚未选择稿件','先创建或导入稿件。'));return;}
+    const models=authoring.review_models||{};
+    container.append(card('评审独立性边界',`主评审：${models.primary?.available?`${models.primary.provider} / ${models.primary.model}`:'未配置'}。三个角色使用彼此隔离的提示与输出，但同一模型仍可能共享盲点。${models.secondary?.available?`\n交叉评审：${models.secondary.provider} / ${models.secondary.model}`:'\n可在项目设置中另配交叉评审模型。'}`));
+    const form=document.createElement('section');form.className='context-form';
+    const template=document.createElement('select');template.id='reviewTemplate';
+    for(const item of authoring.journal_templates||[]) template.append(new Option(`${item.name} · ${item.version_label||'人工模板'}`,item.template_id));
+    template.value=$('exportTemplate').value||'builtin-history-research';
+    const templateLabel=document.createElement('label');templateLabel.textContent='本轮投稿模板';templateLabel.append(template);form.append(templateLabel);
+    const run=actionButton('运行三角色评审（同一主模型）',async()=>{
+      run.disabled=true;run.textContent='三位评审并行运行中…';notice('论证、史料与引注评审正在分别运行；正文不会被修改。');
+      try{await request('/api/manuscript/review/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,template_id:template.value,use_secondary:false})});await refreshAuthoring('三份独立角色报告已固定到当前章节版本。');}finally{run.disabled=false;run.textContent='运行三角色评审（同一主模型）';}
+    },true);run.disabled=!models.primary?.available;form.append(run);
+    const hasPrimary=(manuscript.review_groups||[]).some((group)=>group.is_current&&group.reports.some((report)=>report.model_role==='main_reasoning'));
+    const cross=actionButton('用第二模型做反方复核',async()=>{
+      cross.disabled=true;notice('交叉评审模型正在挑战当前评审共识。');
+      try{await request('/api/manuscript/review/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,template_id:template.value,use_secondary:true})});await refreshAuthoring('异构反方评审已保存。');}finally{cross.disabled=false;}
+    });cross.disabled=!models.secondary?.available||!hasPrimary;form.append(cross);container.append(form);
+    const roleLabels={argument_reviewer:'论证与结构',source_critic:'史料与证据',citation_editor:'引注与模板',adversarial_reviewer:'异构反方'};
+    for(const group of manuscript.review_groups||[]){
+      const templateName=(authoring.journal_templates||[]).find((item)=>item.template_id===group.template_id)?.name||group.template_id;
+      const node=card(`${group.is_current?'当前版本':'已过期'} · ${templateName}`,`${new Date(group.created_at).toLocaleString()} · ${group.review_group_id}`);
+      for(const report of group.reports){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=`${roleLabels[report.reviewer_role]||report.reviewer_role} · ${report.model_snapshot.provider} / ${report.model_snapshot.model}`;const pre=document.createElement('pre');pre.textContent=report.report;details.append(summary,pre);node.append(details);}container.append(node);
+    }
   } else if (state.authoringMode === 'journal') {
     const form=document.createElement('section');form.className='context-form';form.append(
       formField('模板名称','journalName'),formField('规范版本','journalVersion'),formField('规范发布日期','journalEffective'),

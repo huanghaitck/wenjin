@@ -37,7 +37,7 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertNotIn("api_key", text.lower())
             self.assertEqual(os.environ["HRW_AGENT_MODEL"], "local-history-model")
             self.assertEqual(os.environ["HRW_AGENT_BASE_URL"], "http://127.0.0.1:11434")
-            self.assertEqual(len(result["roles"]), 3)
+            self.assertEqual(len(result["roles"]), 4)
             self.assertEqual(public_settings(root)["credential_backend"], "windows_credential_manager")
 
     def test_word_reimport_creates_a_new_revision_without_overwriting(self) -> None:

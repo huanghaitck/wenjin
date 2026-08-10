@@ -5,6 +5,7 @@ import os
 import re
 import ssl
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 from urllib.request import Request, urlopen
@@ -12,11 +13,17 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .db import append_audit, connect, utc_now
-from .scholarship import freeze_detail
+from .scholarship import freeze_detail, research_state
 
 
 Writer = Callable[[str], str]
 OPERATIONS = {"polish", "section_draft"}
+REVIEW_ROLES = {
+    "argument_reviewer": "检查问题意识、比较结构、章节任务、因果强度和竞争解释；不要替作者重写正文。",
+    "source_critic": "检查每项事实是否由已登记证据支持、是否把同一见证的译本当作独立证据，并标出过度解释。",
+    "citation_editor": "检查引文锚点、注释缺口、来源资格和所选期刊模板的硬性要求；不替不存在的书目信息补值。",
+    "adversarial_reviewer": "独立挑战前三份评审的共同盲点，优先寻找反证、替代解释、证据不独立和无法投稿的阻断项。",
+}
 
 BUILTIN_JOURNAL_TEMPLATES = (
     {
@@ -171,6 +178,61 @@ def _model_write(prompt: str) -> str:
         raw = json.loads(response.read().decode())
     return (raw.get("message", {}).get("content", "") if provider == "ollama"
             else raw["choices"][0]["message"]["content"])
+
+
+def _secondary_review_capability() -> dict[str, Any]:
+    provider = os.getenv("HRW_REVIEW_PROVIDER", "").strip().lower()
+    model = os.getenv("HRW_REVIEW_MODEL", "").strip()
+    endpoint = os.getenv("HRW_REVIEW_BASE_URL", "").strip()
+    available = provider in {"openai_compatible", "ollama"} and bool(model and endpoint)
+    if provider == "openai_compatible" and not os.getenv("HRW_REVIEW_API_KEY"):
+        available = False
+    return {"provider": provider or "disabled", "model": model, "available": available}
+
+
+def _review_model_write(prompt: str, prefix: str) -> str:
+    provider = os.environ[f"{prefix}_PROVIDER"].strip().lower()
+    model = os.environ[f"{prefix}_MODEL"].strip()
+    base = os.environ[f"{prefix}_BASE_URL"].rstrip("/")
+    if provider == "ollama":
+        url = base if base.endswith("/api/chat") else base + "/api/chat"
+        payload = {"model": model, "stream": False, "options": {"num_predict": 8192},
+                   "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Content-Type": "application/json"}
+    else:
+        url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+        payload = {"model": model, "temperature": 0, "max_tokens": 8192,
+                   "messages": [{"role": "user", "content": prompt}]}
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ[f'{prefix}_API_KEY']}"}
+    request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode(), headers=headers, method="POST")
+    timeout = int(os.getenv(f"{prefix}_TIMEOUT_SECONDS", "120"))
+    with urlopen(request, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as response:
+        raw = json.loads(response.read().decode())
+    if provider == "ollama":
+        content = raw.get("message", {}).get("content", "")
+        finish_reason = raw.get("done_reason", "unknown")
+        message = raw.get("message", {})
+    else:
+        choice = raw["choices"][0]
+        message = choice.get("message", {})
+        content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason", "unknown")
+    if not content.strip():
+        reasoning_chars = len(message.get("reasoning_content") or "")
+        fields = ",".join(sorted(key for key in message if key not in {"reasoning_content", "content"}))
+        raise ValueError(
+            "review model returned no final content "
+            f"(finish_reason={finish_reason}, reasoning_chars={reasoning_chars}, fields={fields or 'none'})"
+        )
+    return content
+
+
+def _primary_review_write(prompt: str) -> str:
+    return _review_model_write(prompt, "HRW_AGENT")
+
+
+def _secondary_review_write(prompt: str) -> str:
+    return _review_model_write(prompt, "HRW_REVIEW")
 
 
 def create_writing_proposal(project_root: Path, section_id: str, operation: str,
@@ -344,7 +406,28 @@ def manuscript_detail(project_root: Path, manuscript_id: str) -> dict[str, Any]:
                 "SELECT proposal_id FROM writing_proposals WHERE section_id = ? ORDER BY created_at DESC",
                 (section["section_id"],),
             )]
-    return {**dict(manuscript), "sections": sections}
+        reviews = [dict(row) for row in connection.execute(
+            """SELECT * FROM manuscript_reviews WHERE manuscript_id = ?
+               ORDER BY created_at DESC, reviewer_role""",
+            (manuscript_id,),
+        )]
+    current_versions = [section["current_version_id"] for section in sections]
+    for review in reviews:
+        review["model_snapshot"] = json.loads(review["model_snapshot_json"])
+        review["section_versions"] = json.loads(review["section_versions_json"])
+        review["is_current"] = review["section_versions"] == current_versions
+    groups: list[dict[str, Any]] = []
+    for review in reviews:
+        group = next((item for item in groups if item["review_group_id"] == review["review_group_id"]), None)
+        if group is None:
+            group = {
+                "review_group_id": review["review_group_id"], "created_at": review["created_at"],
+                "template_id": review["template_id"], "is_current": review["is_current"], "reports": [],
+            }
+            groups.append(group)
+        group["reports"].append(review)
+        group["is_current"] = bool(group["is_current"] and review["is_current"])
+    return {**dict(manuscript), "sections": sections, "review_groups": groups}
 
 
 def list_manuscripts(project_root: Path) -> list[dict[str, Any]]:
@@ -510,7 +593,98 @@ def export_manuscript(project_root: Path, manuscript_id: str, template_id: str) 
             "project_path": path.relative_to(project_root).as_posix()}
 
 
+def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: str,
+                          use_secondary: bool = False, reviewer: Writer | None = None) -> dict[str, Any]:
+    manuscript = manuscript_detail(project_root, manuscript_id)
+    template = next((item for item in ensure_journal_templates(project_root)
+                     if item["template_id"] == template_id), None)
+    if template is None:
+        raise KeyError(f"unknown journal template: {template_id}")
+    roles = ["adversarial_reviewer"] if use_secondary else [
+        "argument_reviewer", "source_critic", "citation_editor",
+    ]
+    capability = ({"provider": "injected", "model": "test-reviewer", "available": True}
+                  if reviewer else (_secondary_review_capability() if use_secondary else _model_capability()))
+    if not capability["available"]:
+        role_name = "交叉评审模型" if use_secondary else "主推理模型"
+        raise ValueError(f"{role_name}尚未配置")
+    section_versions = [section["current_version_id"] for section in manuscript["sections"]]
+    manuscript_text = "\n\n".join(
+        f"## {section['heading']}\n{section['content']}" for section in manuscript["sections"]
+    )
+    research = research_state(project_root)
+    frozen_evidence_ids = {
+        evidence["evidence_id"]
+        for freeze in research["freezes"] if freeze["status"] == "approved"
+        for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
+    }
+    evidence_lines = []
+    for claim in research["claims"]:
+        evidence_lines.append(f"主张 {claim['claim_id']}：{claim['text']}")
+        for evidence in claim["evidence"]:
+            pages = "–".join(str(value) for value in evidence.get("physical_pages", [evidence["physical_page"]]))
+            evidence_lines.append(
+                f"- {evidence['evidence_id']}｜{evidence['relation']}｜{evidence['source_id']}｜物理页 {pages}"
+                f"｜{'FROZEN_APPROVED' if evidence['evidence_id'] in frozen_evidence_ids else 'CANDIDATE_NOT_FROZEN'}"
+                f"｜{evidence['qualification']}｜{evidence['quote']}"
+            )
+    previous_reports = ""
+    if use_secondary and manuscript["review_groups"]:
+        latest = next((group for group in manuscript["review_groups"] if group["is_current"]), None)
+        if latest:
+            previous_reports = "\n\n前三份评审：\n" + "\n\n".join(
+                f"### {report['reviewer_role']}\n{report['report']}" for report in latest["reports"]
+            )
+    group_id, now = _id("MRG"), utc_now()
+    def generate(role: str) -> dict[str, Any]:
+        prompt = (
+            "你是历史学论文的独立评审者。只评审，不重写正文，不补造事实或书目信息。"
+            "把稿件中的 [EVID:...] 当作可核对锚点，不把模型记忆当作来源。\n"
+            "证据台账中的 CANDIDATE_NOT_FROZEN 只能作为有界回退线索，不能当作当前正文已经获准使用的证据；"
+            "只有 FROZEN_APPROVED 且实际进入稿件的证据才能支撑当前论断。\n"
+            f"本轮角色：{role}\n职责：{REVIEW_ROLES[role]}\n"
+            "请用中文依次输出：阻断问题、主要问题、次要问题、可保留之处、建议的有界回退步骤。"
+            "每个问题指出具体章节或证据编号；没有证据就明确说没有。不要展示推理过程，"
+            "直接给出 600—900 字的正式评审报告。\n\n"
+            f"稿件题名：{manuscript['title']}\n当前字符数：{len(manuscript_text)}\n"
+            f"投稿模板：{template['name']}｜{template['version_label']}｜{template['citation_style']}\n"
+            f"模板组成：{'；'.join(template['section_rules'])}\n\n"
+            f"证据台账：\n{chr(10).join(evidence_lines) or '当前没有已登记证据。'}\n\n"
+            f"稿件：\n{manuscript_text}{previous_reports}"
+        )
+        report = (reviewer(prompt) if reviewer else
+                  (_secondary_review_write(prompt) if use_secondary else _primary_review_write(prompt))).strip()
+        if len(report) < 20:
+            raise ValueError(f"{role} returned an empty or unusably short review")
+        review_id = _id("MRV")
+        model_snapshot = {**capability, "model_role": "review_secondary" if use_secondary else "main_reasoning"}
+        return {"review_id": review_id, "reviewer_role": role, "report": report,
+                "model_snapshot": model_snapshot, "status": "completed"}
+    if reviewer is None and len(roles) > 1:
+        with ThreadPoolExecutor(max_workers=len(roles)) as pool:
+            reports = list(pool.map(generate, roles))
+    else:
+        reports = [generate(role) for role in roles]
+    with connect(project_root) as connection:
+        for report in reports:
+            connection.execute(
+                """INSERT INTO manuscript_reviews(
+                       review_id, review_group_id, manuscript_id, reviewer_role, model_role,
+                       model_snapshot_json, section_versions_json, template_id, report, status, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', ?)""",
+                (report["review_id"], group_id, manuscript_id, report["reviewer_role"],
+                 report["model_snapshot"]["model_role"], _json(report["model_snapshot"]),
+                 _json(section_versions), template_id, report["report"], now),
+            )
+            append_audit(connection, "manuscript_review_completed", "manuscript", manuscript_id,
+                         {"review_group_id": group_id, "reviewer_role": report["reviewer_role"],
+                          "model_role": report["model_snapshot"]["model_role"]})
+    return {"review_group_id": group_id, "manuscript_id": manuscript_id, "template_id": template_id,
+            "is_current": True, "reports": reports, "created_at": now}
+
+
 def authoring_state(project_root: Path) -> dict[str, Any]:
     return {"manuscripts": list_manuscripts(project_root), "reading_jobs": list_reading_jobs(project_root),
             "historiography": list_historiography(project_root),
-            "journal_templates": ensure_journal_templates(project_root), "writing_model": _model_capability()}
+            "journal_templates": ensure_journal_templates(project_root), "writing_model": _model_capability(),
+            "review_models": {"primary": _model_capability(), "secondary": _secondary_review_capability()}}
