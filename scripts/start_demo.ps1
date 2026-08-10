@@ -2,7 +2,8 @@ param(
     [string]$ProjectRoot = "",
     [string]$LibraryRoot = "",
     [string]$WorkspaceRoot = "",
-    [int]$Port = 8765
+    [int]$Port = 8765,
+    [switch]$Restart
 )
 
 $ErrorActionPreference = "Stop"
@@ -28,6 +29,13 @@ $stderrPath = Join-Path $runtimeRoot "demo-server.err.log"
 if (Test-Path -LiteralPath $pidPath) {
     $existingId = [int](Get-Content -LiteralPath $pidPath -Raw)
     $existingProcess = Get-Process -Id $existingId -ErrorAction SilentlyContinue
+    if ($existingProcess) {
+        if ($Restart) {
+            Stop-Process -Id $existingId
+            $existingProcess.WaitForExit(5000)
+            $existingProcess = $null
+        }
+    }
     if ($existingProcess) {
         try {
             $response = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/" -TimeoutSec 2

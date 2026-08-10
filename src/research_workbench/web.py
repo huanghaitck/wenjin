@@ -16,6 +16,16 @@ from .agent_runtime import (
     sync_model_profiles,
     thread_view,
 )
+from .authoring import (
+    authoring_state,
+    create_historiography_entry,
+    create_journal_template,
+    create_reading_job,
+    create_writing_proposal,
+    decide_writing_proposal,
+    export_manuscript,
+    import_manuscript,
+)
 from .pdf_ingestion import ingest_pdf
 from .library import (
     approve_candidates,
@@ -111,6 +121,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "workspace": workspace_view(self.server.workspace_root),
                     "retrievals": list_retrievals(self.server.project_root),
                     "research": research_state(self.server.project_root),
+                    "authoring": authoring_state(self.server.project_root),
                 })
                 return
             if parsed.path == "/api/capabilities":
@@ -351,6 +362,39 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = translate_evidence(
                     self.server.project_root, str(payload["evidence_id"]),
                     str(payload.get("target_language", "Chinese")),
+                )
+            elif parsed.path == "/api/manuscript/import":
+                result = import_manuscript(
+                    self.server.project_root, str(payload["title"]), str(payload["markdown"]),
+                )
+            elif parsed.path == "/api/writing/propose":
+                result = create_writing_proposal(
+                    self.server.project_root, str(payload["section_id"]), str(payload["operation"]),
+                    str(payload.get("instruction", "")), str(payload.get("freeze_id", "")),
+                )
+            elif parsed.path == "/api/writing/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_writing_proposal(
+                    self.server.project_root, str(payload["proposal_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]), str(payload["edited_content"]) if "edited_content" in payload else None,
+                )
+            elif parsed.path == "/api/reading/create":
+                result = create_reading_job(
+                    self.server.project_root, str(payload["title"]), str(payload["question"]),
+                    str(payload["mode"]), [str(value) for value in payload["source_ids"]],
+                    str(payload["stop_condition"]),
+                )
+            elif parsed.path == "/api/historiography/create":
+                result = create_historiography_entry(self.server.project_root, payload)
+            elif parsed.path == "/api/journal/create":
+                result = create_journal_template(
+                    self.server.project_root, str(payload["name"]), str(payload["citation_style"]),
+                    [str(value) for value in payload["section_rules"]],
+                )
+            elif parsed.path == "/api/manuscript/export":
+                result = export_manuscript(
+                    self.server.project_root, str(payload["manuscript_id"]), str(payload["template_id"]),
                 )
             elif parsed.path == "/api/memory/decide":
                 if not isinstance(payload.get("approved"), bool):

@@ -32,6 +32,22 @@ button:hover { border-color: var(--accent); }
 #notice.error { color: var(--danger); }
 .agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(480px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
 .library-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: minmax(290px, .8fr) minmax(420px, 1.1fr) minmax(390px, 1fr); gap: 10px; padding: 0 12px 12px; }
+.article-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 300px minmax(560px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
+.manuscript-panel, .section-editor, .authoring-control { display: grid; min-height: 0; }
+.manuscript-panel { grid-template-rows: auto auto minmax(0, 1fr); }
+.section-editor { grid-template-rows: auto minmax(0, 1fr); }
+.authoring-control { grid-template-rows: auto auto minmax(0, 1fr); }
+.import-manuscript { margin: 0; padding: 10px; border-bottom: 1px solid var(--line); }
+.import-manuscript label { margin-top: 7px; }
+.import-manuscript textarea { min-height: 110px; font-size: 12px; }
+.manuscript-list { overflow: auto; padding: 9px; }
+.manuscript-row { margin-bottom: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.manuscript-row h3 { margin: 0 0 7px; font-size: 13px; }
+.manuscript-row button { width: 100%; margin-top: 5px; text-align: left; }
+.manuscript-row button.selected { color: #fff; background: var(--accent); }
+.compare-editor { min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
+.compare-editor label { min-height: 0; }
+.compare-editor textarea { height: 100%; min-height: 520px; }
 .inventory-panel, .catalog-panel, .work-detail-panel { display: grid; min-height: 0; }
 .inventory-panel { grid-template-rows: auto auto auto minmax(0, 1fr) auto; }
 .catalog-panel { grid-template-rows: auto minmax(0, 1fr); }
@@ -173,6 +189,8 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
 .empty { color: var(--muted); font-size: 13px; }
 @media (max-width: 1000px) {
   .library-workbench { height: auto; grid-template-columns: 1fr; }
+  .article-workbench { height: auto; grid-template-columns: 1fr; }
+  .manuscript-panel, .section-editor, .authoring-control { min-height: 520px; }
   .inventory-panel, .catalog-panel, .work-detail-panel { min-height: 520px; }
   .agent-workbench { height: auto; grid-template-columns: 1fr; }
   .thread-panel, .conversation-panel, .activity-panel { min-height: 300px; }

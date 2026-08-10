@@ -11,6 +11,7 @@
     <div><strong>史学 Research Codex</strong><span>D1 · 对话、项目、来源、证据与人工决定</span></div>
     <div class="importer">
       <button id="agentMode" class="mode-active">研究对话</button>
+      <button id="articleMode">文章工作台</button>
       <button id="libraryMode">研究图书馆</button>
       <button id="sourceMode">文献修复</button>
       <input id="pdfFile" type="file" accept="application/pdf">
@@ -84,6 +85,38 @@
       <div id="contextContent" class="context-content"></div>
       <div id="approvalPanel"></div>
       <details class="run-details"><summary>运行与工具回执</summary><div id="runTimeline" class="run-timeline"></div></details>
+    </aside>
+  </main>
+
+  <main id="articleWorkbench" class="article-workbench" hidden>
+    <aside class="manuscript-panel surface">
+      <header class="agent-heading"><div><h2>稿件与章节</h2><p>原稿和历史版本不会覆盖</p></div></header>
+      <details class="import-manuscript" open>
+        <summary>导入 Markdown 稿件</summary>
+        <label>稿件题名<input id="manuscriptTitle" placeholder="论文题目"></label>
+        <label>Markdown 正文<textarea id="manuscriptMarkdown" placeholder="# 导言&#10;&#10;现有正文……"></textarea></label>
+        <button id="importManuscript" class="primary-inline">导入并按标题分节</button>
+      </details>
+      <div id="manuscriptList" class="manuscript-list"></div>
+    </aside>
+
+    <section class="section-editor surface">
+      <header class="agent-heading"><div><h1 id="sectionHeading">选择一个章节</h1><p id="sectionVersion">人工批准后才产生新版本</p></div></header>
+      <div class="compare-editor">
+        <label>当前批准版本<textarea id="sectionBase" readonly></textarea></label>
+        <label>待审写作提案<textarea id="sectionProposal"></textarea></label>
+      </div>
+    </section>
+
+    <aside class="authoring-control surface">
+      <header class="agent-heading"><div><h2>写作与阅读</h2><p>写作提案、阅读札记和模板</p></div></header>
+      <nav id="authoringTabs" class="context-tabs">
+        <button data-authoring="write" class="selected">润色/分节</button>
+        <button data-authoring="reading">批量阅读</button>
+        <button data-authoring="historiography">学术史</button>
+        <button data-authoring="journal">期刊模板</button>
+      </nav>
+      <div id="authoringContent" class="context-content"></div>
     </aside>
   </main>
 

@@ -2,6 +2,7 @@ const state = {
   snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1,
   libraryScan: null, libraryWorks: [], libraryWork: null, libraryWorkId: '',
   contextMode: 'sources', retrievalRecord: null,
+  manuscriptId: '', sectionId: '', authoringMode: 'write', proposalId: '',
 };
 const $ = (id) => document.getElementById(id);
 
@@ -31,6 +32,7 @@ async function loadSnapshot(selectId = '') {
     request('/api/capabilities'),
   ]);
   renderAgentShell();
+  renderAuthoring();
   state.libraryWorks = state.snapshot.library_works || [];
   renderLibraryShell();
   const select = $('sourceSelect');
@@ -418,6 +420,102 @@ function renderContext() {
   }
 }
 
+function selectedManuscript() {
+  return (state.snapshot?.authoring?.manuscripts || []).find((item) => item.manuscript_id === state.manuscriptId);
+}
+
+function selectedSection() {
+  return selectedManuscript()?.sections.find((item) => item.section_id === state.sectionId);
+}
+
+async function refreshAuthoring(message = '') {
+  state.snapshot = await request('/api/snapshot');
+  state.libraryWorks = state.snapshot.library_works || [];
+  renderAgentShell(); renderLibraryShell(); renderAuthoring();
+  if (message) notice(message);
+}
+
+function renderAuthoring() {
+  if (!state.snapshot || !$('manuscriptList')) return;
+  const manuscripts = state.snapshot.authoring?.manuscripts || [];
+  if (!state.manuscriptId && manuscripts.length) state.manuscriptId = manuscripts[0].manuscript_id;
+  let manuscript = selectedManuscript();
+  if (state.manuscriptId && !manuscript) { state.manuscriptId = manuscripts[0]?.manuscript_id || ''; manuscript = selectedManuscript(); }
+  if (!state.sectionId && manuscript?.sections.length) state.sectionId = manuscript.sections[0].section_id;
+  let section = selectedSection();
+  if (state.sectionId && !section) { state.sectionId = manuscript?.sections[0]?.section_id || ''; section = selectedSection(); }
+  const list = $('manuscriptList'); list.replaceChildren();
+  for (const item of manuscripts) {
+    const node = document.createElement('article'); node.className = 'manuscript-row';
+    node.append(Object.assign(document.createElement('h3'), {textContent:item.title}));
+    for (const part of item.sections) {
+      const button = document.createElement('button'); button.textContent = `${part.section_order}. ${part.heading}`;
+      button.classList.toggle('selected', part.section_id === state.sectionId);
+      button.onclick = () => { state.manuscriptId=item.manuscript_id; state.sectionId=part.section_id; state.proposalId=''; renderAuthoring(); };
+      node.append(button);
+    }
+    list.append(node);
+  }
+  $('sectionHeading').textContent = section?.heading || '选择一个章节';
+  $('sectionVersion').textContent = section ? `${section.current_version_id} · ${section.operation}` : '人工批准后才产生新版本';
+  $('sectionBase').value = section?.content || '';
+  const proposals = section?.proposals || [];
+  let proposal = proposals.find((item) => item.proposal_id === state.proposalId) || proposals.find((item) => item.status === 'pending') || proposals[0];
+  if (proposal) state.proposalId = proposal.proposal_id;
+  $('sectionProposal').value = proposal?.proposed_content || '';
+  renderAuthoringControl(section, proposal);
+}
+
+function renderAuthoringControl(section, proposal) {
+  const container = $('authoringContent'); container.replaceChildren();
+  for (const button of $('authoringTabs').querySelectorAll('button')) button.classList.toggle('selected', button.dataset.authoring === state.authoringMode);
+  const authoring = state.snapshot.authoring || {};
+  if (state.authoringMode === 'write') {
+    const model = authoring.writing_model || {};
+    container.append(card('写作模型', model.available ? `${model.provider} / ${model.model}` : '未配置真实模型；保真门禁和规则型演示仍可使用'));
+    if (!section) { container.append(card('尚未选择章节', '先导入 Markdown 稿件。')); return; }
+    const form = document.createElement('section'); form.className='context-form';
+    const operation = document.createElement('select'); operation.id='writingOperation';
+    operation.append(new Option('保真润色','polish'), new Option('基于冻结证据分节写作','section_draft'));
+    const operationLabel=document.createElement('label'); operationLabel.textContent='操作'; operationLabel.append(operation);
+    const freeze=document.createElement('select'); freeze.id='writingFreeze'; freeze.append(new Option('不使用冻结包',''));
+    for (const item of state.snapshot.research?.freezes || []) if(item.status==='approved') freeze.append(new Option(item.title,item.freeze_id));
+    const freezeLabel=document.createElement('label'); freezeLabel.textContent='批准的证据冻结包'; freezeLabel.append(freeze);
+    form.append(operationLabel, formField('修改或写作要求','writingInstruction','保持史学语气，不改变事实与引文',true), freezeLabel);
+    form.append(actionButton('生成待审提案', async()=>{
+      const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value})});
+      state.proposalId=result.proposal_id; await refreshAuthoring(result.validation.valid?'写作提案已生成，等待逐项核对。':'提案缺少受保护标记，已阻断批准。');
+    },true)); container.append(form);
+    if (proposal) {
+      const node=card(`${proposal.operation} · ${proposal.status}`, proposal.validation.valid?'受保护标记完整':'缺失：'+proposal.validation.missing_markers.join('、'));
+      node.append(Object.assign(document.createElement('small'),{textContent:`基础版本 ${proposal.base_version_id} · ${new Date(proposal.created_at).toLocaleString()}`}));
+      if(proposal.status==='pending') {
+        const row=document.createElement('div'); row.className='row';
+        row.append(actionButton('核对后批准',async()=>{await request('/api/writing/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal_id:proposal.proposal_id,approved:true,reviewer:'human-reviewer',edited_content:$('sectionProposal').value})}); state.proposalId=''; await refreshAuthoring('已保存为新的批准章节版本，旧版本仍保留。');},true));
+        row.append(actionButton('拒绝提案',async()=>{await request('/api/writing/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal_id:proposal.proposal_id,approved:false,reviewer:'human-reviewer'})}); state.proposalId=''; await refreshAuthoring('提案已拒绝，当前章节未改变。');})); node.append(row);
+      }
+      container.append(node);
+    }
+  } else if (state.authoringMode === 'reading') {
+    const form=document.createElement('section'); form.className='context-form';
+    form.append(formField('阅读任务','readingTitle','围绕研究问题的定向阅读'),formField('研究问题','readingQuestion','',true));
+    const mode=document.createElement('select'); mode.id='readingMode'; mode.append(new Option('元数据阅读','metadata'),new Option('定向阅读','targeted'),new Option('分批全文阅读','full')); form.append(mode);
+    for(const source of state.snapshot.sources||[]){const label=document.createElement('label');const check=document.createElement('input');check.type='checkbox';check.value=source.source_id;label.append(check,document.createTextNode(source.title));form.append(label);}
+    form.append(formField('停止条件','readingStop','完成所选来源当前可用页块后停止'));
+    form.append(actionButton('建立并执行有界阅读',async()=>{const source_ids=[...form.querySelectorAll('input[type=checkbox]:checked')].map(x=>x.value);await request('/api/reading/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('readingTitle').value,question:$('readingQuestion').value,mode:mode.value,source_ids,stop_condition:$('readingStop').value})});await refreshAuthoring('阅读札记已生成；它们不是证据。');},true));container.append(form);
+    for(const job of authoring.reading_jobs||[]){const node=card(job.title,`${job.mode} · ${job.status} · ${job.notes.length} 份札记`);node.append(Object.assign(document.createElement('p'),{textContent:`问题：${job.question}；停止条件：${job.stop_condition}`}));for(const note of job.notes){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=`${note.source_id} · ${note.qualification}`;const pre=document.createElement('pre');pre.textContent=note.content;details.append(summary,pre);node.append(details);}container.append(node);}
+  } else if (state.authoringMode === 'historiography') {
+    const form=document.createElement('section');form.className='context-form';
+    for(const [label,id,area] of [['著作/论文','histWork',false],['核心立场','histPosition',true],['贡献','histContribution',true],['限制','histLimitation',true],['与当前问题关系','histRelevance',true],['来源引用（逗号分隔）','histRefs',false]]) form.append(formField(label,id,'',area));
+    form.append(actionButton('保存学术史候选条目',async()=>{await request('/api/historiography/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({work_title:$('histWork').value,position:$('histPosition').value,contribution:$('histContribution').value,limitation:$('histLimitation').value,relevance:$('histRelevance').value,source_refs:$('histRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('学术史候选条目已保存，等待研究判断。');},true));container.append(form);
+    for(const item of authoring.historiography||[]){const node=card(item.work_title,`${item.status} · 来源 ${item.source_refs.join('、')}`);node.append(Object.assign(document.createElement('p'),{textContent:`立场：${item.position}\n贡献：${item.contribution}\n限制：${item.limitation}\n关系：${item.relevance}`}));container.append(node);}
+  } else {
+    const form=document.createElement('section');form.className='context-form';form.append(formField('模板名称','journalName'),formField('注释规则','journalCitation'),formField('章节顺序（逗号分隔）','journalSections'));
+    form.append(actionButton('保存人工模板',async()=>{await request('/api/journal/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('journalName').value,citation_style:$('journalCitation').value,section_rules:$('journalSections').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('期刊模板已保存；投稿前仍须核对最新规范。');},true));container.append(form);
+    for(const item of authoring.journal_templates||[]){const node=card(item.name,`${item.origin} · ${item.citation_style}`);node.append(Object.assign(document.createElement('p'),{textContent:item.section_rules.join(' → ')}));if(state.manuscriptId)node.append(actionButton('按此模板导出当前稿件',async()=>{const result=await request('/api/manuscript/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,template_id:item.template_id})});notice(`已导出：${result.project_path}`);},true));container.append(node);}
+  }
+}
+
 function renderApproval(run) {
   const panel = $('approvalPanel'); panel.replaceChildren();
   const approval = run?.approvals?.find((item) => item.status === 'pending');
@@ -663,14 +761,28 @@ $('sourceSelect').onchange = (event) => loadSource(event.target.value).catch((er
 function setMode(mode) {
   $('libraryWorkbench').hidden = mode !== 'library';
   $('agentWorkbench').hidden = mode !== 'agent';
+  $('articleWorkbench').hidden = mode !== 'article';
   $('pdfWorkbench').hidden = mode !== 'source';
   $('libraryMode').classList.toggle('mode-active', mode === 'library');
   $('agentMode').classList.toggle('mode-active', mode === 'agent');
+  $('articleMode').classList.toggle('mode-active', mode === 'article');
   $('sourceMode').classList.toggle('mode-active', mode === 'source');
 }
 $('libraryMode').onclick = () => setMode('library');
 $('agentMode').onclick = () => setMode('agent');
+$('articleMode').onclick = () => { setMode('article'); renderAuthoring(); };
 $('sourceMode').onclick = () => setMode('source');
+$('authoringTabs').onclick = (event) => {
+  const button = event.target.closest('button[data-authoring]');
+  if (!button) return; state.authoringMode = button.dataset.authoring; renderAuthoring();
+};
+$('importManuscript').onclick = async () => {
+  try {
+    const result = await request('/api/manuscript/import', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title:$('manuscriptTitle').value, markdown:$('manuscriptMarkdown').value})});
+    state.manuscriptId=result.manuscript_id; state.sectionId=result.sections[0]?.section_id||''; state.proposalId='';
+    $('manuscriptTitle').value=''; $('manuscriptMarkdown').value=''; await refreshAuthoring('稿件已导入并按 Markdown 标题分节。');
+  } catch (error) { notice(error.message, true); }
+};
 $('contextTabs').onclick = (event) => {
   const button = event.target.closest('button[data-context]');
   if (!button) return; state.contextMode = button.dataset.context; renderContext();
@@ -678,7 +790,7 @@ $('contextTabs').onclick = (event) => {
 $('projectSelect').onchange = async (event) => {
   try {
     await request('/api/project/select', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_id:event.target.value})});
-    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = '';
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId='';
     await loadSnapshot(); setMode('agent'); notice('已切换项目；对话和研究对象按项目隔离。');
   } catch (error) { notice(error.message, true); }
 };
@@ -686,7 +798,7 @@ $('newProject').onclick = async () => {
   const title = window.prompt('新项目名称', '新的历史研究项目'); if (!title?.trim()) return;
   try {
     await request('/api/project/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title})});
-    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = '';
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId='';
     await loadSnapshot(); setMode('agent'); notice('新项目已建立，可以从图书馆加入材料。');
   } catch (error) { notice(error.message, true); }
 };
@@ -758,5 +870,6 @@ $('importButton').onclick = async () => {
   } catch (error) { notice(error.message, true); }
 };
 
-setMode('agent');
+const initialMode = new URLSearchParams(window.location.search).get('mode');
+setMode(['agent', 'article', 'library', 'source'].includes(initialMode) ? initialMode : 'agent');
 loadSnapshot().then(() => notice('对话工作台已就绪。')).catch((error) => notice(error.message, true));

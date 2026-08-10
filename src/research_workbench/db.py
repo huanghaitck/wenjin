@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -501,6 +501,99 @@ CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact ON artifact_versions(a
 """
 
 
+MIGRATION_5 = """
+CREATE TABLE IF NOT EXISTS manuscripts (
+    manuscript_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    source_format TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS manuscript_sections (
+    section_id TEXT PRIMARY KEY,
+    manuscript_id TEXT NOT NULL REFERENCES manuscripts(manuscript_id),
+    section_order INTEGER NOT NULL,
+    heading TEXT NOT NULL,
+    current_version_id TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE(manuscript_id, section_order)
+);
+CREATE TABLE IF NOT EXISTS section_versions (
+    version_id TEXT PRIMARY KEY,
+    section_id TEXT NOT NULL REFERENCES manuscript_sections(section_id),
+    base_version_id TEXT,
+    operation TEXT NOT NULL,
+    content TEXT NOT NULL,
+    evidence_refs_json TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    approved_at TEXT
+);
+CREATE TABLE IF NOT EXISTS writing_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    section_id TEXT NOT NULL REFERENCES manuscript_sections(section_id),
+    base_version_id TEXT NOT NULL REFERENCES section_versions(version_id),
+    operation TEXT NOT NULL,
+    instruction TEXT NOT NULL,
+    proposed_content TEXT NOT NULL,
+    evidence_refs_json TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    protected_markers_json TEXT NOT NULL,
+    validation_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    reviewer TEXT
+);
+CREATE TABLE IF NOT EXISTS reading_jobs (
+    job_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    question TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    source_ids_json TEXT NOT NULL,
+    stop_condition TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS reading_notes (
+    note_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES reading_jobs(job_id),
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    page_refs_json TEXT NOT NULL,
+    content TEXT NOT NULL,
+    qualification TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS historiography_entries (
+    entry_id TEXT PRIMARY KEY,
+    work_title TEXT NOT NULL,
+    position TEXT NOT NULL,
+    contribution TEXT NOT NULL,
+    limitation TEXT NOT NULL,
+    relevance TEXT NOT NULL,
+    source_refs_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS journal_templates (
+    template_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    citation_style TEXT NOT NULL,
+    section_rules_json TEXT NOT NULL,
+    format_rules_json TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_sections_manuscript ON manuscript_sections(manuscript_id, section_order);
+CREATE INDEX IF NOT EXISTS idx_section_versions_section ON section_versions(section_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_writing_proposals_section ON writing_proposals(section_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_reading_notes_job ON reading_notes(job_id, source_id);
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -530,11 +623,19 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (4, utc_now()),
         )
+        version = 4
+    if version < 5:
+        connection.executescript(MIGRATION_5)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (5, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
     connection.executescript(MIGRATION_3)
     connection.executescript(MIGRATION_4)
+    connection.executescript(MIGRATION_5)
 
 
 @contextmanager
@@ -562,6 +663,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
     try:
         connection.executescript(SCHEMA)
         connection.executescript(MIGRATION_4)
+        connection.executescript(MIGRATION_5)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
