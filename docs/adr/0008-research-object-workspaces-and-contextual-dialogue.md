@@ -1,6 +1,6 @@
 # ADR 0008｜Research Object Workspaces and Contextual Dialogue
 
-状态：Accepted for planning；implementation pending
+状态：Accepted；D3 Demo implementation authorized
 日期：2026-08-10
 
 ## 背景
@@ -106,4 +106,4 @@ fidelity report，不能把成功打开等同于格式完全保真。
 - 图书馆将承担文件版本的共享页面处理表示，项目保留研究判断；
 - 文章编辑器从 Markdown 文本框演进为结构化文档树；
 - 研究对话成为跨工作空间的统一协调层，但上下文必须版本化；
-- 本 ADR 不授权立即修改运行代码，实施须通过迁移计划门禁。
+- 用户已于 2026-08-10 批准迁移方案并授权 D3 Demo 实施；真实跨库处理记录迁移仍需单独验收。

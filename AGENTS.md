@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D3_INFORMATION_ARCHITECTURE_AND_DOCUMENT_MODEL_PLANNING_COMPLETE`.
+Current milestone: `D3_USABLE_DEMO_IMPLEMENTATION`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -37,8 +37,9 @@ larger reading-job scheduling, or additional lawful database connectors. Do not 
 The user approved D3 planning on 2026-08-10 after identifying that import and repair belong under the
 library, the manuscript workspace needs a Word-like structured editor, and the browser needs a central
 workspace. ADR 0008 and `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` are accepted planning
-artifacts. D3 implementation is not yet authorized. Do not change runtime code, schemas, real project data
-or UI navigation until the user approves the migration plan.
+artifacts. The user authorized a usable D3 demo on 2026-08-10. Follow `docs/D3_DEMO_TASK_SPEC.md`.
+Implementation must remain additive-first: preserve D1/D2 tables and APIs, do not migrate real library page
+processing records yet, and do not remove compatibility reads during this increment.
 
 ## Startup order
 

@@ -1,6 +1,6 @@
 # D3 Migration Plan｜Library, Document Editor and Research Browser
 
-状态：方案完成，等待实施批准
+状态：方案已批准；D3 Demo 实施中
 日期：2026-08-10
 
 ## 1. 迁移目标
@@ -173,5 +173,6 @@
 4. 结构化文章编辑器与 DOCX/Markdown adapters；
 5. 上下文研究侧栏和中央浏览器标签。
 
-当前只完成 ADR 与迁移方案。未获得下一次明确批准前，不执行 schema 迁移、不移动按钮、不迁移
-真实项目数据，也不引入富文本编辑器依赖。
+用户已于 2026-08-10 授权制作可用 Demo。当前实施 Phase 1、Phase 4 的受控文档子集与 Phase 5
+上下文绑定；旧表和旧 API 保持兼容。真实 Library Processing 跨库迁移留待独立验收，不在本轮移动
+或覆盖真实项目数据。
