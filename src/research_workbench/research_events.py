@@ -91,13 +91,14 @@ def create_event_candidates(
             block_ids = list(dict.fromkeys(
                 str(value).strip() for value in payload.get("block_ids", []) if str(value).strip()
             ))
-            if not values["case_id"] or not source_id or not block_ids or not values["original_text"]:
-                raise ValueError("case_id, source_id, block_ids and original_text are required")
+            if not values["case_id"] or not source_id or not block_ids:
+                raise ValueError("case_id, source_id and block_ids are required")
             if len(block_ids) > 12:
                 raise ValueError("an event row may reference at most 12 blocks")
             placeholders = ",".join("?" for _ in block_ids)
             rows = [dict(row) for row in connection.execute(
-                """SELECT b.block_id, b.block_order, p.page_id, p.physical_page, p.printed_page, p.source_id
+                """SELECT b.block_id, b.block_order, p.page_id, p.physical_page, p.printed_page,
+                          p.source_id, COALESCE(b.human_text, b.machine_text) AS text
                    FROM blocks b JOIN pages p ON p.page_id = b.page_id
                    WHERE b.block_id IN (""" + placeholders + ")", block_ids
             )]
@@ -122,12 +123,19 @@ def create_event_candidates(
                 if not isinstance(anchors, list):
                     raise ValueError(f"field anchor for {field_name} must be a block list")
                 normalized = list(dict.fromkeys(str(value).strip() for value in anchors if str(value).strip()))
-                if values[field_name] and not normalized:
-                    raise ValueError(f"source-derived event field {field_name} requires explicit block anchors")
                 if any(block_id not in block_ids for block_id in normalized):
                     raise ValueError(f"field anchor for {field_name} must belong to the event blocks")
                 if normalized:
                     field_anchors[field_name] = normalized
+            original_text_copied = not values["original_text"]
+            if original_text_copied:
+                quote_anchors = field_anchors.get("original_text", [])
+                if not quote_anchors:
+                    raise ValueError("original_text or its explicit block anchors are required")
+                values["original_text"] = "\n".join(by_id[block_id]["text"] for block_id in quote_anchors)
+            for field_name in SOURCE_ANCHORED_FIELDS:
+                if values[field_name] and not field_anchors.get(field_name):
+                    raise ValueError(f"source-derived event field {field_name} requires explicit block anchors")
             version = connection.execute(
                 "SELECT source_version_id FROM source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1",
                 (source_id,),
@@ -156,7 +164,8 @@ def create_event_candidates(
                  _json(model_snapshot or {}), created_by, now),
             )
             append_audit(connection, "research_event_candidate_created", "research_event", event_id,
-                         {"case_id": values["case_id"], "source_id": source_id, "block_ids": block_ids})
+                         {"case_id": values["case_id"], "source_id": source_id, "block_ids": block_ids,
+                          "original_text_mode": "anchor_copy" if original_text_copied else "submitted_exact_text"})
             for field_name, anchors in field_anchors.items():
                 connection.executemany(
                     """INSERT INTO research_event_field_anchors(

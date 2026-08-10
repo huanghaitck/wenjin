@@ -123,6 +123,23 @@ class ResearchEventTests(unittest.TestCase):
                 "test-model",
             )
 
+    def test_original_text_can_be_copied_exactly_from_its_anchors(self) -> None:
+        candidate = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "Richthofen-1871",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {"original_text": [self.block_id]},
+                "missing_reason": "Other fields PND in this block scope",
+            }],
+            "test-model",
+        )[0]
+        self.assertEqual(
+            candidate["original_text"],
+            "The sentence continues toward the page boundary",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

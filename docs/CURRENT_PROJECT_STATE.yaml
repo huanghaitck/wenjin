@@ -29,13 +29,18 @@ research_event_workflow:
   field_level_block_anchors: required_for_source_derived_fields
   page_and_block_human_verification_before_approval: required
   original_text_must_match_verified_anchor_blocks: true
+  exact_original_text_copy_from_anchors: implemented_and_real_gui_tested
+  model_may_omit_original_text_when_original_text_anchors_are_present: true
   approved_event_is_frozen_evidence: false
   qinling_rejected_overanchored_event_id: EVT_5bcbd5859d50437c97186524139c198b
   qinling_approved_conservative_event_id: EVT_33ffcc0fe0f64f43b142d623182dbfed
+  qinling_anchor_copied_approved_event_id: EVT_08e5949aa1814fb59303cf2194c5f4ea
   real_agent_model: deepseek-v4-flash
   real_agent_first_failure: date_and_place_taken_from_unanchored_neighbor_blocks
   real_agent_second_failure: normalized_soft_hyphen_claimed_as_verbatim
   human_correction_path: copy_exact_text_from_original_page_then_decide
+  anchor_copy_human_check: physical_page_250_printed_page_231_block_B003_only
+  full_test_suite: 91_passed
 
 conversation_context:
   status: implemented_and_real_gui_tested
