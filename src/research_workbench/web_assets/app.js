@@ -312,7 +312,8 @@ function latestRun() { return state.thread?.runs?.[0]; }
 function renderThread() {
   $('threadTitle').textContent = state.thread?.thread?.title || '新建一个研究线程';
   const run = latestRun();
-  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '独立构思' : '按计划执行'}` : '对话与运行状态会保存在本地项目中';
+  const historyCount=run?.model_snapshot?.history_message_ids?.length||0;
+  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '独立构思（不带旧对话）' : `按计划执行 · 沿用${historyCount}条历史${run.model_snapshot.history_truncated?'（已裁剪）':''}`}` : '对话与运行状态会保存在本地项目中';
   const messages = $('messages'); messages.replaceChildren();
   for (const message of (state.thread?.messages || [])) {
     const card = document.createElement('article'); card.className = `message ${message.role}`;
@@ -1497,8 +1498,8 @@ $('modelProfile').onchange = async (event) => {
 $('planningMode').onchange = (event) => {
   state.planningMode = event.target.value;
   notice(state.planningMode === 'independent_planning'
-    ? '独立构思：本次运行不会把研究者基线或共同计划发给模型。'
-    : '按计划执行：本次运行会加载当前共同批准计划。');
+    ? '独立构思：本次运行不会把研究者基线、共同计划或旧线程对话发给模型。'
+    : '按计划执行：本次运行会加载共同批准计划和最近的有界线程对话；对话不是来源证据。');
 };
 $('sendMessage').onclick = async () => {
   const content = $('messageInput').value.trim();

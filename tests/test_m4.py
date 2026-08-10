@@ -166,9 +166,21 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
         }
         contexts: list[str] = []
+        histories: list[list[dict[str, str]]] = []
+
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            connection.execute(
+                "INSERT INTO messages(message_id, thread_id, role, content_json, created_at) VALUES (?, ?, 'user', ?, ?)",
+                ("MSG_seed", self.thread["thread_id"], json.dumps({"text": "旧线程讨论"}), "2026-01-01"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
 
         def final(*args: object) -> dict[str, str]:
             contexts.append(str(args[4]))
+            histories.append(list(args[5]))
             return {"type": "final", "content": "ok"}
 
         with patch.dict(os.environ, environment, clear=False):
@@ -180,8 +192,18 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("intentionally withheld", contexts[0])
         self.assertNotIn("五年核心窗口秘密", contexts[0])
         self.assertNotIn("共同执行边界", contexts[0])
+        self.assertEqual(histories[0], [])
         self.assertIn("共同执行边界", contexts[1])
         self.assertNotIn("五年核心窗口秘密", contexts[1])
+        self.assertEqual(histories[1][0]["content"], "旧线程讨论")
+        self.assertEqual(histories[1][-2]["content"], "独立想方案")
+        self.assertEqual(histories[1][-1]["content"], "ok")
+        guided = thread_view(self.project, self.thread["thread_id"])["runs"][0]
+        self.assertEqual(guided["model_snapshot"]["history_policy"], "bounded_thread_history")
+        self.assertEqual(
+            guided["model_snapshot"]["history_message_ids"],
+            [item["message_id"] for item in histories[1]],
+        )
 
     def test_source_list_exposes_optional_research_context(self) -> None:
         source_id = list_sources(self.project)[0]["source_id"]
@@ -307,6 +329,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("prioritize dates", SYSTEM_PROMPT)
         self.assertIn("unfinished at the bottom of a page", SYSTEM_PROMPT)
         self.assertIn("not independent corroboration", SYSTEM_PROMPT)
+        self.assertIn("Prior thread messages", SYSTEM_PROMPT)
 
     def test_loopback_api_exposes_thread_run_and_approval(self) -> None:
         server = build_server(self.project, port=0)

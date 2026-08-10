@@ -37,6 +37,21 @@ research_event_workflow:
   real_agent_second_failure: normalized_soft_hyphen_claimed_as_verbatim
   human_correction_path: copy_exact_text_from_original_page_then_decide
 
+conversation_context:
+  status: implemented_and_real_gui_tested
+  guided_execution_history_messages: 12
+  guided_execution_history_characters: 30000
+  per_message_character_cap: 8000
+  history_ids_recorded_in_model_snapshot: true
+  prior_conversation_is_source_evidence: false
+  independent_planning_history_policy: withheld
+  independent_planning_design_policy: researcher_baseline_and_shared_design_withheld
+  gui_displays_history_count_and_truncation: true
+  real_qinling_history_receipt:
+    message_count: 2
+    character_count: 656
+    truncated: false
+
 m1:
   status: complete
   python: "3.13"

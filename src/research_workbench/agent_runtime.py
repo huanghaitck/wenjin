@@ -28,6 +28,9 @@ from .service import list_sources, project_status, source_view
 MAIN_ROLE = "main_reasoning"
 RUN_TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
 MAX_TOOL_CALLS = 12
+MAX_HISTORY_MESSAGES = 12
+MAX_HISTORY_CHARS = 30000
+MAX_HISTORY_MESSAGE_CHARS = 8000
 SYSTEM_PROMPT = """You are the main agent in a local historical research workbench.
 Use tools to inspect project facts. Never claim you read a source unless a tool returned it.
 Return exactly one JSON object for exactly one action and no markdown. If several tools are needed,
@@ -51,6 +54,8 @@ Available actions:
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
 Follow an explicit user tool scope. Do not call unrelated state tools merely because they are available.
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
+Prior thread messages preserve the research discussion but are not source evidence. Reinspect source pages
+when a prior message mentions a fact that must enter an event, claim, quotation or draft.
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
@@ -344,6 +349,45 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
     return {"thread": dict(thread), "messages": messages, "runs": runs}
 
 
+def _thread_history(project_root: Path, thread_id: str) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    with connect(project_root) as connection:
+        rows = connection.execute(
+            """SELECT message_id, role, content_json FROM messages
+               WHERE thread_id = ? AND role IN ('user', 'assistant')
+               ORDER BY created_at DESC, message_id DESC LIMIT ?""",
+            (thread_id, MAX_HISTORY_MESSAGES + 1),
+        ).fetchall()
+    truncated = len(rows) > MAX_HISTORY_MESSAGES
+    rows = rows[:MAX_HISTORY_MESSAGES]
+    remaining = MAX_HISTORY_CHARS
+    selected: list[dict[str, str]] = []
+    for row in rows:
+        text = str(_decode(row["content_json"], {}).get("text", "")).strip()
+        if not text:
+            continue
+        if len(text) > MAX_HISTORY_MESSAGE_CHARS:
+            half = (MAX_HISTORY_MESSAGE_CHARS - 25) // 2
+            text = text[:half] + "\n...[message clipped]...\n" + text[-half:]
+            truncated = True
+        if len(text) > remaining:
+            if remaining < 200:
+                truncated = True
+                break
+            half = max(80, (remaining - 25) // 2)
+            text = text[:half] + "\n...[history clipped]...\n" + text[-half:]
+            truncated = True
+        selected.append({"message_id": str(row["message_id"]), "role": str(row["role"]), "content": text})
+        remaining -= len(text)
+        if remaining <= 0:
+            break
+    selected.reverse()
+    return selected, {
+        "message_ids": [item["message_id"] for item in selected],
+        "truncated": truncated,
+        "character_count": sum(len(item["content"]) for item in selected),
+    }
+
+
 def send_message(project_root: Path, thread_id: str, content: str,
                  context: dict[str, Any] | None = None,
                  planning_mode: str = "guided_execution") -> dict[str, Any]:
@@ -354,6 +398,11 @@ def send_message(project_root: Path, thread_id: str, content: str,
         raise ValueError(f"unknown planning mode: {planning_mode}")
     profile = _assigned_profile(project_root)
     shared_design = current_shared_design(project_root) if planning_mode == "guided_execution" else None
+    history, history_receipt = (
+        _thread_history(project_root, thread_id)
+        if planning_mode == "guided_execution"
+        else ([], {"message_ids": [], "truncated": False, "character_count": 0})
+    )
     now = utc_now()
     message_id, goal_id, run_id = _id("MSG"), _id("GOL"), _id("RUN")
     snapshot = {
@@ -361,6 +410,10 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "model": profile.model, "endpoint": profile.endpoint,
         "planning_mode": planning_mode,
         "shared_design_id": shared_design["design_id"] if shared_design else "",
+        "history_policy": "bounded_thread_history" if history else "withheld_or_empty",
+        "history_message_ids": history_receipt["message_ids"],
+        "history_truncated": history_receipt["truncated"],
+        "history_character_count": history_receipt["character_count"],
     }
     with connect(project_root) as connection:
         thread = connection.execute("SELECT thread_id FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
@@ -434,7 +487,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
             else "APPROVED_SHARED_RESEARCH_DESIGN " + _json(shared_design) if shared_design
             else "GUIDED_EXECUTION: This project has no approved shared research design."
         )
-        _advance_run(project_root, run_id, objective, profile, design_context)
+        _advance_run(project_root, run_id, objective, profile, design_context, history)
     except Exception as error:
         with connect(project_root) as connection:
             connection.execute(
@@ -450,12 +503,12 @@ def send_message(project_root: Path, thread_id: str, content: str,
 
 
 def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile,
-                 design_context: str = "") -> None:
+                 design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
     observations: list[dict[str, Any]] = []
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
         action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
-            profile, objective, observations, remaining, design_context
+            profile, objective, observations, remaining, design_context, history
         )
         action_type = action.get("type")
         if action_type == "final":
@@ -526,6 +579,7 @@ def _model_action(
     observations: list[dict[str, Any]],
     remaining_tool_calls: int = MAX_TOOL_CALLS,
     design_context: str = "",
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     budget_instruction = (
         "No tool calls remain. Return a final answer now using only the tool results already provided."
@@ -536,8 +590,12 @@ def _model_action(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": budget_instruction},
         {"role": "system", "content": design_context},
-        {"role": "user", "content": objective},
     ]
+    messages.extend(
+        {"role": item["role"], "content": item["content"]}
+        for item in (history or [])
+    )
+    messages.append({"role": "user", "content": objective})
     for observation in observations:
         messages.append({"role": "user", "content": "TOOL_RESULT " + _json(observation)})
     if profile.provider == "openai_compatible":
