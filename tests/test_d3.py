@@ -80,13 +80,21 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         docx = Document()
         docx.add_heading("导言", level=1)
         docx.add_paragraph("正文段落。")
+        table = docx.add_table(rows=3, cols=3)
+        for column, value in enumerate(("比较项", "谭卫道", "李希霍芬")):
+            table.cell(0, column).text = value
+        table.cell(1, 0).text, table.cell(1, 1).text, table.cell(1, 2).text = "旅行年份", "1873", "1872"
+        table.cell(2, 0).text, table.cell(2, 1).text, table.cell(2, 2).text = "停驻点", "12", "9"
         docx.save(package)
         imported = import_docx(self.project, "DOCX 稿件", package.getvalue())
         self.assertEqual(imported["import_fidelity"]["level"], "limited")
+        self.assertEqual(imported["document"]["children"][0]["children"][1]["type"], "table")
         markdown = export_document(self.project, imported["manuscript_id"], "markdown")
         word = export_document(self.project, imported["manuscript_id"], "docx")
         self.assertTrue((self.project / markdown["project_path"]).is_file())
         self.assertTrue((self.project / word["project_path"]).is_file())
+        self.assertIn("| 比较项 | 谭卫道 | 李希霍芬 |", (self.project / markdown["project_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(len(Document(self.project / word["project_path"]).tables), 1)
         self.assertEqual(word["fidelity"]["level"], "structured_with_true_footnotes")
 
     def test_ui_has_four_permanent_workspaces_and_nested_repair(self) -> None:

@@ -9,10 +9,13 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from docx.document import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Cm, Pt
 from docx.shared import RGBColor
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from .authoring import ensure_journal_templates
 from .citations import check_note_anchors, list_notes
@@ -28,11 +31,65 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _paragraphs(text: str) -> list[dict[str, str]]:
-    parts = [part.strip() for part in text.replace("\r\n", "\n").split("\n\n") if part.strip()]
-    return [{"type": "paragraph", "node_id": _id("NOD"), "text": part} for part in parts] or [
+def _table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def _is_table_divider(line: str) -> bool:
+    cells = _table_cells(line)
+    return len(cells) >= 2 and all(cell.replace(":", "").replace("-", "") == "" and "-" in cell for cell in cells)
+
+
+def _nodes_from_text(text: str) -> list[dict[str, Any]]:
+    lines = text.replace("\r\n", "\n").splitlines()
+    nodes: list[dict[str, Any]] = []
+    paragraph: list[str] = []
+
+    def flush_paragraph() -> None:
+        value = "\n".join(paragraph).strip()
+        if value:
+            nodes.append({"type": "paragraph", "node_id": _id("NOD"), "text": value})
+        paragraph.clear()
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if "|" in line and index + 1 < len(lines) and _is_table_divider(lines[index + 1]):
+            flush_paragraph()
+            rows = [_table_cells(line)]
+            index += 2
+            while index < len(lines) and "|" in lines[index] and lines[index].strip():
+                rows.append(_table_cells(lines[index]))
+                index += 1
+            width = max(len(row) for row in rows)
+            rows = [row + [""] * (width - len(row)) for row in rows]
+            nodes.append({"type": "table", "node_id": _id("NOD"), "rows": rows})
+            continue
+        if not line.strip():
+            flush_paragraph()
+        else:
+            paragraph.append(line)
+        index += 1
+    flush_paragraph()
+    return nodes or [
         {"type": "paragraph", "node_id": _id("NOD"), "text": ""}
     ]
+
+
+def _table_markdown(rows: list[list[str]]) -> str:
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    normalized = [row + [""] * (width - len(row)) for row in rows]
+    lines = ["| " + " | ".join(row) + " |" for row in normalized]
+    lines.insert(1, "| " + " | ".join("---" for _ in range(width)) + " |")
+    return "\n".join(lines)
+
+
+def _node_text(node: dict[str, Any]) -> str:
+    if node.get("type") == "table":
+        return _table_markdown([[str(cell) for cell in row] for row in node.get("rows", [])])
+    return str(node.get("text", ""))
 
 
 def _tree_from_sections(title: str, sections: list[dict[str, Any]]) -> dict[str, Any]:
@@ -46,7 +103,7 @@ def _tree_from_sections(title: str, sections: list[dict[str, Any]]) -> dict[str,
                 "node_id": _id("NOD"),
                 "section_id": section["section_id"],
                 "heading": section["heading"],
-                "children": _paragraphs(section["content"]),
+                "children": _nodes_from_text(section["content"]),
             }
             for section in sections
         ],
@@ -57,7 +114,7 @@ def _plain_text(tree: dict[str, Any]) -> str:
     lines = [str(tree.get("title", ""))]
     for section in tree.get("children", []):
         lines.append(str(section.get("heading", "")))
-        lines.extend(str(node.get("text", "")) for node in section.get("children", []))
+        lines.extend(_node_text(node) for node in section.get("children", []))
     return "\n".join(lines)
 
 
@@ -75,8 +132,19 @@ def _validate_tree(tree: dict[str, Any]) -> None:
             if not node_id or node_id in seen:
                 raise ValueError("document node IDs must be present and unique")
             seen.add(node_id)
-        if any(node.get("type") not in {"paragraph", "quote", "list_item"} for node in section["children"]):
+        if any(node.get("type") not in {"paragraph", "quote", "list_item", "table"} for node in section["children"]):
             raise ValueError("unsupported document node type")
+        for node in section["children"]:
+            if node.get("type") != "table":
+                continue
+            rows = node.get("rows")
+            if not isinstance(rows, list) or not rows or any(not isinstance(row, list) for row in rows):
+                raise ValueError("table nodes require rows")
+            width = len(rows[0])
+            if width < 2 or any(len(row) != width for row in rows):
+                raise ValueError("table rows must have the same width and at least two columns")
+            if any(not isinstance(cell, str) for row in rows for cell in row):
+                raise ValueError("table cells must contain text")
 
 
 def ensure_document(project_root: Path, manuscript_id: str) -> dict[str, Any]:
@@ -176,7 +244,7 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
                     "INSERT INTO manuscript_sections(section_id, manuscript_id, section_order, heading, created_at) VALUES (?, ?, ?, ?, ?)",
                     (section_id, manuscript_id, order, str(section["heading"]).strip(), now),
                 )
-            content = "\n\n".join(str(node.get("text", "")).strip() for node in section["children"]).strip()
+            content = "\n\n".join(_node_text(node).strip() for node in section["children"]).strip()
             prior = existing.get(section_id, {})
             base = prior.get("current_version_id")
             version_id = base
@@ -214,7 +282,7 @@ def sync_approved_section(project_root: Path, manuscript_id: str, section_id: st
     if section is None:
         raise KeyError(f"structured document is missing section: {section_id}")
     old_children = section.get("children", [])
-    new_children = _paragraphs(content)
+    new_children = _nodes_from_text(content)
     for index, node in enumerate(new_children):
         if index < len(old_children):
             node["node_id"] = old_children[index]["node_id"]
@@ -276,6 +344,9 @@ def markdown_from_tree(tree: dict[str, Any], notes: list[dict[str, Any]] | None 
     for section in tree.get("children", []):
         lines.extend([f"## {section.get('heading', '正文')}", ""])
         for node in section.get("children", []):
+            if node.get("type") == "table":
+                lines.extend([_table_markdown(node.get("rows", [])), ""])
+                continue
             prefix = "> " if node.get("type") == "quote" else ""
             text = _markdown_text(str(node.get("text", "")), by_node.get(str(node.get("node_id")), []))
             lines.extend([prefix + text, ""])
@@ -287,16 +358,37 @@ def markdown_from_tree(tree: dict[str, Any], notes: list[dict[str, Any]] | None 
     return "\n".join(lines).rstrip() + "\n"
 
 
+def _docx_blocks(document: DocxDocument) -> list[Paragraph | Table]:
+    blocks: list[Paragraph | Table] = []
+    for child in document.element.body.iterchildren():
+        if child.tag == qn("w:p"):
+            blocks.append(Paragraph(child, document))
+        elif child.tag == qn("w:tbl"):
+            blocks.append(Table(child, document))
+    return blocks
+
+
+def _docx_table_rows(table: Table) -> list[list[str]]:
+    rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+    width = max((len(row) for row in rows), default=0)
+    return [row + [""] * (width - len(row)) for row in rows]
+
+
 def import_docx(project_root: Path, title: str, data: bytes) -> dict[str, Any]:
     from .authoring import import_manuscript
 
     document = Document(io.BytesIO(data))
     lines: list[str] = []
-    for paragraph in document.paragraphs:
-        text = paragraph.text.strip()
+    for block in _docx_blocks(document):
+        if isinstance(block, Table):
+            rows = _docx_table_rows(block)
+            if rows and len(rows[0]) >= 2:
+                lines.extend([_table_markdown(rows), ""])
+            continue
+        text = block.text.strip()
         if not text:
             continue
-        style = paragraph.style.name if paragraph.style else ""
+        style = block.style.name if block.style else ""
         if style.startswith("Heading"):
             level = style.removeprefix("Heading").strip() or "1"
             lines.append("#" * min(6, max(1, int(level))) + " " + text)
@@ -308,7 +400,7 @@ def import_docx(project_root: Path, title: str, data: bytes) -> dict[str, Any]:
     detail = ensure_document(project_root, manuscript["manuscript_id"])
     warnings = []
     if document.tables:
-        warnings.append(f"{len(document.tables)} 个表格未导入")
+        warnings.append(f"{len(document.tables)} 个表格已导入为可编辑结构；复杂合并单元格需人工复核")
     warnings.append("批注、修订、域代码、脚注与嵌入对象未做无损往返保证")
     _record_receipt(project_root, manuscript["manuscript_id"], detail["current_revision_id"],
                     "import", "docx", "", {"level": "limited", "warnings": warnings})
@@ -323,11 +415,23 @@ def reimport_docx(project_root: Path, manuscript_id: str, data: bytes) -> dict[s
     old_sections = current["document"].get("children", [])
     sections: list[dict[str, Any]] = []
     active: dict[str, Any] | None = None
-    for paragraph in document.paragraphs:
-        text = paragraph.text.strip()
+    for block in _docx_blocks(document):
+        if isinstance(block, Table):
+            rows = _docx_table_rows(block)
+            if not rows or len(rows[0]) < 2:
+                continue
+            if active is None:
+                active = {
+                    "type": "section", "node_id": _id("NOD"), "section_id": "",
+                    "heading": "正文", "children": [],
+                }
+                sections.append(active)
+            active["children"].append({"type": "table", "node_id": _id("NOD"), "rows": rows})
+            continue
+        text = block.text.strip()
         if not text:
             continue
-        style = paragraph.style.name if paragraph.style else ""
+        style = block.style.name if block.style else ""
         if style.startswith("Heading"):
             active = {
                 "type": "section", "node_id": _id("NOD"), "section_id": "",
@@ -354,7 +458,7 @@ def reimport_docx(project_root: Path, manuscript_id: str, data: bytes) -> dict[s
                 "批注、修订、域代码、脚注与嵌入对象未做无损往返保证",
                 "原结构化注释锚点因 Word 段落身份变化而需要重新核对"]
     if document.tables:
-        warnings.append(f"{len(document.tables)} 个表格未导入")
+        warnings.append(f"{len(document.tables)} 个表格已导回为可编辑结构；复杂合并单元格需人工复核")
     tree = {
         "type": "document", "node_id": _id("NOD"),
         "title": str(current["document"].get("title", "未命名稿件")), "children": sections,
@@ -413,6 +517,18 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         for section in tree.get("children", []):
             document.add_heading(str(section.get("heading", "正文")), level=1)
             for node in section.get("children", []):
+                if node.get("type") == "table":
+                    rows = node.get("rows", [])
+                    if rows:
+                        table = document.add_table(rows=len(rows), cols=len(rows[0]))
+                        table.style = "Table Grid"
+                        for row_index, row in enumerate(rows):
+                            for column_index, value in enumerate(row):
+                                table.cell(row_index, column_index).text = str(value)
+                                if row_index == 0:
+                                    for run in table.cell(row_index, column_index).paragraphs[0].runs:
+                                        run.bold = True
+                    continue
                 style = "Quote" if node.get("type") == "quote" else None
                 paragraph = document.add_paragraph(style=style)
                 text = str(node.get("text", ""))

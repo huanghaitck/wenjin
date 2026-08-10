@@ -54,6 +54,9 @@ button:hover { border-color: var(--accent); }
 .document-canvas { overflow: auto; width: min(860px, calc(100% - 30px)); min-height: calc(100% - 32px); margin: 16px auto; padding: 58px 54px; outline: none; color: #211f1b; background: #fff; border: 1px solid #d5ccbc; box-shadow: 0 10px 34px #3b302627; font: 16px/1.95 "Songti SC", "SimSun", Georgia, serif; caret-color: var(--accent); }
 .document-canvas p, .document-canvas blockquote { min-height: 1.9em; margin: 0 0 1em; }
 .document-canvas blockquote { padding-left: 18px; color: #595148; border-left: 3px solid var(--accent-soft); }
+.document-canvas table { width: 100%; margin: 1.2em 0; border-collapse: collapse; font: 14px/1.55 "Songti SC", "SimSun", serif; }
+.document-canvas th, .document-canvas td { min-width: 5em; padding: 7px 9px; vertical-align: top; border: 1px solid #8f887e; }
+.document-canvas th { background: #f3efe7; font-weight: 600; text-align: center; }
 .note-marker { margin: 0 1px; color: #8b4e2f; font: 700 10px/1 Inter, sans-serif; cursor: pointer; user-select: none; }
 .note-marker.pending { color: #ad7a37; }
 .manuscript-status { padding: 7px 12px; color: var(--muted); background: #f8f5ee; border-top: 1px solid var(--line); font-size: 11px; }

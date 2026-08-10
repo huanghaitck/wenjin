@@ -49,12 +49,16 @@ class D5DesktopPackagingTests(unittest.TestCase):
             word = Document()
             word.add_heading("导言", level=1)
             word.add_paragraph("在 Microsoft Word 中人工修改后的段落。")
+            table = word.add_table(rows=2, cols=2)
+            table.cell(0, 0).text, table.cell(0, 1).text = "比较项", "数量"
+            table.cell(1, 0).text, table.cell(1, 1).text = "停驻点", "12"
             payload = io.BytesIO()
             word.save(payload)
             after = reimport_docx(project, manuscript["manuscript_id"], payload.getvalue())
             self.assertNotEqual(before["current_revision_id"], after["current_revision_id"])
             self.assertEqual(after["revisions"][0]["source_format"], "docx_reimport")
             self.assertIn("人工修改", after["document"]["children"][0]["children"][0]["text"])
+            self.assertEqual(after["document"]["children"][0]["children"][1]["rows"][1], ["停驻点", "12"])
             self.assertGreaterEqual(len(after["revisions"]), 2)
 
     def test_ui_exposes_desktop_word_and_model_bridges(self) -> None:

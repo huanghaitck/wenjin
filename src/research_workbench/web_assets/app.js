@@ -554,6 +554,18 @@ function renderDocumentCanvas() {
   }
   const activeNotes = (state.document?.notes || []).filter((note) => note.status === 'active');
   for (const node of section.children || []) {
+    if (node.type === 'table') {
+      const table=document.createElement('table');table.dataset.nodeId=node.node_id;table.dataset.nodeType='table';
+      const body=document.createElement('tbody');
+      for (const [rowIndex,row] of (node.rows||[]).entries()) {
+        const tr=document.createElement('tr');
+        for (const value of row) {
+          const cell=document.createElement(rowIndex===0?'th':'td');cell.textContent=value;tr.append(cell);
+        }
+        body.append(tr);
+      }
+      table.append(body);canvas.append(table);continue;
+    }
     const element = document.createElement(node.type === 'quote' ? 'blockquote' : 'p');
     element.dataset.nodeId = node.node_id; element.dataset.nodeType = node.type;
     const placements = activeNotes.map((note, index) => ({note, number:index + 1}))
@@ -582,11 +594,17 @@ function captureDocumentSection() {
   const heading=$('sectionHeading').innerText.trim();
   if(!heading) throw new Error('章节标题不能为空。');
   section.heading=heading;
-  section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li')).map((node) => ({
-    type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : 'paragraph'),
-    node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
-    text: (() => { const clone=node.cloneNode(true); clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove()); return clone.innerText.trim(); })(),
-  }));
+  section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li, table')).map((node) => {
+    if (node.tagName === 'TABLE') return {
+      type:'table',node_id:node.dataset.nodeId||`NOD_${crypto.randomUUID().replaceAll('-', '')}`,
+      rows:[...node.rows].map((row)=>[...row.cells].map((cell)=>cell.innerText.trim())),
+    };
+    return {
+      type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : 'paragraph'),
+      node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
+      text: (() => { const clone=node.cloneNode(true); clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove()); return clone.innerText.trim(); })(),
+    };
+  });
   if (!section.children.length) section.children.push({type:'paragraph', node_id:`NOD_${crypto.randomUUID().replaceAll('-', '')}`, text:''});
 }
 
@@ -598,6 +616,7 @@ function currentSelectionContext() {
   const startElement=(range.startContainer.nodeType===Node.ELEMENT_NODE?range.startContainer:range.startContainer.parentElement)?.closest?.('[data-node-id]');
   const endElement=(range.endContainer.nodeType===Node.ELEMENT_NODE?range.endContainer:range.endContainer.parentElement)?.closest?.('[data-node-id]');
   if (!startElement || startElement !== endElement) { notice('注释选区必须位于同一段落内。', true); return state.selection || {text:'',nodeId:'',offset:0}; }
+  if (startElement.dataset.nodeType === 'table') { notice('表格来源请在表题或表下注释段落中插入注释。', true); return {text:'',nodeId:'',offset:0}; }
   const before=range.cloneRange(); before.selectNodeContents(startElement); before.setEnd(range.endContainer,range.endOffset);
   const fragment=before.cloneContents(); fragment.querySelectorAll?.('.note-marker').forEach((marker)=>marker.remove());
   state.selection = {text, nodeId:startElement.dataset.nodeId || '', offset:fragment.textContent.length};
@@ -651,7 +670,7 @@ function renderAuthoring() {
   const templateSelect=$('exportTemplate'); const previous=templateSelect.value; templateSelect.replaceChildren();
   for(const template of state.snapshot.authoring?.journal_templates||[]) templateSelect.append(new Option(template.name,template.template_id));
   templateSelect.value=previous||'builtin-history-research';
-  const text=state.document?.document ? state.document.document.children.flatMap((part)=>part.children||[]).map((node)=>node.text).join('') : '';
+  const text=state.document?.document ? state.document.document.children.flatMap((part)=>part.children||[]).map((node)=>node.type==='table'?(node.rows||[]).flat().join(''):node.text||'').join('') : '';
   const notes=state.document?.notes||[];
   $('manuscriptStats').textContent=state.document ? `${text.length} 字符 · ${state.document.document.children.length} 节 · ${notes.filter((note)=>note.status==='active').length} 条已批准注释 · ${notes.filter((note)=>note.pending).length} 条待审` : '尚未选择稿件';
   renderDocumentCanvas();
@@ -1289,6 +1308,17 @@ $('reimportWord').onclick=async()=>{
   }catch(error){notice(error.message,true);}
 };
 $('insertNote').onclick = () => { currentSelectionContext(); state.authoringMode='notes'; renderAuthoringControl(selectedSection(),null); };
+$('insertTable').onclick = () => {
+  if (!documentSection()) { notice('请先选择稿件章节。', true); return; }
+  const columnInput=window.prompt('表格列数（2—8）','4');if(columnInput===null)return;
+  const columns=Math.min(8,Math.max(2,Number.parseInt(columnInput,10)||4));
+  const rowInput=window.prompt('表格总行数，包含表头（2—30）','5');if(rowInput===null)return;
+  const rows=Math.min(30,Math.max(2,Number.parseInt(rowInput,10)||5));
+  const table=document.createElement('table');table.dataset.nodeId=`NOD_${crypto.randomUUID().replaceAll('-', '')}`;table.dataset.nodeType='table';
+  const body=document.createElement('tbody');
+  for(let row=0;row<rows;row++){const tr=document.createElement('tr');for(let column=0;column<columns;column++){const cell=document.createElement(row===0?'th':'td');cell.textContent=row===0?`列${column+1}`:'';tr.append(cell);}body.append(tr);}table.append(body);$('documentCanvas').append(table);table.querySelector('th')?.focus();
+  notice('表格已插入当前章节；填写后点击“保存新修订”。表题和来源说明请另起正文段落。');
+};
 for (const button of document.querySelectorAll('[data-command]')) button.onclick = () => document.execCommand(button.dataset.command, false);
 $('paragraphButton').onclick = () => document.execCommand('formatBlock', false, 'p');
 $('quoteButton').onclick = () => document.execCommand('formatBlock', false, 'blockquote');
