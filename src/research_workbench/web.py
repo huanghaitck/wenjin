@@ -467,6 +467,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = create_evidence(
                     self.server.project_root, str(payload["claim_id"]), str(payload["block_id"]),
                     str(payload["quote"]), str(payload.get("note", "")), str(payload.get("relation", "supports")),
+                    [str(item) for item in payload.get("block_ids", [])] or None,
                 )
             elif parsed.path == "/api/freeze/create":
                 result = create_freeze(

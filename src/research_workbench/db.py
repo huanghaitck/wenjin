@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -687,6 +687,20 @@ CREATE INDEX IF NOT EXISTS idx_note_versions_note ON manuscript_note_versions(no
 """
 
 
+MIGRATION_8 = """
+CREATE TABLE IF NOT EXISTS evidence_anchors (
+    evidence_id TEXT NOT NULL REFERENCES evidence_items(evidence_id) ON DELETE CASCADE,
+    block_id TEXT NOT NULL REFERENCES blocks(block_id),
+    anchor_order INTEGER NOT NULL,
+    PRIMARY KEY(evidence_id, block_id),
+    UNIQUE(evidence_id, anchor_order)
+);
+CREATE INDEX IF NOT EXISTS idx_evidence_anchors_block ON evidence_anchors(block_id, evidence_id);
+INSERT OR IGNORE INTO evidence_anchors(evidence_id, block_id, anchor_order)
+SELECT evidence_id, block_id, 0 FROM evidence_items;
+"""
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -737,6 +751,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (7, utc_now()),
         )
+        version = 7
+    if version < 8:
+        connection.executescript(MIGRATION_8)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (8, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -745,6 +766,24 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_5)
     connection.executescript(MIGRATION_6)
     connection.executescript(MIGRATION_7)
+    anchors_table = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'evidence_anchors'"
+    ).fetchone()
+    if anchors_table is None:
+        connection.executescript(MIGRATION_8)
+    else:
+        orphan = connection.execute(
+            """SELECT 1 FROM evidence_items e
+               LEFT JOIN evidence_anchors ea ON ea.evidence_id = e.evidence_id
+               WHERE ea.evidence_id IS NULL LIMIT 1"""
+        ).fetchone()
+        if orphan is not None:
+            connection.execute(
+                """INSERT OR IGNORE INTO evidence_anchors(evidence_id, block_id, anchor_order)
+                   SELECT e.evidence_id, e.block_id, 0 FROM evidence_items e
+                   LEFT JOIN evidence_anchors ea ON ea.evidence_id = e.evidence_id
+                   WHERE ea.evidence_id IS NULL"""
+            )
 
 
 @contextmanager
@@ -775,6 +814,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_5)
         connection.executescript(MIGRATION_6)
         connection.executescript(MIGRATION_7)
+        connection.executescript(MIGRATION_8)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

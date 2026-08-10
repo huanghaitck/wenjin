@@ -149,7 +149,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 7)
+        self.assertEqual(version, 8)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:
@@ -211,6 +211,9 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         from research_workbench.agent_runtime import SYSTEM_PROMPT
 
         self.assertIn("Do not return a Python repr", SYSTEM_PROMPT)
+        self.assertIn("prioritize dates", SYSTEM_PROMPT)
+        self.assertIn("unfinished at the bottom of a page", SYSTEM_PROMPT)
+        self.assertIn("not independent corroboration", SYSTEM_PROMPT)
 
     def test_loopback_api_exposes_thread_run_and_approval(self) -> None:
         server = build_server(self.project, port=0)

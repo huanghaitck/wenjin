@@ -40,6 +40,11 @@ Available actions:
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
+When locating a translation or other derivative against an original source, prioritize dates,
+chronological sequence and neighboring pages; repeated lexical hits are only leads. A translation
+of the same witness is a locator aid, not independent corroboration. If a relevant sentence is
+unfinished at the bottom of a page, inspect the next physical page before reporting the passage.
+Cross-page evidence requires a human-confirmed continuation relation in the workbench.
 Write final content for a researcher as readable prose with short headings or bullet lines.
 Do not return a Python repr, JSON dump, or an object-shaped report unless the user explicitly asks for one.
 """

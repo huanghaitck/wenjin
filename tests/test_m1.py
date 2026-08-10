@@ -183,6 +183,42 @@ class M1KernelTests(unittest.TestCase):
         self.assertEqual(page_state, "human_spot_checked")
         self.assertEqual(states, ["human_verified", "machine_parsed"])
 
+    def test_single_block_verification_salvages_only_that_block_from_systemic_ocr(self) -> None:
+        packet = self.root / "systemic-ocr.json"
+        packet.write_text(json.dumps({
+            "pages": [{
+                "id": "P1", "physical_page": 1, "page_type": "body",
+                "blocks": [
+                    {"id": "B1", "order": 1, "type": "paragraph", "text": "Exact paragraph."},
+                    {"id": "B2", "order": 2, "type": "paragraph", "text": "Unchecked paragraph."},
+                ],
+            }],
+            "anomalies": [{
+                "id": "A_SOURCE", "scope_type": "source", "target_id": "SOURCE",
+                "severity": "systemic", "category": "content",
+                "message": "OCR must be checked locally against page images.",
+            }],
+        }), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        block_id = f"{self.source['source_id']}:B1"
+        verify_block(self.project, block_id, "Professor", "Exact against the rendered page")
+        with connect(self.project) as connection:
+            source_state = connection.execute(
+                "SELECT use_state FROM sources WHERE source_id = ?", (self.source["source_id"],)
+            ).fetchone()[0]
+            page = connection.execute(
+                "SELECT verification_state, use_state FROM pages"
+            ).fetchone()
+            blocks = [tuple(row) for row in connection.execute(
+                "SELECT verification_state, use_state FROM blocks ORDER BY block_order"
+            )]
+        self.assertEqual(source_state, "partial")
+        self.assertEqual(tuple(page), ("human_spot_checked", "research_usable"))
+        self.assertEqual(blocks, [
+            ("human_verified", "research_usable"),
+            ("machine_parsed", "blocked"),
+        ])
+
     def test_user_can_correct_an_undetected_block_error(self) -> None:
         packet = self.root / "manual-correction.json"
         packet.write_text(json.dumps({"pages": [{

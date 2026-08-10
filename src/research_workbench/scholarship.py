@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,18 @@ def get_claim(project_root: Path, claim_id: str) -> dict[str, Any]:
                JOIN evidence_items e ON e.evidence_id = ce.evidence_id
                WHERE ce.claim_id = ? ORDER BY ce.created_at""", (claim_id,)
         )]
+        for item in evidence:
+            anchors = [dict(anchor) for anchor in connection.execute(
+                """SELECT ea.block_id, p.page_id, p.physical_page
+                   FROM evidence_anchors ea
+                   JOIN blocks b ON b.block_id = ea.block_id
+                   JOIN pages p ON p.page_id = b.page_id
+                   WHERE ea.evidence_id = ? ORDER BY ea.anchor_order""",
+                (item["evidence_id"],),
+            )]
+            item["block_ids"] = [anchor["block_id"] for anchor in anchors] or [item["block_id"]]
+            item["page_ids"] = list(dict.fromkeys(anchor["page_id"] for anchor in anchors)) or [item["page_id"]]
+            item["physical_pages"] = list(dict.fromkeys(anchor["physical_page"] for anchor in anchors)) or [item["physical_page"]]
     return {**dict(row), "evidence": evidence}
 
 
@@ -50,65 +63,142 @@ def list_claims(project_root: Path) -> list[dict[str, Any]]:
 
 
 def create_evidence(project_root: Path, claim_id: str, block_id: str, quote: str,
-                    note: str, relation: str = "supports") -> dict[str, Any]:
+                    note: str, relation: str = "supports",
+                    block_ids: list[str] | None = None) -> dict[str, Any]:
     quote, note, relation = quote.strip(), note.strip(), relation.strip()
     if relation not in RELATIONS:
         raise ValueError(f"unsupported claim/evidence relation: {relation}")
     if not quote:
         raise ValueError("evidence quote is required")
+    anchor_ids = list(dict.fromkeys(str(item).strip() for item in (block_ids or [block_id]) if str(item).strip()))
+    if not anchor_ids:
+        raise ValueError("at least one evidence block is required")
+    if len(anchor_ids) > 12:
+        raise ValueError("an evidence span may contain at most 12 blocks")
+    block_id = anchor_ids[0]
     evidence_id, link_id, now = _id("EVI"), _id("CEL"), utc_now()
     with connect(project_root) as connection:
         if connection.execute("SELECT 1 FROM claims WHERE claim_id = ?", (claim_id,)).fetchone() is None:
             raise KeyError(f"unknown claim: {claim_id}")
-        block = connection.execute(
+        placeholders = ",".join("?" for _ in anchor_ids)
+        blocks = [dict(item) for item in connection.execute(
             """SELECT b.block_id, b.use_state AS block_use_state,
                       b.verification_state AS block_verification_state,
                       COALESCE(b.human_text, b.machine_text) AS effective_text,
+                      b.block_order, b.block_type,
                       p.page_id, p.physical_page, p.use_state AS page_use_state,
                       p.verification_state AS page_verification_state, p.source_id
-               FROM blocks b JOIN pages p ON p.page_id = b.page_id WHERE b.block_id = ?""", (block_id,)
-        ).fetchone()
-        if block is None:
-            raise KeyError(f"unknown block: {block_id}")
-        if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
-            raise ValueError("blocked or unverified page content cannot be submitted as evidence")
+               FROM blocks b JOIN pages p ON p.page_id = b.page_id
+               WHERE b.block_id IN (""" + placeholders + ")", anchor_ids
+        )]
+        by_id = {item["block_id"]: item for item in blocks}
+        missing = [item for item in anchor_ids if item not in by_id]
+        if missing:
+            raise KeyError(f"unknown block: {missing[0]}")
+        blocks = [by_id[item] for item in anchor_ids]
+        if anchor_ids != [item["block_id"] for item in sorted(
+            blocks, key=lambda item: (item["physical_page"], item["block_order"])
+        )]:
+            raise ValueError("evidence blocks must be ordered by physical page and block order")
+        if len({item["source_id"] for item in blocks}) != 1:
+            raise ValueError("all evidence blocks must belong to one source")
         block_verified_states = {"human_verified", "human_repaired"}
         page_verified_states = {"human_spot_checked", "human_verified", "human_repaired"}
-        if (block["block_verification_state"] not in block_verified_states
-                or block["page_verification_state"] not in page_verified_states):
-            raise ValueError("human page verification is required before evidence submission")
-        if quote not in block["effective_text"]:
+        for block in blocks:
+            if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
+                raise ValueError("blocked or unverified page content cannot be submitted as evidence")
+            if (block["block_verification_state"] not in block_verified_states
+                    or block["page_verification_state"] not in page_verified_states):
+                raise ValueError("human page verification is required before evidence submission")
+        ignored_types = ("header", "footer", "page_number")
+        for previous, current in zip(blocks, blocks[1:]):
+            if current["physical_page"] == previous["physical_page"]:
+                skipped = connection.execute(
+                    """SELECT 1 FROM blocks
+                       WHERE page_id = ? AND block_order > ? AND block_order < ?
+                         AND block_type NOT IN (?, ?, ?) LIMIT 1""",
+                    (previous["page_id"], previous["block_order"], current["block_order"], *ignored_types),
+                ).fetchone()
+                if skipped is not None:
+                    raise ValueError("evidence blocks must form a contiguous text span")
+                continue
+            if current["physical_page"] != previous["physical_page"] + 1:
+                raise ValueError("cross-page evidence blocks must use adjacent physical pages")
+            trailing = connection.execute(
+                """SELECT 1 FROM blocks WHERE page_id = ? AND block_order > ?
+                   AND block_type NOT IN (?, ?, ?) LIMIT 1""",
+                (previous["page_id"], previous["block_order"], *ignored_types),
+            ).fetchone()
+            leading = connection.execute(
+                """SELECT 1 FROM blocks WHERE page_id = ? AND block_order < ?
+                   AND block_type NOT IN (?, ?, ?) LIMIT 1""",
+                (current["page_id"], current["block_order"], *ignored_types),
+            ).fetchone()
+            if trailing is not None or leading is not None:
+                raise ValueError("cross-page evidence must continue at the page boundary")
+            page_relation = connection.execute(
+                """SELECT human_value, verification_state FROM page_relations
+                   WHERE from_block_id = ? AND to_block_id = ?
+                     AND relation_type IN ('continues_to', 'continues_on_next_page')
+                   LIMIT 1""",
+                (previous["block_id"], current["block_id"]),
+            ).fetchone()
+            human_value = json.loads(page_relation["human_value"]) if page_relation and page_relation["human_value"] else None
+            continuation_confirmed = human_value is True or (
+                isinstance(human_value, dict)
+                and (human_value.get("continues") is True or human_value.get("value") is True)
+            )
+            if (page_relation is None or page_relation["verification_state"] not in block_verified_states
+                    or not continuation_confirmed):
+                raise ValueError("cross-page evidence requires a human-confirmed continuation relation")
+        effective_text = "\n".join(item["effective_text"] for item in blocks)
+        normalized_quote = re.sub(r"\s+", " ", quote).strip()
+        normalized_text = re.sub(r"\s+", " ", effective_text).strip()
+        if normalized_quote not in normalized_text:
             raise ValueError("evidence quote must exactly occur in the verified block text")
-        duplicate = connection.execute(
+        duplicates = connection.execute(
             """SELECT e.evidence_id FROM claim_evidence ce
                JOIN evidence_items e ON e.evidence_id = ce.evidence_id
                WHERE ce.claim_id = ? AND e.block_id = ? AND e.quote = ? AND ce.relation = ?
-               LIMIT 1""",
+               ORDER BY ce.created_at""",
             (claim_id, block_id, quote, relation),
-        ).fetchone()
-        if duplicate is not None:
-            append_audit(
-                connection, "evidence_submission_deduplicated", "evidence", duplicate["evidence_id"],
-                {"claim_id": claim_id, "relation": relation},
+        ).fetchall()
+        duplicate_evidence_id = None
+        for duplicate in duplicates:
+            existing_anchors = [row[0] for row in connection.execute(
+                """SELECT block_id FROM evidence_anchors
+                   WHERE evidence_id = ? ORDER BY anchor_order""",
+                (duplicate["evidence_id"],),
+            )]
+            if existing_anchors == anchor_ids:
+                duplicate_evidence_id = duplicate["evidence_id"]
+                append_audit(
+                    connection, "evidence_submission_deduplicated", "evidence", duplicate["evidence_id"],
+                    {"claim_id": claim_id, "relation": relation, "block_ids": anchor_ids},
+                )
+                break
+        if duplicate_evidence_id is None:
+            version = connection.execute(
+                "SELECT source_version_id FROM source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1",
+                (blocks[0]["source_id"],),
+            ).fetchone()
+            connection.execute(
+                """INSERT INTO evidence_items(evidence_id, source_id, source_version_id, page_id, block_id,
+                   physical_page, quote, note, qualification, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PAGE_VERIFIED', 'verified', ?)""",
+                (evidence_id, blocks[0]["source_id"], version["source_version_id"], blocks[0]["page_id"], block_id,
+                 blocks[0]["physical_page"], quote, note, now),
             )
-            return get_claim(project_root, claim_id)
-        version = connection.execute(
-            "SELECT source_version_id FROM source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1",
-            (block["source_id"],),
-        ).fetchone()
-        connection.execute(
-            """INSERT INTO evidence_items(evidence_id, source_id, source_version_id, page_id, block_id,
-               physical_page, quote, note, qualification, status, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PAGE_VERIFIED', 'verified', ?)""",
-            (evidence_id, block["source_id"], version["source_version_id"], block["page_id"], block_id,
-             block["physical_page"], quote, note, now),
-        )
-        connection.execute(
-            "INSERT INTO claim_evidence(link_id, claim_id, evidence_id, relation, created_at) VALUES (?, ?, ?, ?, ?)",
-            (link_id, claim_id, evidence_id, relation, now),
-        )
-        append_audit(connection, "evidence_submitted", "evidence", evidence_id,
-                     {"claim_id": claim_id, "relation": relation})
+            connection.executemany(
+                "INSERT INTO evidence_anchors(evidence_id, block_id, anchor_order) VALUES (?, ?, ?)",
+                [(evidence_id, anchor, order) for order, anchor in enumerate(anchor_ids)],
+            )
+            connection.execute(
+                "INSERT INTO claim_evidence(link_id, claim_id, evidence_id, relation, created_at) VALUES (?, ?, ?, ?, ?)",
+                (link_id, claim_id, evidence_id, relation, now),
+            )
+            append_audit(connection, "evidence_submitted", "evidence", evidence_id,
+                         {"claim_id": claim_id, "relation": relation, "block_ids": anchor_ids})
     return get_claim(project_root, claim_id)
 
 
@@ -205,7 +295,8 @@ def draft_from_freeze(project_root: Path, freeze_id: str, title: str) -> dict[st
             refs.append({"claim_id": claim["claim_id"], "evidence_id": evidence["evidence_id"],
                          "page_id": evidence["page_id"], "source_version_id": evidence["source_version_id"]})
             footnotes.append(
-                f"[^{note_number}]: {evidence['source_id']}，物理页 {evidence['physical_page']}；"
+                f"[^{note_number}]: {evidence['source_id']}，物理页 "
+                f"{'–'.join(str(page) for page in evidence.get('physical_pages', [evidence['physical_page']]))}；"
                 f"Evidence {evidence['evidence_id']}；Source Version {evidence['source_version_id']}。"
             )
         lines.append("")

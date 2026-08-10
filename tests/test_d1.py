@@ -168,11 +168,55 @@ class D1EndToEndDemoTests(unittest.TestCase):
         decided = decide_memory_candidate(self.project, candidate["candidate_id"], True)
         self.assertEqual(decided["status"], "approved_local")
 
+    def test_cross_page_evidence_keeps_all_confirmed_block_anchors(self) -> None:
+        first = f"{self.source['source_id']}:B2"
+        second = f"{self.source['source_id']}:B3"
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE pages SET use_state = 'research_usable', verification_state = 'human_verified'"
+            )
+            connection.execute(
+                """UPDATE blocks SET use_state = 'research_usable', verification_state = 'human_verified'
+                   WHERE block_id IN (?, ?)""",
+                (first, second),
+            )
+            connection.execute(
+                """UPDATE page_relations SET relation_type = 'continues_on_next_page',
+                          human_value = '{"continues": true}',
+                          verification_state = 'human_repaired'
+                   WHERE from_block_id = ? AND to_block_id = ?""",
+                (first, second),
+            )
+        claim = create_claim(self.project, "跨页记载构成同一条证据。")
+        claim = create_evidence(
+            self.project,
+            claim["claim_id"],
+            first,
+            "The sentence continues toward the page boundary and ends on the following page.",
+            "人工确认跨页续接",
+            "supports",
+            [first, second],
+        )
+        evidence = claim["evidence"][0]
+        self.assertEqual(evidence["block_ids"], [first, second])
+        self.assertEqual(evidence["physical_pages"], [1, 2])
+
+        duplicate = create_evidence(
+            self.project,
+            claim["claim_id"],
+            first,
+            "The sentence continues toward the page boundary and ends on the following page.",
+            "重复提交不应新增",
+            "supports",
+            [first, second],
+        )
+        self.assertEqual(len(duplicate["evidence"]), 1)
+
     def test_schema_four_tables_are_created(self) -> None:
         with connect(self.project) as connection:
             version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-            self.assertEqual(version, 7)
+            self.assertEqual(version, 8)
         self.assertTrue({"claims", "evidence_items", "evidence_freezes", "browser_sessions"} <= tables)
 
     def test_loopback_api_exposes_conversation_workspace_and_research_objects(self) -> None:
