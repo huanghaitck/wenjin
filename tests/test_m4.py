@@ -14,6 +14,8 @@ from research_workbench.agent_runtime import (
     ModelProfile,
     _model_action,
     _parse_action,
+    _post_json,
+    _read_page,
     _search_source_blocks,
     assign_model,
     create_thread,
@@ -247,6 +249,20 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertFalse(ollama_payload["stream"])
         self.assertEqual(ollama_payload["format"], "json")
 
+    def test_model_http_step_has_a_total_deadline(self) -> None:
+        release = threading.Event()
+
+        def never_returns(*_: object, **__: object) -> dict[str, object]:
+            release.wait(1)
+            return {}
+
+        try:
+            with patch("research_workbench.agent_runtime._post_json_blocking", side_effect=never_returns):
+                with self.assertRaisesRegex(TimeoutError, "exceeded"):
+                    _post_json("https://example.invalid", {}, {}, 0.01)
+        finally:
+            release.set()
+
     def test_parser_uses_first_action_when_provider_batches_json_objects(self) -> None:
         action = _parse_action(
             '{"type":"tool_call","tool":"project.status","arguments":{}}\n'
@@ -267,6 +283,12 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertTrue(results[0]["page_id"].endswith(":P1"))
         self.assertTrue(results[0]["block_id"].endswith(":B2"))
+
+    def test_source_page_accepts_human_physical_page_locator(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        page = _read_page(self.project, source_id=source_id, physical_page=1)
+        self.assertEqual(page["physical_page"], 1)
+        self.assertEqual(page["page_id"], f"{source_id}:P1")
 
     def test_source_search_splits_multilingual_alternatives(self) -> None:
         results = _search_source_blocks(self.project, "station/page boundary")

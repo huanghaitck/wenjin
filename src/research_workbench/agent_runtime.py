@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import queue
 import re
 import ssl
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,7 +36,8 @@ Available actions:
 {"type":"tool_call","tool":"project.status","arguments":{}}
 {"type":"tool_call","tool":"source.list","arguments":{}}
 {"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
-{"type":"tool_call","tool":"source.page","arguments":{"page_id":"..."}}
+{"type":"tool_call","tool":"source.page","arguments":{"page_id":"exact composite id"}}
+{"type":"tool_call","tool":"source.page","arguments":{"source_id":"...","physical_page":249}}
 {"type":"tool_call","tool":"research.state","arguments":{}}
 {"type":"tool_call","tool":"research.plan_context","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{}}
@@ -587,6 +590,28 @@ def _parse_action(content: str) -> dict[str, Any]:
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
+    outcome: queue.Queue[tuple[bool, Any]] = queue.Queue(maxsize=1)
+
+    def request_worker() -> None:
+        try:
+            outcome.put((True, _post_json_blocking(url, payload, headers, timeout)))
+        except BaseException as error:
+            outcome.put((False, error))
+
+    worker = threading.Thread(target=request_worker, daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise TimeoutError(f"agent provider step exceeded {timeout:g} seconds")
+    succeeded, value = outcome.get_nowait()
+    if not succeeded:
+        raise value
+    return value
+
+
+def _post_json_blocking(
+    url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float
+) -> dict[str, Any]:
     request = Request(
         url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Content-Type": "application/json", **headers}, method="POST",
@@ -629,7 +654,12 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 int(arguments.get("limit", 10)),
             )
         elif tool_name == "source.page":
-            result = _read_page(project_root, str(arguments.get("page_id", "")))
+            result = _read_page(
+                project_root,
+                str(arguments.get("page_id", "")),
+                str(arguments.get("source_id", "")),
+                arguments.get("physical_page"),
+            )
         elif tool_name == "research.state":
             result = research_state(project_root)
         elif tool_name == "research.plan_context":
@@ -765,13 +795,34 @@ def _planning_context(project_root: Path) -> dict[str, Any]:
     }
 
 
-def _read_page(project_root: Path, page_id: str) -> dict[str, Any]:
-    if not page_id:
-        raise ValueError("source.page requires page_id")
+def _read_page(
+    project_root: Path,
+    page_id: str = "",
+    source_id: str = "",
+    physical_page: Any = None,
+) -> dict[str, Any]:
+    page_id, source_id = page_id.strip(), source_id.strip()
+    if not page_id and (not source_id or physical_page in (None, "")):
+        raise ValueError("source.page requires page_id or source_id with physical_page")
     with connect(project_root) as connection:
-        row = connection.execute("SELECT source_id FROM pages WHERE page_id = ?", (page_id,)).fetchone()
+        if page_id:
+            row = connection.execute(
+                "SELECT page_id, source_id FROM pages WHERE page_id = ?", (page_id,)
+            ).fetchone()
+        else:
+            try:
+                physical_page = int(physical_page)
+            except (TypeError, ValueError) as error:
+                raise ValueError("physical_page must be an integer") from error
+            row = connection.execute(
+                """SELECT page_id, source_id FROM pages
+                   WHERE source_id = ? AND physical_page = ?""",
+                (source_id, physical_page),
+            ).fetchone()
     if row is None:
-        raise KeyError(f"unknown page: {page_id}")
+        locator = page_id or f"{source_id} physical page {physical_page}"
+        raise KeyError(f"unknown page: {locator}")
+    page_id = str(row["page_id"])
     view = source_view(project_root, str(row["source_id"]))
     page = next(item for item in view["pages"] if item["page_id"] == page_id)
     anomalies = [
