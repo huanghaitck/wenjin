@@ -13,6 +13,8 @@ from urllib.request import Request, urlopen
 from research_workbench.agent_runtime import (
     ModelProfile,
     _model_action,
+    _parse_action,
+    _search_source_blocks,
     assign_model,
     create_thread,
     decide_approval,
@@ -153,7 +155,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:
         requests: list[object] = []
 
-        def respond(request: object, timeout: float) -> FakeResponse:
+        def respond(request: object, timeout: float, **_: object) -> FakeResponse:
             requests.append(request)
             if str(getattr(request, "full_url")).endswith("/api/chat"):
                 return FakeResponse({"message": {"content": '{"type":"final","content":"ok"}'}})
@@ -172,9 +174,43 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             self.assertEqual(_model_action(ollama, "check", [])["type"], "final")
         self.assertTrue(str(getattr(requests[0], "full_url")).endswith("/chat/completions"))
         self.assertEqual(getattr(requests[0], "headers")["Authorization"], "Bearer secret")
+        openai_payload = json.loads(getattr(requests[0], "data").decode("utf-8"))
+        self.assertIn("Reserve one model turn", openai_payload["messages"][1]["content"])
         ollama_payload = json.loads(getattr(requests[1], "data").decode("utf-8"))
         self.assertFalse(ollama_payload["stream"])
         self.assertEqual(ollama_payload["format"], "json")
+
+    def test_parser_uses_first_action_when_provider_batches_json_objects(self) -> None:
+        action = _parse_action(
+            '{"type":"tool_call","tool":"project.status","arguments":{}}\n'
+            '{"type":"tool_call","tool":"source.list","arguments":{}}'
+        )
+        self.assertEqual(action["tool"], "project.status")
+
+    def test_parser_treats_plain_provider_text_as_safe_final_answer(self) -> None:
+        action = _parse_action("候选页已定位；请人工核对原页。")
+        self.assertEqual(action, {"type": "final", "content": "候选页已定位；请人工核对原页。"})
+
+    def test_source_search_returns_page_and_block_anchors(self) -> None:
+        results = _search_source_blocks(self.project, "page boundary")
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0]["page_id"].endswith(":P1"))
+        self.assertTrue(results[0]["block_id"].endswith(":B2"))
+
+    def test_source_search_splits_multilingual_alternatives(self) -> None:
+        results = _search_source_blocks(self.project, "station/page boundary")
+        self.assertEqual(len(results), 2)
+        self.assertEqual({query for item in results for query in item["matched_queries"]}, {"station", "page boundary"})
+
+    def test_source_search_does_not_let_first_variant_consume_limit(self) -> None:
+        results = _search_source_blocks(self.project, "The/following", limit=2)
+        self.assertEqual(len(results), 2)
+        self.assertIn("following", {query for item in results for query in item["matched_queries"]})
+
+    def test_agent_prompt_requires_researcher_readable_final_text(self) -> None:
+        from research_workbench.agent_runtime import SYSTEM_PROMPT
+
+        self.assertIn("Do not return a Python repr", SYSTEM_PROMPT)
 
     def test_loopback_api_exposes_thread_run_and_approval(self) -> None:
         server = build_server(self.project, port=0)

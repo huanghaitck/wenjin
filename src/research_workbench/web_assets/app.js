@@ -374,7 +374,19 @@ function renderContext() {
     for (const source of state.snapshot.sources || []) {
       const node = card(source.title, `${source.original_name} · ${source.processing_state}`);
       const chip = document.createElement('small'); chip.className = `status-chip ${source.use_state}`; chip.textContent = source.use_state;
-      node.append(chip, actionButton('查看原页与文本', async () => { await loadSource(source.source_id); setMode('source'); })); container.append(node);
+      node.append(chip);
+      if (source.original_name.toLowerCase().endsWith('.docx') && source.page_count === 0 && source.byte_count > 0) {
+        node.append(actionButton('生成译稿定位文本', async () => {
+          const result = await request('/api/source/ingest-docx-locator', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id:source.source_id})});
+          await refreshResearch(`译稿已建立 ${result.segment_count} 个逻辑片段；只能用于定位，不能直接建证。`);
+          await loadSource(source.source_id); setMode('source');
+        }, true));
+      } else if (source.page_count > 0) {
+        node.append(actionButton(source.use_state === 'locator_only' ? '查看定位文本' : '查看原页与文本', async () => { await loadSource(source.source_id); setMode('source'); }));
+      } else {
+        const unavailable = actionButton('文件不可用', () => {}); unavailable.disabled = true; node.append(unavailable);
+      }
+      container.append(node);
     }
     if (!state.snapshot.sources.length) container.append(card('项目还没有文献', '从图书馆加入书籍，或在顶部导入 PDF。'));
   } else if (state.contextMode === 'library') {
@@ -382,8 +394,8 @@ function renderContext() {
       const node = card(work.canonical_title, `${work.author || '责任者待核'} · ${work.version_count} 个精确版本`);
       node.append(actionButton('选择版本并加入项目', async () => {
         const detail = await request(`/api/library/work?id=${encodeURIComponent(work.work_id)}`);
-        const file = detail.files.find((item) => item.file_state === 'matches_registered_version' && item.path.toLowerCase().endsWith('.pdf'));
-        if (!file) throw new Error('这部作品当前没有可用的已登记 PDF 版本。');
+        const file = detail.files.find((item) => item.file_state === 'matches_registered_version' && /\.(pdf|docx)$/i.test(item.path));
+        if (!file) throw new Error('这部作品当前没有可用的已登记 PDF 或 DOCX 版本。');
         await addLibraryFile(work.work_id, file.file_id);
       }, true)); container.append(node);
     }
@@ -421,16 +433,26 @@ function renderContext() {
       const node = card(claim.text, `${claim.evidence.length} 条已核页面证据 · ${claim.status}`);
       if (state.view?.pages?.length) {
         const evidenceForm = document.createElement('div'); evidenceForm.className = 'context-form';
-        const blocks = state.view.pages.flatMap((page) => page.blocks.map((block) => ({page, block}))).filter((item) => item.block.use_state === 'research_usable' && item.page.use_state === 'research_usable');
-        const select = document.createElement('select'); select.dataset.role = 'evidence-block';
-        for (const item of blocks) select.append(new Option(`物理页 ${item.page.physical_page} · ${item.block.effective_text.slice(0,42)}`, item.block.block_id));
-        const quote = document.createElement('textarea'); quote.placeholder = '粘贴所选已核块中的原文；必须逐字存在';
-        const note = document.createElement('input'); note.placeholder = '为何与主张有关';
-        const relation = document.createElement('select'); for (const value of ['supports','weakens','background','counterevidence']) relation.append(new Option(value, value));
-        evidenceForm.append(select, quote, note, relation, actionButton('人工提交证据', async () => {
+        evidenceForm.id = `evidence-form-${claim.claim_id}`;
+        const humanStates = new Set(['human_verified', 'human_repaired']);
+        const blocks = state.view.pages.flatMap((page) => page.blocks.map((block) => ({page, block}))).filter((item) =>
+          item.block.use_state === 'research_usable' && item.page.use_state === 'research_usable'
+          && humanStates.has(item.block.verification_state));
+        const select = document.createElement('select'); select.dataset.role = 'evidence-block'; select.id = `evidence-block-${claim.claim_id}`;
+        for (const item of blocks) select.append(new Option(
+          `物理页 ${item.page.physical_page}${item.page.printed_page ? ` / 印刷页 ${item.page.printed_page}` : ''} · ${item.block.verification_state} · ${item.block.effective_text.slice(0,42)}`,
+          item.block.block_id,
+        ));
+        const quote = document.createElement('textarea'); quote.id = `evidence-quote-${claim.claim_id}`; quote.placeholder = '粘贴所选已核块中的原文；必须逐字存在';
+        const note = document.createElement('input'); note.id = `evidence-note-${claim.claim_id}`; note.placeholder = '为何与主张有关';
+        const relation = document.createElement('select'); relation.id = `evidence-relation-${claim.claim_id}`; for (const value of ['supports','weakens','background','counterevidence']) relation.append(new Option(value, value));
+        if (!blocks.length) evidenceForm.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'当前打开来源还没有人工核验的文本块。请先在原页界面逐段核验。'}));
+        const submitEvidence = actionButton('人工提交证据', async () => {
+          if (!select.value) throw new Error('请先选择一个人工核验的页面块。');
           await request('/api/evidence/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({claim_id:claim.claim_id, block_id:select.value, quote:quote.value, note:note.value, relation:relation.value})});
           await refreshResearch('证据已固定到精确页面块和来源版本。');
-        }, true)); node.append(evidenceForm);
+        }, true); submitEvidence.id = `evidence-submit-${claim.claim_id}`;
+        evidenceForm.append(select, quote, note, relation, submitEvidence); node.append(evidenceForm);
       }
       for (const evidence of claim.evidence) {
         node.append(Object.assign(document.createElement('p'), {textContent:`${evidence.relation} · 物理页 ${evidence.physical_page} · “${evidence.quote}”`}));
@@ -451,7 +473,21 @@ function renderContext() {
     }, true)); container.append(form);
     for (const freeze of research.freezes || []) {
       const node = card(freeze.title, `${freeze.payload.claims.length} 个主张 · ${freeze.status}`);
-      if (freeze.status === 'pending') node.append(actionButton('人工批准冻结', async () => { await request('/api/freeze/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({freeze_id:freeze.freeze_id, reviewer:'human-reviewer'})}); await refreshResearch('冻结包已人工批准。'); }, true));
+      node.append(Object.assign(document.createElement('p'), {className:'boundary-note', textContent:`冻结边界：${freeze.payload.boundary}`}));
+      for (const claim of freeze.payload.claims) {
+        const counters = claim.evidence.filter((item) => ['weakens', 'counterevidence'].includes(item.relation)).length;
+        node.append(Object.assign(document.createElement('small'), {textContent:`${claim.evidence.length} 条证据${counters ? ` · ${counters} 条削弱/反证` : ''}｜${claim.text}`}));
+      }
+      if (freeze.status === 'pending') {
+        const approval = document.createElement('section'); approval.className = 'context-form';
+        const reviewer = document.createElement('input'); reviewer.value = 'human-reviewer'; reviewer.placeholder = '决定人';
+        const reason = document.createElement('textarea'); reason.placeholder = '批准依据与禁止越界的说明';
+        approval.append(reviewer, reason, actionButton('人工批准冻结', async () => {
+          if (!reviewer.value.trim() || !reason.value.trim()) throw new Error('请填写决定人和批准依据。');
+          await request('/api/freeze/approve', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({freeze_id:freeze.freeze_id, reviewer:reviewer.value, reason:reason.value})});
+          await refreshResearch('冻结包已人工批准，决定人与依据已写入冻结记录。');
+        }, true)); node.append(approval);
+      }
       if (freeze.status === 'approved') node.append(actionButton('由冻结证据生成试写', async () => { await request('/api/draft/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({freeze_id:freeze.freeze_id, title:freeze.title})}); await refreshResearch('可追溯试写已生成。'); }, true));
       container.append(node);
     }
@@ -459,7 +495,8 @@ function renderContext() {
       const version = artifact.versions[0]; const node = card(artifact.title, `${artifact.artifact_type} · ${version.version_id}`);
       const pre = document.createElement('pre'); pre.textContent = version.content; node.append(pre);
       node.append(actionButton('来源批判评审', async () => { const result = await request('/api/review/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({version_id:version.version_id})}); await refreshResearch(result.report); }));
-      node.append(actionButton('导出 Markdown', async () => { const result = await request('/api/artifact/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({artifact_id:artifact.artifact_id})}); notice(`已导出：${result.project_path}`); }, true)); container.append(node);
+      node.append(actionButton('进入文章工作台', async () => { const result=await request('/api/manuscript/import',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:artifact.title,markdown:version.content})});state.manuscriptId=result.manuscript_id;state.sectionId=result.sections[0]?.section_id||'';state.proposalId='';setMode('article');await refreshAuthoring('冻结试写已转为结构化稿件，原始试写仍保留。'); }, true));
+      node.append(actionButton('导出 Markdown', async () => { const result = await request('/api/artifact/export', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({artifact_id:artifact.artifact_id})}); notice(`已导出：${result.project_path}`); })); container.append(node);
     }
   } else if (state.contextMode === 'browser') {
     const form = document.createElement('section'); form.className = 'context-form';
@@ -524,6 +561,12 @@ function renderDocumentCanvas() {
 function captureDocumentSection() {
   const section = documentSection();
   if (!section) throw new Error('请先选择稿件章节。');
+  const manuscriptTitle=$('manuscriptTitleEdit').value.trim();
+  if(!manuscriptTitle) throw new Error('稿件题名不能为空。');
+  state.document.document.title=manuscriptTitle;
+  const heading=$('sectionHeading').innerText.trim();
+  if(!heading) throw new Error('章节标题不能为空。');
+  section.heading=heading;
   section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li')).map((node) => ({
     type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : 'paragraph'),
     node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
@@ -581,8 +624,11 @@ function renderAuthoring() {
     loadDocument(state.manuscriptId).then(renderAuthoring).catch((error) => notice(error.message, true)); return;
   }
   $('sectionHeading').textContent = section?.heading || '选择一个章节';
+  $('sectionHeading').contentEditable=section?'true':'false';
+  $('sectionHeading').title=section?'可直接修改标题；保存新修订后生效。':'';
   $('sectionVersion').textContent = state.document ? `${state.document.current_revision_id} · 结构化稿件修订` : (section ? `${section.current_version_id} · ${section.operation}` : '人工保存后才产生新修订');
   $('sectionBase').value = section?.content || '';
+  $('manuscriptTitleEdit').value=state.document?.document?.title||manuscript?.title||'';
   const proposals = section?.proposals || [];
   let proposal = proposals.find((item) => item.proposal_id === state.proposalId) || proposals.find((item) => item.status === 'pending') || proposals[0];
   if (proposal) state.proposalId = proposal.proposal_id;
@@ -670,6 +716,12 @@ function renderAuthoringControl(section, proposal) {
     const model = authoring.writing_model || {};
     container.append(card('写作模型', model.available ? `${model.provider} / ${model.model}` : '未配置真实模型；保真门禁和规则型演示仍可使用'));
     if (!section) { container.append(card('尚未选择章节', '先导入 Markdown 稿件。')); return; }
+    const structuredText=(documentSection()?.children||[]).map((node)=>node.text.trim()).filter(Boolean).join('\n\n');
+    if(structuredText!==section.content.trim()) {
+      const syncWarning=card('正文尚未同步当前批准章节','导出仍会使用中央正文。请人工确认后把当前批准章节写入新的结构化稿件修订。');
+      syncWarning.append(actionButton('同步到正文并创建新修订',async()=>{await request('/api/manuscript/document/sync-section',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,section_id:section.section_id})});await refreshAuthoring('当前批准章节已同步到正文，并保留旧修订。');},true));
+      container.append(syncWarning);
+    }
     const form = document.createElement('section'); form.className='context-form';
     const operation = document.createElement('select'); operation.id='writingOperation';
     operation.append(new Option('保真润色','polish'), new Option('基于冻结证据分节写作','section_draft'));
@@ -678,17 +730,31 @@ function renderAuthoringControl(section, proposal) {
     for (const item of state.snapshot.research?.freezes || []) if(item.status==='approved') freeze.append(new Option(item.title,item.freeze_id));
     const freezeLabel=document.createElement('label'); freezeLabel.textContent='批准的证据冻结包'; freezeLabel.append(freeze);
     form.append(operationLabel, formField('修改或写作要求','writingInstruction','保持史学语气，不改变事实与引文',true), freezeLabel);
-    form.append(actionButton('生成待审提案', async()=>{
-      const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value})});
-      state.proposalId=result.proposal_id; await refreshAuthoring(result.validation.valid?'写作提案已生成，等待逐项核对。':'提案缺少受保护标记，已阻断批准。');
-    },true)); container.append(form);
+    const generate=actionButton('生成待审提案', async()=>{
+      generate.disabled=true; notice('写作模型正在生成待审提案，请勿重复提交。');
+      try {
+        const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value})});
+        state.proposalId=result.proposal_id; await refreshAuthoring(result.validation.valid?'写作提案已生成，等待逐项核对。':'提案违反证据契约，已阻断批准。');
+        const drawer=document.querySelector('details.proposal-drawer'); drawer.open=true; drawer.scrollIntoView({block:'center'});
+      } finally { generate.disabled=false; }
+    },true); form.append(generate); container.append(form);
     if (proposal) {
-      const node=card(`${proposal.operation} · ${proposal.status}`, proposal.validation.valid?'受保护标记完整':'缺失：'+proposal.validation.missing_markers.join('、'));
+      const problems=[];
+      if(proposal.validation.missing_markers?.length) problems.push('缺失受保护内容：'+proposal.validation.missing_markers.join('、'));
+      if(proposal.validation.altered_quotes?.length) problems.push('发现未获准或被改写的直接引文：'+proposal.validation.altered_quotes.join('；'));
+      if(proposal.validation.invalid_evidence_ids?.length) problems.push('无效证据编号：'+proposal.validation.invalid_evidence_ids.join('、'));
+      if(proposal.operation==='section_draft'&&!proposal.validation.evidence_linked) problems.push('正文没有绑定冻结证据编号');
+      const contractChecked=proposal.operation!=='section_draft'||Object.hasOwn(proposal.validation,'evidence_linked');
+      const detail=!contractChecked?'旧提案未经过当前证据契约检查，不可直接批准。':(proposal.validation.valid?'证据契约检查通过；仍须人工核对解释。':problems.join('\n'));
+      const node=card(`${proposal.operation} · ${proposal.status}`, detail);
       node.append(Object.assign(document.createElement('small'),{textContent:`基础版本 ${proposal.base_version_id} · ${new Date(proposal.created_at).toLocaleString()}`}));
+      if(proposal.validation.decision_reason) node.append(Object.assign(document.createElement('p'),{textContent:`人工决定：${proposal.validation.decision_reason}`}));
       if(proposal.status==='pending') {
+        node.append(formField('决定人','writingReviewer',''),formField('批准或拒绝依据','writingDecisionReason','',true));
         const row=document.createElement('div'); row.className='row';
-        row.append(actionButton('核对后批准',async()=>{await request('/api/writing/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal_id:proposal.proposal_id,approved:true,reviewer:'human-reviewer',edited_content:$('sectionProposal').value})}); state.proposalId=''; await refreshAuthoring('已保存为新的批准章节版本，旧版本仍保留。');},true));
-        row.append(actionButton('拒绝提案',async()=>{await request('/api/writing/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal_id:proposal.proposal_id,approved:false,reviewer:'human-reviewer'})}); state.proposalId=''; await refreshAuthoring('提案已拒绝，当前章节未改变。');})); node.append(row);
+        const decide=async(approved)=>{const reviewer=$('writingReviewer').value.trim(),reason=$('writingDecisionReason').value.trim();if(!reviewer||!reason)throw new Error('请填写决定人和批准或拒绝依据。');await request('/api/writing/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({proposal_id:proposal.proposal_id,approved,reviewer,reason,edited_content:approved?$('sectionProposal').value:undefined})});state.proposalId='';await refreshAuthoring(approved?'已保存为新的批准章节版本，旧版本仍保留。':'提案已拒绝并记录理由，当前章节未改变。');};
+        const approve=actionButton('核对修改后批准',()=>decide(true),true); approve.disabled=!contractChecked;
+        row.append(approve,actionButton('拒绝提案',()=>decide(false))); node.append(row);
       }
       container.append(node);
     }
@@ -706,8 +772,13 @@ function renderAuthoringControl(section, proposal) {
     form.append(actionButton('保存学术史候选条目',async()=>{await request('/api/historiography/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({work_title:$('histWork').value,position:$('histPosition').value,contribution:$('histContribution').value,limitation:$('histLimitation').value,relevance:$('histRelevance').value,source_refs:$('histRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('学术史候选条目已保存，等待研究判断。');},true));container.append(form);
     for(const item of authoring.historiography||[]){const node=card(item.work_title,`${item.status} · 来源 ${item.source_refs.join('、')}`);node.append(Object.assign(document.createElement('p'),{textContent:`立场：${item.position}\n贡献：${item.contribution}\n限制：${item.limitation}\n关系：${item.relevance}`}));container.append(node);}
   } else if (state.authoringMode === 'journal') {
-    const form=document.createElement('section');form.className='context-form';form.append(formField('模板名称','journalName'),formField('注释规则','journalCitation'),formField('章节顺序（逗号分隔）','journalSections'));
-    form.append(actionButton('保存人工模板',async()=>{await request('/api/journal/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('journalName').value,citation_style:$('journalCitation').value,section_rules:$('journalSections').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})});await refreshAuthoring('期刊模板已保存；投稿前仍须核对最新规范。');},true));container.append(form);
+    const form=document.createElement('section');form.className='context-form';form.append(
+      formField('模板名称','journalName'),formField('规范版本','journalVersion'),formField('规范发布日期','journalEffective'),
+      formField('官方来源网址','journalSource'),formField('本次核验日期','journalVerified'),
+      formField('注释与参考文献规则','journalCitation','',true),formField('稿件组成（逗号分隔）','journalSections'),
+      formField('其他硬性要求（每行一项）','journalRequirements','',true)
+    );
+    form.append(actionButton('保存带版本的人工模板',async()=>{const notes=$('journalRequirements').value.split(/\n/).map(v=>v.trim()).filter(Boolean);await request('/api/journal/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('journalName').value,version_label:$('journalVersion').value,effective_date:$('journalEffective').value,source_url:$('journalSource').value,verified_at:$('journalVerified').value,verification_status:'OFFICIAL_SOURCE_CHECKED',citation_style:$('journalCitation').value,section_rules:$('journalSections').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean),requirements:{notes}})});await refreshAuthoring('期刊模板及其规范版本已保存；投稿前仍须核对是否有更新。');},true));container.append(form);
     for(const item of authoring.journal_templates||[]){const node=card(item.name,`${item.version_label||'人工模板'} · ${item.verification_status||'USER_DEFINED'}`);node.append(Object.assign(document.createElement('p'),{textContent:`${item.citation_style}\n${item.section_rules.join(' → ')}\n核验：${item.verified_at||'由用户维护'}`}));if(item.source_url){const link=document.createElement('a');link.href=item.source_url;link.target='_blank';link.rel='noreferrer';link.textContent='查看规则来源';node.append(link);}container.append(node);}
   }
 }
@@ -767,6 +838,25 @@ async function refreshAgentSnapshot() {
   renderAgentShell();
 }
 
+function liveRunNotice(run) {
+  if (!run) return 'Agent 正在建立本次运行……';
+  const event = run.events?.at(-1);
+  const tool = event?.payload?.tool;
+  if (event?.event_type === 'tool_started') return `Agent 正在调用 ${tool}……`;
+  if (event?.event_type === 'tool_completed') return `${tool} 已完成，Agent 正在决定下一步……`;
+  if (event?.event_type === 'run_failed') return `本次运行失败：${event.payload.error || run.error || '未知错误'}`;
+  return `Agent 正在运行 · 已记录 ${event?.sequence || 0} 个步骤……`;
+}
+
+async function pollActiveThread(threadId) {
+  if (!threadId || state.threadId !== threadId) return;
+  const thread = await request(`/api/thread?id=${encodeURIComponent(threadId)}`);
+  if (state.threadId !== threadId) return;
+  state.thread = thread;
+  renderThread();
+  notice(liveRunNotice(latestRun()));
+}
+
 async function loadSource(sourceId, keepPage = false) {
   state.view = await request(`/api/source?id=${encodeURIComponent(sourceId)}`);
   if (!keepPage) state.pageIndex = 0;
@@ -776,13 +866,26 @@ async function loadSource(sourceId, keepPage = false) {
 
 function currentPage() { return state.view?.pages[state.pageIndex]; }
 function openAnomalies() { return (state.view?.anomalies || []).filter((item) => item.status === 'open'); }
-function pageAnomaly(page) { return openAnomalies().find((item) => item.scope_type === 'page' && item.target_id === page?.page_id); }
+function pageAnomaly(page) { return openAnomalies().find((item) => item.scope_type === 'page' && item.target_id === page?.page_id && item.severity !== 'advisory'); }
+function currentPageAnomalies() {
+  const page = currentPage(); if (!page) return [];
+  const blockIds = new Set(page.blocks.map((block) => block.block_id));
+  const relationIds = new Set((state.view?.relations || [])
+    .filter((relation) => blockIds.has(relation.from_block_id) || blockIds.has(relation.to_block_id))
+    .map((relation) => relation.relation_id));
+  return openAnomalies().filter((item) => item.scope_type === 'source'
+    || (item.scope_type === 'page' && item.target_id === page.page_id)
+    || (item.scope_type === 'block' && blockIds.has(item.target_id))
+    || (item.scope_type === 'relation' && relationIds.has(item.target_id)));
+}
 
 function renderRail() {
   const rail = $('pageRail'); rail.replaceChildren();
   for (const [index, page] of (state.view?.pages || []).entries()) {
     const button = document.createElement('button');
-    button.textContent = `第 ${page.physical_page} 页${page.printed_page ? ` · ${page.printed_page}` : ''}`;
+    button.textContent = page.page_type === 'docx_locator'
+      ? `片段 ${page.physical_page}`
+      : `第 ${page.physical_page} 页${page.printed_page ? ` · ${page.printed_page}` : ''}`;
     button.classList.toggle('selected', index === state.pageIndex);
     button.classList.toggle('blocked', page.use_state === 'blocked');
     button.onclick = () => { state.pageIndex = index; render(); };
@@ -812,6 +915,26 @@ function blockCard(block, pageAnomaly) {
       } catch (error) { notice(error.message, true); }
     };
     actions.append(button); card.append(actions);
+  } else if (!anomaly && !pageAnomaly && block.block_id && currentPage()?.page_type !== 'docx_locator') {
+    const actions = document.createElement('div'); actions.className = 'block-actions';
+    const verified = ['human_verified', 'human_repaired'].includes(block.verification_state);
+    const button = document.createElement('button');
+    button.textContent = verified ? '此段已人工核验' : '确认此段与原图一致';
+    button.disabled = verified;
+    button.onclick = async () => {
+      try {
+        await request('/api/block/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({block_id:block.block_id, ...reviewerPayload()})});
+        await loadSource(state.view.source.source_id, true); notice('这一段已经与原图逐字核验，可加入证据卡。');
+      } catch (error) { notice(error.message, true); }
+    };
+    const correct = document.createElement('button'); correct.textContent = '保存这段修正';
+    correct.onclick = async () => {
+      try {
+        await request('/api/block/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({block_id:block.block_id, text:textarea.value, block_type:type.value, ...reviewerPayload()})});
+        await loadSource(state.view.source.source_id, true); notice('这一段的人工修正已保存，机器原文仍保留在版本记录中。');
+      } catch (error) { notice(error.message, true); }
+    };
+    actions.append(button, correct); card.append(actions);
   }
   return card;
 }
@@ -833,6 +956,19 @@ function renderBlocks() {
       }));
       await request('/api/repair/page', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({anomaly_id:pageIssue.anomaly_id, blocks:repaired, ...reviewerPayload()}) });
       await loadSource(state.view.source.source_id, true); notice('整页修正已提交，并保留原机器结果和修正记录。');
+    } catch (error) { notice(error.message, true); }
+  };
+  const blocking = currentPageAnomalies().some((item) => item.severity !== 'advisory' && ['page', 'block'].includes(item.scope_type));
+  const verified = ['human_verified', 'human_repaired'].includes(page.verification_state);
+  const pageUnavailable = page.use_state !== 'research_usable';
+  $('pageVerify').hidden = blocking;
+  $('pageVerify').disabled = verified || pageUnavailable;
+  $('pageVerify').textContent = verified ? '本页已人工核验'
+    : pageUnavailable ? '整页仍有待核项（已核段可使用）' : '确认本页与原图一致';
+  $('pageVerify').onclick = async () => {
+    try {
+      await request('/api/page/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({page_id:page.page_id, ...reviewerPayload()})});
+      await loadSource(state.view.source.source_id, true); notice('本页已经人工核验，可进入证据卡选择。');
     } catch (error) { notice(error.message, true); }
   };
 }
@@ -915,7 +1051,7 @@ function renderOcrProposal() {
 
 function renderAnomalies() {
   const container = $('anomalies'); container.replaceChildren();
-  const anomalies = openAnomalies();
+  const anomalies = currentPageAnomalies();
   if (!anomalies.length) { container.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'当前没有待复核项。'})); return; }
   for (const anomaly of anomalies) {
     const card = document.createElement('article'); card.className = 'anomaly';
@@ -941,6 +1077,26 @@ function renderAnomalies() {
     container.append(card);
   }
 }
+
+$('jumpToPage').onclick = () => {
+  const physicalPage = Number($('pageJump').value);
+  const index = (state.view?.pages || []).findIndex((page) => page.physical_page === physicalPage);
+  if (index < 0) { notice('没有这个物理页。', true); return; }
+  state.pageIndex = index; render();
+  $('pageRail').querySelector('.selected')?.scrollIntoView({block:'nearest'});
+};
+
+$('savePrintedPage').onclick = async () => {
+  const page = currentPage();
+  if (!page) return;
+  try {
+    await request('/api/page/printed-page', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+      page_id:page.page_id, printed_page:$('printedPage').value, ...reviewerPayload(),
+    })});
+    await loadSource(state.view.source.source_id, true);
+    notice('物理页与印刷页的人工对应关系已保存。');
+  } catch (error) { notice(error.message, true); }
+};
 
 function renderSettings() {
   const container = $('settingsContent'); if (!container || !state.snapshot) return; container.replaceChildren();
@@ -1003,8 +1159,13 @@ function render() {
   const page = currentPage(); const source = state.view?.source;
   $('sourceTitle').textContent = source?.title || '尚未导入文献';
   $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : '等待材料';
-  $('pageLabel').textContent = page ? `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}` : '原 PDF 页面始终是校对依据';
-  $('pageImage').src = page ? `/api/page-image?id=${encodeURIComponent(page.page_id)}` : '';
+  const locator = page?.page_type === 'docx_locator';
+  $('pageRailTitle').textContent = locator ? '译稿片段' : '物理页';
+  $('pageLabel').textContent = page ? (locator ? `逻辑片段 ${page.physical_page} · locator_only` : `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}`) : '原 PDF 页面始终是校对依据';
+  $('printedPage').value = page?.printed_page || '';
+  $('pageImage').hidden = Boolean(locator);
+  $('locatorNotice').hidden = !locator;
+  $('pageImage').src = page && !locator ? `/api/page-image?id=${encodeURIComponent(page.page_id)}` : '';
   $('pageImage').style.transform = `scale(${state.zoom})`;
   $('zoomValue').textContent = `${Math.round(state.zoom * 100)}%`;
 }
@@ -1167,12 +1328,24 @@ $('sendMessage').onclick = async () => {
   if (!state.threadId) { notice('请先创建一个研究线程。', true); return; }
   if (!content) { notice('请输入研究任务。', true); return; }
   $('sendMessage').disabled = true;
+  const threadId = state.threadId;
+  let polling = false;
+  const progressTimer = setInterval(async () => {
+    if (polling) return;
+    polling = true;
+    try { await pollActiveThread(threadId); }
+    catch (error) { console.warn('Run progress refresh failed', error); }
+    finally { polling = false; }
+  }, 1000);
   try {
     notice('Agent 正在读取项目并调用工具……');
-    state.thread = await request('/api/agent/message', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:state.threadId, content})});
+    state.thread = await request('/api/agent/message', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId, content})});
     $('messageInput').value = ''; await refreshAgentSnapshot(); notice(latestRun()?.status === 'WAITING_FOR_APPROVAL' ? 'Agent 已暂停，等待你检查右侧提案。' : '本次运行已完成。');
-  } catch (error) { notice(error.message, true); }
-  finally { $('sendMessage').disabled = false; }
+  } catch (error) {
+    try { await refreshAgentSnapshot(); } catch (refreshError) { console.warn('Failed run refresh failed', refreshError); }
+    notice(error.message, true);
+  }
+  finally { clearInterval(progressTimer); $('sendMessage').disabled = false; }
 };
 $('zoomIn').onclick = () => { state.zoom = Math.min(3, state.zoom + .2); render(); };
 $('zoomOut').onclick = () => { state.zoom = Math.max(.4, state.zoom - .2); render(); };

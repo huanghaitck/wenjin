@@ -7,6 +7,7 @@ from .db import connect, utc_now
 from .library import library_file_path, link_work_to_project, work_detail
 from .pdf_ingestion import ingest_pdf
 from .service import register_source
+from .text_ingestion import ingest_docx_locator
 
 
 def add_library_file_to_project(project_root: Path, library_root: Path, work_id: str,
@@ -19,8 +20,8 @@ def add_library_file_to_project(project_root: Path, library_root: Path, work_id:
     if current is None or not current["bytes_available"]:
         raise ValueError("selected library version is not available at its registered path")
     source_path = library_file_path(project_root, file_id, library_root)
-    if source_path.suffix.lower() != ".pdf":
-        raise ValueError("the D1 project bridge currently accepts PDF files")
+    if source_path.suffix.lower() not in {".pdf", ".docx"}:
+        raise ValueError("the project bridge accepts PDF evidence sources and DOCX locator texts")
     source = register_source(project_root, source_path, detail["canonical_title"])
     with connect(project_root) as connection:
         connection.execute(
@@ -34,6 +35,10 @@ def add_library_file_to_project(project_root: Path, library_root: Path, work_id:
     link_work_to_project(project_root, work_id, library_root)
     intake = (
         {"source_id": source["source_id"], "page_count": existing_pages, "status": "already_ingested"}
-        if existing_pages else ingest_pdf(project_root, source["source_id"])
+        if existing_pages else (
+            ingest_pdf(project_root, source["source_id"])
+            if source_path.suffix.lower() == ".pdf"
+            else ingest_docx_locator(project_root, source["source_id"])
+        )
     )
     return {"source": source, "intake": intake, "library_version": current}

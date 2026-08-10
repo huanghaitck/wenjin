@@ -14,7 +14,7 @@ from .library_store import connect_library, initialize_library, resolve_library_
 from .skill_registry import discover_skills, get_skill
 
 
-SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt"}
+SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt", ".docx"}
 CANDIDATE_SUFFIXES = SUPPORTED_SUFFIXES | {".doc", ".docx", ".epub", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 HISTORY_TERMS = (
     "历史", "史料", "档案", "地方志", "编年", "朝代", "帝国", "革命", "战争", "考察",
@@ -127,6 +127,16 @@ def _inspect_file(path: Path) -> dict[str, Any]:
     elif suffix in {".md", ".txt"}:
         sample = path.read_text(encoding="utf-8", errors="replace")[:50000]
         first_line = next((line.strip(" #\t") for line in sample.splitlines() if line.strip()), "")
+        title = first_line or title
+        inspected_pages = 1
+        text_layer = "present" if sample.strip() else "absent"
+    elif suffix == ".docx":
+        from docx import Document
+
+        document = Document(path)
+        chunks = [" ".join(paragraph.text.split()) for paragraph in document.paragraphs if paragraph.text.strip()]
+        sample = "\n".join(chunks)[:50000]
+        first_line = next((line for line in chunks if line), "")
         title = first_line or title
         inspected_pages = 1
         text_layer = "present" if sample.strip() else "absent"

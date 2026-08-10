@@ -27,8 +27,8 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         source = register_source(self.project, source_file, "Expedition source")
         import_structure(self.project, source["source_id"], FIXTURES / "m1_structure.json")
         with connect(self.project) as connection:
-            connection.execute("UPDATE pages SET use_state = 'research_usable'")
-            connection.execute("UPDATE blocks SET use_state = 'research_usable'")
+            connection.execute("UPDATE pages SET use_state = 'research_usable', verification_state = 'human_verified'")
+            connection.execute("UPDATE blocks SET use_state = 'research_usable', verification_state = 'human_verified'")
             block = connection.execute("SELECT block_id, machine_text FROM blocks ORDER BY block_order LIMIT 1").fetchone()
         claim = create_claim(self.project, "考察队发生了移动")
         self.evidence = create_evidence(self.project, claim["claim_id"], block["block_id"], block["machine_text"], "原页核对")
@@ -105,9 +105,10 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
         html = (root / "index.html").read_text(encoding="utf-8")
         script = (root / "app.js").read_text(encoding="utf-8")
-        for marker in ('data-authoring="notes"', 'id="insertNote"', 'id="exportTemplate"', 'id="manuscriptStats"'):
+        for marker in ('data-authoring="notes"', 'id="insertNote"', 'id="exportTemplate"', 'id="manuscriptStats"', 'id="manuscriptTitleEdit"'):
             self.assertIn(marker, html)
         self.assertIn("/api/note/create", script)
+        self.assertIn("humanStates.has(item.block.verification_state)", script)
 
 
 if __name__ == "__main__":

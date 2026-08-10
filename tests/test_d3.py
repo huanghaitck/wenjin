@@ -51,6 +51,11 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertNotIn("人工补充一句", original)
         self.assertIn("人工补充一句", manuscript_detail(self.project, self.manuscript["manuscript_id"])["sections"][0]["content"])
+        with connect(self.project) as connection:
+            counts = [row[0] for row in connection.execute(
+                "SELECT COUNT(*) FROM section_versions GROUP BY section_id ORDER BY section_id"
+            )]
+        self.assertEqual(sorted(counts), [1, 2])
 
     def test_context_dialogue_freezes_revision_section_and_selection_hash(self) -> None:
         detail = ensure_document(self.project, self.manuscript["manuscript_id"])

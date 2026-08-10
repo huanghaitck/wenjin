@@ -25,7 +25,9 @@ from research_workbench.scholarship import (
     export_artifact,
     review_artifact,
 )
-from research_workbench.service import import_structure, initialize_project, register_source
+from research_workbench.service import (
+    import_structure, initialize_project, list_anomalies, register_source, submit_block_repair, verify_page,
+)
 from research_workbench.workspace import (
     create_workspace_project,
     initialize_workspace,
@@ -114,16 +116,32 @@ class D1EndToEndDemoTests(unittest.TestCase):
                             "The expedition left the station in spring.", "待核")
 
         usable = f"{self.source['source_id']}:B2"
+        with self.assertRaisesRegex(ValueError, "human page verification"):
+            create_evidence(self.project, claim["claim_id"], usable,
+                            "The sentence continues toward the page boundary", "尚未人工核页")
+        anomaly = next(item for item in list_anomalies(self.project) if item["anomaly_id"].endswith(":A_BLOCK"))
+        submit_block_repair(self.project, anomaly["anomaly_id"],
+                            "The expedition left the station in spring.", "Professor", "Checked original page")
+        verify_page(self.project, f"{self.source['source_id']}:P1", "Professor", "Checked page image and block order")
         claim = create_evidence(
             self.project, claim["claim_id"], usable,
             "The sentence continues toward the page boundary", "页面关系需保留", "supports",
         )
+        duplicate = create_evidence(
+            self.project, claim["claim_id"], usable,
+            "The sentence continues toward the page boundary", "重复提交不应新增证据", "supports",
+        )
+        self.assertEqual(len(duplicate["evidence"]), 1)
         freeze = create_freeze(self.project, "小型冻结包", [claim["claim_id"]])
         self.assertEqual(freeze["status"], "pending")
         with self.assertRaisesRegex(ValueError, "approved"):
             draft_from_freeze(self.project, freeze["freeze_id"], "试写")
 
-        approved = approve_freeze(self.project, freeze["freeze_id"], "Professor")
+        approved = approve_freeze(
+            self.project, freeze["freeze_id"], "Professor", "Checked claims, evidence and boundaries"
+        )
+        self.assertEqual(approved["payload"]["approval"]["reviewer"], "Professor")
+        self.assertIn("boundaries", approved["payload"]["approval"]["reason"])
         artifact = draft_from_freeze(self.project, approved["freeze_id"], "试写")
         version = artifact["versions"][0]
         self.assertIn("物理页 1", version["content"])

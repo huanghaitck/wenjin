@@ -62,16 +62,36 @@ def create_evidence(project_root: Path, claim_id: str, block_id: str, quote: str
             raise KeyError(f"unknown claim: {claim_id}")
         block = connection.execute(
             """SELECT b.block_id, b.use_state AS block_use_state,
+                      b.verification_state AS block_verification_state,
                       COALESCE(b.human_text, b.machine_text) AS effective_text,
-                      p.page_id, p.physical_page, p.use_state AS page_use_state, p.source_id
+                      p.page_id, p.physical_page, p.use_state AS page_use_state,
+                      p.verification_state AS page_verification_state, p.source_id
                FROM blocks b JOIN pages p ON p.page_id = b.page_id WHERE b.block_id = ?""", (block_id,)
         ).fetchone()
         if block is None:
             raise KeyError(f"unknown block: {block_id}")
         if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
             raise ValueError("blocked or unverified page content cannot be submitted as evidence")
+        block_verified_states = {"human_verified", "human_repaired"}
+        page_verified_states = {"human_spot_checked", "human_verified", "human_repaired"}
+        if (block["block_verification_state"] not in block_verified_states
+                or block["page_verification_state"] not in page_verified_states):
+            raise ValueError("human page verification is required before evidence submission")
         if quote not in block["effective_text"]:
             raise ValueError("evidence quote must exactly occur in the verified block text")
+        duplicate = connection.execute(
+            """SELECT e.evidence_id FROM claim_evidence ce
+               JOIN evidence_items e ON e.evidence_id = ce.evidence_id
+               WHERE ce.claim_id = ? AND e.block_id = ? AND e.quote = ? AND ce.relation = ?
+               LIMIT 1""",
+            (claim_id, block_id, quote, relation),
+        ).fetchone()
+        if duplicate is not None:
+            append_audit(
+                connection, "evidence_submission_deduplicated", "evidence", duplicate["evidence_id"],
+                {"claim_id": claim_id, "relation": relation},
+            )
+            return get_claim(project_root, claim_id)
         version = connection.execute(
             "SELECT source_version_id FROM source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1",
             (block["source_id"],),
@@ -109,7 +129,11 @@ def create_freeze(project_root: Path, title: str, claim_ids: list[str]) -> dict[
                 evidence["source_version"] = dict(version)
     payload = {
         "claims": claims,
-        "boundary": "Only the frozen quotations and their recorded relations may support the draft; retrieval results are leads only.",
+        "boundary": (
+            "Only the frozen quotations and their recorded relations may support the draft; "
+            "counterevidence and weakens relations remain binding. Missing evidence cannot be recast as proof, "
+            "and retrieval results remain leads only."
+        ),
     }
     freeze_id, now = _id("FRZ"), utc_now()
     with connect(project_root) as connection:
@@ -121,22 +145,30 @@ def create_freeze(project_root: Path, title: str, claim_ids: list[str]) -> dict[
     return freeze_detail(project_root, freeze_id)
 
 
-def approve_freeze(project_root: Path, freeze_id: str, reviewer: str) -> dict[str, Any]:
-    reviewer = reviewer.strip()
-    if not reviewer:
-        raise ValueError("freeze reviewer is required")
+def approve_freeze(project_root: Path, freeze_id: str, reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("freeze approval requires reviewer and reason")
     now = utc_now()
     with connect(project_root) as connection:
-        row = connection.execute("SELECT status FROM evidence_freezes WHERE freeze_id = ?", (freeze_id,)).fetchone()
+        row = connection.execute(
+            "SELECT status, payload_json FROM evidence_freezes WHERE freeze_id = ?", (freeze_id,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"unknown freeze: {freeze_id}")
         if row["status"] != "pending":
             raise ValueError(f"freeze is already {row['status']}")
+        payload = json.loads(row["payload_json"])
+        payload["approval"] = {"reviewer": reviewer, "reason": reason, "approved_at": now}
         connection.execute(
-            "UPDATE evidence_freezes SET status = 'approved', approved_by = ?, approved_at = ? WHERE freeze_id = ?",
-            (reviewer, now, freeze_id),
+            """UPDATE evidence_freezes SET status = 'approved', approved_by = ?, approved_at = ?,
+                       payload_json = ? WHERE freeze_id = ?""",
+            (reviewer, now, json.dumps(payload, ensure_ascii=False, sort_keys=True), freeze_id),
         )
-        append_audit(connection, "evidence_freeze_approved", "freeze", freeze_id, {"reviewer": reviewer})
+        append_audit(
+            connection, "evidence_freeze_approved", "freeze", freeze_id,
+            {"reviewer": reviewer, "reason": reason},
+        )
     return freeze_detail(project_root, freeze_id)
 
 

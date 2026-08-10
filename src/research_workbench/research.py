@@ -3,12 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import ssl
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+import certifi
 
 from .db import connect, utc_now
 
@@ -18,7 +21,7 @@ Fetcher = Callable[[str, dict[str, str]], dict[str, Any]]
 
 def _fetch(url: str, headers: dict[str, str]) -> dict[str, Any]:
     request = Request(url, headers={"User-Agent": "HistoricalResearchWorkbench/0.6", **headers})
-    with urlopen(request, timeout=20) as response:
+    with urlopen(request, timeout=20, context=ssl.create_default_context(cafile=certifi.where())) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

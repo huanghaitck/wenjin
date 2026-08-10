@@ -7,7 +7,7 @@ name = "historical-research-workbench"
 version = "1.0.0.dev1"
 description = "Local-first model-selectable Research Codex for auditable historical research"
 requires-python = ">=3.13"
-dependencies = ["PyMuPDF>=1.26,<2", "python-docx>=1.2,<2"]
+dependencies = ["certifi>=2025.1,<2027", "PyMuPDF>=1.26,<2", "python-docx>=1.2,<2"]
 
 [project.optional-dependencies]
 desktop = ["pyinstaller>=6.21,<7"]

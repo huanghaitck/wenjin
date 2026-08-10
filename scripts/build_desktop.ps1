@@ -6,23 +6,29 @@ $python = "D:\AI_Workflows\conda-envs\historical-research-workbench\python.exe"
 $triple = (& rustc --print host-tuple).Trim()
 $sidecarTarget = Join-Path $repositoryRoot "src-tauri\binaries\hrw-sidecar-$triple.exe"
 $sqliteDll = Join-Path (Split-Path -Parent $python) "Library\bin\sqlite3.dll"
+$sslDll = Join-Path (Split-Path -Parent $python) "Library\bin\libssl-3-x64.dll"
+$cryptoDll = Join-Path (Split-Path -Parent $python) "Library\bin\libcrypto-3-x64.dll"
 
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
     throw "Dedicated Python environment is missing: $python"
 }
-if (-not (Test-Path -LiteralPath $sqliteDll -PathType Leaf)) {
-    throw "SQLite runtime is missing: $sqliteDll"
+foreach ($runtime in @($sqliteDll, $sslDll, $cryptoDll)) {
+    if (-not (Test-Path -LiteralPath $runtime -PathType Leaf)) {
+        throw "Desktop runtime is missing: $runtime"
+    }
 }
 if (-not $SkipTests) {
     & $python -m unittest discover -s (Join-Path $repositoryRoot "tests") -v
     if ($LASTEXITCODE -ne 0) { throw "Python tests failed" }
 }
-& $python -m pip install "pyinstaller>=6.21,<7"
+& $python -m pip install "certifi>=2025.1,<2027" "pyinstaller>=6.21,<7"
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed" }
 & $python -m PyInstaller --noconfirm --clean --onefile --console `
     --name hrw-sidecar --paths (Join-Path $repositoryRoot "src") `
     --add-binary "${sqliteDll}:." `
-    --collect-data research_workbench --collect-all pymupdf `
+    --add-binary "${sslDll}:." `
+    --add-binary "${cryptoDll}:." `
+    --collect-data research_workbench --collect-data certifi --collect-all pymupdf `
     --distpath (Join-Path $repositoryRoot "build\sidecar-dist") `
     --workpath (Join-Path $repositoryRoot "build\sidecar-work") `
     --specpath (Join-Path $repositoryRoot "build") `

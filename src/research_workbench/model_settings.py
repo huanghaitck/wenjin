@@ -3,11 +3,14 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import ssl
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import certifi
 
 
 SETTINGS_FILE = "model-settings.json"
@@ -195,11 +198,16 @@ def probe_role(config_root: Path, role: str) -> dict[str, Any]:
             return {"role": role, "available": False, "detail": "尚未保存 API Key"}
         headers["Authorization"] = f"Bearer {secret}"
     try:
-        with urlopen(Request(url, headers=headers), timeout=min(int(item["timeout_seconds"]), 15)) as response:
+        with urlopen(
+            Request(url, headers=headers),
+            timeout=min(int(item["timeout_seconds"]), 15),
+            context=ssl.create_default_context(cafile=certifi.where()),
+        ) as response:
             available = 200 <= response.status < 300
     except HTTPError as error:
         return {"role": role, "available": False, "detail": f"接口返回 HTTP {error.code}"}
-    except (URLError, TimeoutError):
-        return {"role": role, "available": False, "detail": "无法连接模型接口"}
+    except URLError as error:
+        return {"role": role, "available": False, "detail": f"无法连接模型接口：{error.reason}"}
+    except TimeoutError:
+        return {"role": role, "available": False, "detail": "连接模型接口超时"}
     return {"role": role, "available": available, "detail": f"已连接 {item['provider']} / {item['model']}"}
-

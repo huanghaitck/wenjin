@@ -4,12 +4,15 @@ import json
 import hashlib
 import os
 import re
+import ssl
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import certifi
 
 from .db import connect, utc_now
 from .authoring import authoring_state
@@ -20,12 +23,15 @@ from .service import list_sources, project_status, source_view
 
 MAIN_ROLE = "main_reasoning"
 RUN_TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
+MAX_TOOL_CALLS = 12
 SYSTEM_PROMPT = """You are the main agent in a local historical research workbench.
 Use tools to inspect project facts. Never claim you read a source unless a tool returned it.
-Return exactly one JSON object and no markdown.
+Return exactly one JSON object for exactly one action and no markdown. If several tools are needed,
+request them one at a time and wait for each TOOL_RESULT before choosing the next action.
 Available actions:
 {"type":"tool_call","tool":"project.status","arguments":{}}
 {"type":"tool_call","tool":"source.list","arguments":{}}
+{"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"..."}}
 {"type":"tool_call","tool":"research.state","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{}}
@@ -34,6 +40,8 @@ Available actions:
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
+Write final content for a researcher as readable prose with short headings or bullet lines.
+Do not return a Python repr, JSON dump, or an object-shaped report unless the user explicitly asks for one.
 """
 
 
@@ -384,9 +392,10 @@ def send_message(project_root: Path, thread_id: str, content: str,
 
 def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile) -> None:
     observations: list[dict[str, Any]] = []
-    for step in range(8):
+    for _ in range(MAX_TOOL_CALLS + 1):
+        remaining = MAX_TOOL_CALLS - len(observations)
         action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
-            profile, objective, observations
+            profile, objective, observations, remaining
         )
         action_type = action.get("type")
         if action_type == "final":
@@ -394,6 +403,8 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             return
         if action_type != "tool_call":
             raise ValueError("model action must be tool_call or final")
+        if remaining == 0:
+            raise RuntimeError("agent exhausted the tool-call budget without returning a final response")
         tool_name = str(action.get("tool", ""))
         arguments = action.get("arguments", {})
         if not isinstance(arguments, dict):
@@ -402,7 +413,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
-    raise RuntimeError("agent exceeded the M4 step limit")
+    raise RuntimeError("agent exhausted the tool-call budget without returning a final response")
 
 
 def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -449,9 +460,20 @@ def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict
     }
 
 
-def _model_action(profile: ModelProfile, objective: str, observations: list[dict[str, Any]]) -> dict[str, Any]:
+def _model_action(
+    profile: ModelProfile,
+    objective: str,
+    observations: list[dict[str, Any]],
+    remaining_tool_calls: int = MAX_TOOL_CALLS,
+) -> dict[str, Any]:
+    budget_instruction = (
+        "No tool calls remain. Return a final answer now using only the tool results already provided."
+        if remaining_tool_calls == 0
+        else f"You may make at most {remaining_tool_calls} more tool call(s). Reserve one model turn for the final answer."
+    )
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": budget_instruction},
         {"role": "user", "content": objective},
     ]
     for observation in observations:
@@ -492,7 +514,14 @@ def _parse_action(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    action = json.loads(text)
+    if not text.startswith(("{", "[")):
+        return {"type": "final", "content": text}
+    decoder = json.JSONDecoder()
+    action, end = decoder.raw_decode(text)
+    remainder = text[end:].strip()
+    while remainder:
+        _, end = decoder.raw_decode(remainder)
+        remainder = remainder[end:].strip()
     if not isinstance(action, dict):
         raise ValueError("agent response JSON must be an object")
     return action
@@ -504,19 +533,19 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
         headers={"Content-Type": "application/json", **headers}, method="POST",
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as response:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         raise RuntimeError(f"agent provider returned HTTP {error.code}") from error
     except URLError as error:
-        raise RuntimeError("agent provider could not be reached") from error
+        raise RuntimeError(f"agent provider could not be reached: {error.reason}") from error
     if not isinstance(result, dict):
         raise RuntimeError("agent provider response was not a JSON object")
     return result
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.page", "research.state", "retrieval.list", "authoring.state", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "retrieval.list", "authoring.state", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -533,6 +562,13 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
             result = list_sources(project_root)
+        elif tool_name == "source.search":
+            result = _search_source_blocks(
+                project_root,
+                str(arguments.get("query", "")),
+                str(arguments.get("source_id", "")),
+                int(arguments.get("limit", 10)),
+            )
         elif tool_name == "source.page":
             result = _read_page(project_root, str(arguments.get("page_id", "")))
         elif tool_name == "research.state":
@@ -617,6 +653,61 @@ def _read_page(project_root: Path, page_id: str) -> dict[str, Any]:
         ],
         "open_anomalies": anomalies,
     }
+
+
+def _search_source_blocks(project_root: Path, query: str, source_id: str = "", limit: int = 10) -> list[dict[str, Any]]:
+    query = query.strip()
+    if not query:
+        raise ValueError("source.search requires query")
+    variants: list[str] = []
+    for value in re.split(r"\s+(?i:OR)\s+|[/／|]", query):
+        value = value.strip()
+        if value and value.casefold() not in {item.casefold() for item in variants}:
+            variants.append(value)
+    variants = variants or [query]
+    limit = max(1, min(limit, 30))
+    sql = """SELECT s.source_id, s.title, p.page_id, p.physical_page, p.printed_page,
+                    p.page_type,
+                    p.verification_state AS page_verification_state, p.use_state AS page_use_state,
+                    b.block_id, b.verification_state AS block_verification_state,
+                    b.use_state AS block_use_state, COALESCE(b.human_text, b.machine_text) AS text
+             FROM blocks b JOIN pages p ON p.page_id = b.page_id
+             JOIN sources s ON s.source_id = p.source_id
+             WHERE b.use_state != 'superseded' AND COALESCE(b.human_text, b.machine_text) LIKE ?"""
+    if source_id:
+        sql += " AND s.source_id = ?"
+    sql += " ORDER BY s.created_at, p.physical_page, b.block_order LIMIT ?"
+    with connect(project_root) as connection:
+        groups = []
+        for value in variants:
+            parameters: list[Any] = [f"%{value}%"]
+            if source_id:
+                parameters.append(source_id)
+            parameters.append(limit)
+            groups.append(connection.execute(sql, parameters).fetchall())
+    rows = []
+    seen: set[str] = set()
+    for index in range(limit):
+        for group in groups:
+            if index >= len(group):
+                continue
+            row = group[index]
+            if row["block_id"] in seen:
+                continue
+            rows.append(row)
+            seen.add(row["block_id"])
+            if len(rows) >= limit:
+                break
+        if len(rows) >= limit:
+            break
+    return [
+        {
+            **dict(row),
+            "text": str(row["text"])[:1200],
+            "matched_queries": [value for value in variants if value.casefold() in str(row["text"]).casefold()],
+        }
+        for row in rows
+    ]
 
 
 def decide_approval(

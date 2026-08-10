@@ -114,6 +114,7 @@
     <section class="section-editor surface">
       <header class="agent-heading"><div><h1 id="sectionHeading">选择一个章节</h1><p id="sectionVersion">人工批准后才产生新版本</p></div></header>
       <div class="editor-toolbar">
+        <label class="toolbar-select">稿件题名<input id="manuscriptTitleEdit" aria-label="稿件题名"></label>
         <button id="paragraphButton">正文</button><button id="quoteButton">引文</button>
         <button id="insertNote">插入注释</button>
         <button id="saveDocument" class="primary-inline">保存新修订</button>
@@ -159,7 +160,8 @@
 
   <main id="pdfWorkbench" class="workbench" hidden>
     <aside class="page-panel surface">
-      <h2>物理页</h2>
+      <h2 id="pageRailTitle">物理页</h2>
+      <div class="page-jump"><input id="pageJump" type="number" min="1" placeholder="页码"><button id="jumpToPage">跳转</button></div>
       <div id="pageRail" class="page-rail"></div>
     </aside>
 
@@ -168,7 +170,7 @@
         <div><button id="backToLibrary">← 返回图书馆</button><h1 id="sourceTitle">尚未导入文献</h1><p id="pageLabel">原 PDF 页面始终是校对依据</p></div>
         <div class="zoom-controls"><button id="zoomOut">−</button><span id="zoomValue">100%</span><button id="zoomIn">＋</button></div>
       </header>
-      <div class="page-canvas"><img id="pageImage" alt="当前 PDF 原页"></div>
+      <div class="page-canvas"><img id="pageImage" alt="当前 PDF 原页"><p id="locatorNotice" class="locator-notice" hidden>这是译稿定位文本，不是原页。可用它查找地名和段落，但建立证据前必须回到原版 PDF 核页。</p></div>
     </section>
 
     <section class="repair-panel surface">
@@ -176,6 +178,8 @@
       <div class="review-fields">
         <label>复核人<input id="reviewer" value="human-reviewer"></label>
         <label>修正依据<input id="reason" placeholder="例如：逐字核对当前原页"></label>
+        <label>印刷页码<input id="printedPage" placeholder="按原页页眉或页脚填写"></label>
+        <button id="savePrintedPage">保存页码关系</button>
       </div>
       <section class="model-assist">
         <div class="model-heading">
@@ -185,6 +189,7 @@
         <div id="ocrProposal"></div>
       </section>
       <div id="blocks" class="blocks"></div>
+      <button id="pageVerify" class="primary" hidden>确认本页与原图一致</button>
       <button id="pageRepair" class="primary" hidden>提交整页修正</button>
       <section class="anomaly-section"><h2>待复核项</h2><div id="anomalies"></div></section>
     </section>

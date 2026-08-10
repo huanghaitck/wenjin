@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 from urllib.request import Request, urlopen
+
+import certifi
 
 from .db import connect, utc_now
 
@@ -43,7 +46,7 @@ def _request(text: str, target_language: str) -> str:
         payload = {"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]}
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ['HRW_TRANSLATION_API_KEY']}"}
     request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode(), headers=headers, method="POST")
-    with urlopen(request, timeout=90) as response:
+    with urlopen(request, timeout=90, context=ssl.create_default_context(cafile=certifi.where())) as response:
         raw = json.loads(response.read().decode())
     return (raw.get("message", {}).get("content", "") if provider == "ollama"
             else raw["choices"][0]["message"]["content"])

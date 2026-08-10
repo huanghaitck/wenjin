@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
+
+import certifi
 
 from .agent_runtime import (
     assign_model,
@@ -216,6 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     args = build_parser().parse_args(argv)
     if args.command == "init":
         result = initialize_project(args.project_root, args.title)

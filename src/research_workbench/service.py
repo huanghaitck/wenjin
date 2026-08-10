@@ -309,6 +309,80 @@ def submit_block_repair(
         return {"repair_id": repair_id, "scope_type": "block", "target_id": block["block_id"]}
 
 
+def correct_block(project_root: Path, block_id: str, corrected_text: str,
+                  reviewer: str, reason: str, block_type: str | None = None) -> dict[str, Any]:
+    corrected_text, reviewer, reason = corrected_text.strip(), reviewer.strip(), reason.strip()
+    if not corrected_text or not reviewer or not reason:
+        raise ValueError("manual block correction requires text, reviewer and reason")
+    with connect(project_root) as connection:
+        block = connection.execute(
+            """SELECT b.*, p.source_id FROM blocks b
+               JOIN pages p ON p.page_id = b.page_id WHERE b.block_id = ?""",
+            (block_id,),
+        ).fetchone()
+        if block is None:
+            raise KeyError(f"unknown block: {block_id}")
+        before_text = block["human_text"] if block["human_text"] is not None else block["machine_text"]
+        corrected_type = (block_type or block["block_type"]).strip()
+        if corrected_type not in {"paragraph", "heading", "footnote", "header", "footer", "page_number"}:
+            raise ValueError("unsupported block type")
+        if corrected_text == before_text and corrected_type == block["block_type"]:
+            raise ValueError("manual correction did not change the block")
+        repair_id = f"REP_{uuid.uuid4().hex}"
+        target = {"source_id": block["source_id"], "scope_type": "block", "target_id": block_id}
+        _insert_repair(
+            connection, repair_id, target, {"text": corrected_text, "block_type": corrected_type},
+            [block["page_id"]], reviewer, reason,
+            _json_hash({"text": before_text, "block_type": block["block_type"]}),
+        )
+        connection.execute(
+            """UPDATE blocks SET human_text = ?, block_type = ?, verification_state = 'human_repaired',
+                      use_state = 'research_usable' WHERE block_id = ?""",
+            (corrected_text, corrected_type, block_id),
+        )
+        connection.execute(
+            """UPDATE pages SET verification_state = 'human_spot_checked'
+               WHERE page_id = ? AND verification_state NOT IN ('human_verified', 'human_repaired')""",
+            (block["page_id"],),
+        )
+        append_audit(connection, "block_corrected", "block", block_id, {"repair_id": repair_id})
+    return {"repair_id": repair_id, "scope_type": "block", "target_id": block_id,
+            "block_type": corrected_type}
+
+
+def correct_printed_page(project_root: Path, page_id: str, printed_page: str,
+                         reviewer: str, reason: str) -> dict[str, Any]:
+    printed_page, reviewer, reason = printed_page.strip(), reviewer.strip(), reason.strip()
+    if not printed_page or not reviewer or not reason:
+        raise ValueError("printed page correction requires a label, reviewer and reason")
+    with connect(project_root) as connection:
+        page = connection.execute(
+            "SELECT page_id, source_id, printed_page FROM pages WHERE page_id = ?", (page_id,)
+        ).fetchone()
+        if page is None:
+            raise KeyError(f"unknown page: {page_id}")
+        if printed_page == (page["printed_page"] or ""):
+            raise ValueError("printed page label did not change")
+        repair_id = f"REP_{uuid.uuid4().hex}"
+        target = {"source_id": page["source_id"], "scope_type": "page", "target_id": page_id}
+        _insert_repair(
+            connection, repair_id, target, {"printed_page": printed_page}, [page_id],
+            reviewer, reason, _json_hash({"printed_page": page["printed_page"]}),
+        )
+        connection.execute(
+            """UPDATE pages SET printed_page = ?, verification_state =
+                       CASE WHEN verification_state = 'human_verified' THEN verification_state
+                            ELSE 'human_spot_checked' END
+               WHERE page_id = ?""",
+            (printed_page, page_id),
+        )
+        append_audit(
+            connection, "printed_page_corrected", "page", page_id,
+            {"repair_id": repair_id, "before": page["printed_page"], "after": printed_page},
+        )
+    return {"repair_id": repair_id, "page_id": page_id, "printed_page": printed_page}
+
+
 def submit_page_repair(
     project_root: Path,
     anomaly_id: str,
@@ -438,6 +512,84 @@ def submit_page_repair(
         return {"repair_id": repair_id, "scope_type": "page", "target_id": page["page_id"]}
 
 
+def verify_page(project_root: Path, page_id: str, reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("page verification requires reviewer and reason")
+    with connect(project_root) as connection:
+        page = connection.execute(
+            "SELECT page_id, source_id, use_state FROM pages WHERE page_id = ?", (page_id,)
+        ).fetchone()
+        if page is None:
+            raise KeyError(f"unknown page: {page_id}")
+        block_ids = [row[0] for row in connection.execute(
+            "SELECT block_id FROM blocks WHERE page_id = ? AND use_state != 'superseded'", (page_id,)
+        )]
+        targets = [page_id, *block_ids]
+        placeholders = ",".join("?" for _ in targets)
+        blocking = connection.execute(
+            f"""SELECT COUNT(*) FROM anomalies
+                WHERE status = 'open' AND severity != 'advisory'
+                  AND scope_type IN ('page', 'block') AND target_id IN ({placeholders})""",
+            targets,
+        ).fetchone()[0]
+        if blocking:
+            raise ValueError("resolve page or block anomalies before verifying this page")
+        unusable = connection.execute(
+            """SELECT COUNT(*) FROM blocks
+               WHERE page_id = ? AND use_state NOT IN ('research_usable', 'superseded')""",
+            (page_id,),
+        ).fetchone()[0]
+        if page["use_state"] != "research_usable" or unusable:
+            raise ValueError("blocked page content cannot be verified")
+        connection.execute(
+            "UPDATE pages SET verification_state = 'human_verified' WHERE page_id = ?", (page_id,)
+        )
+        connection.execute(
+            """UPDATE blocks SET verification_state = 'human_verified'
+               WHERE page_id = ? AND use_state != 'superseded'""",
+            (page_id,),
+        )
+        append_audit(connection, "page_verified", "page", page_id, {"reviewer": reviewer, "reason": reason})
+    return {"page_id": page_id, "verification_state": "human_verified", "reviewer": reviewer}
+
+
+def verify_block(project_root: Path, block_id: str, reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("block verification requires reviewer and reason")
+    with connect(project_root) as connection:
+        block = connection.execute(
+            """SELECT b.block_id, b.page_id, b.use_state AS block_use_state,
+                      p.source_id, p.use_state AS page_use_state
+               FROM blocks b JOIN pages p ON p.page_id = b.page_id WHERE b.block_id = ?""",
+            (block_id,),
+        ).fetchone()
+        if block is None:
+            raise KeyError(f"unknown block: {block_id}")
+        blocking = connection.execute(
+            """SELECT COUNT(*) FROM anomalies
+               WHERE status = 'open' AND severity != 'advisory'
+                 AND ((scope_type = 'block' AND target_id = ?)
+                   OR (scope_type = 'page' AND target_id = ?))""",
+            (block_id, block["page_id"]),
+        ).fetchone()[0]
+        if blocking:
+            raise ValueError("resolve this block or page anomaly before verification")
+        if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
+            raise ValueError("blocked page content cannot be verified")
+        connection.execute(
+            "UPDATE blocks SET verification_state = 'human_verified' WHERE block_id = ?", (block_id,)
+        )
+        connection.execute(
+            """UPDATE pages SET verification_state = 'human_spot_checked'
+               WHERE page_id = ? AND verification_state NOT IN ('human_verified', 'human_repaired')""",
+            (block["page_id"],),
+        )
+        append_audit(connection, "block_verified", "block", block_id, {"reviewer": reviewer, "reason": reason})
+    return {"block_id": block_id, "page_id": block["page_id"], "verification_state": "human_verified"}
+
+
 def project_status(project_root: Path) -> dict[str, Any]:
     with connect(project_root) as connection:
         project = dict(connection.execute("SELECT * FROM projects LIMIT 1").fetchone())
@@ -475,8 +627,11 @@ def list_blocks(project_root: Path, source_id: str) -> list[dict[str, Any]]:
 def list_sources(project_root: Path) -> list[dict[str, Any]]:
     with connect(project_root) as connection:
         return [dict(row) for row in connection.execute(
-            """SELECT source_id, title, original_name, processing_state, use_state, created_at
-               FROM sources ORDER BY created_at, source_id"""
+            """SELECT s.source_id, s.title, s.original_name, s.processing_state, s.use_state,
+                      s.created_at, (SELECT COUNT(*) FROM pages p WHERE p.source_id = s.source_id) AS page_count,
+                      COALESCE((SELECT sv.byte_count FROM source_versions sv WHERE sv.source_id = s.source_id
+                                ORDER BY sv.created_at DESC LIMIT 1), 0) AS byte_count
+               FROM sources s ORDER BY s.created_at, s.source_id"""
         ).fetchall()]
 
 
@@ -847,6 +1002,22 @@ def _resolve_anomaly(connection: Any, anomaly_id: str, repair_id: str) -> None:
 
 
 def _recalculate_source_state(connection: Any, source_id: str) -> None:
+    page_types = connection.execute(
+        "SELECT page_type, COUNT(*) AS count FROM pages WHERE source_id = ? GROUP BY page_type",
+        (source_id,),
+    ).fetchall()
+    if page_types and all(row["page_type"] == "docx_locator" for row in page_types):
+        connection.execute("UPDATE pages SET use_state = 'locator_only' WHERE source_id = ?", (source_id,))
+        connection.execute(
+            """UPDATE blocks SET use_state = 'locator_only'
+               WHERE page_id IN (SELECT page_id FROM pages WHERE source_id = ?)""",
+            (source_id,),
+        )
+        connection.execute(
+            "UPDATE sources SET processing_state = 'accepted', use_state = 'locator_only' WHERE source_id = ?",
+            (source_id,),
+        )
+        return
     connection.execute(
         "UPDATE pages SET use_state = 'research_usable' WHERE source_id = ?",
         (source_id,),

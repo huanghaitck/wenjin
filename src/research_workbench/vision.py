@@ -3,11 +3,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import ssl
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import certifi
 
 
 PROMPT_VERSION = "page-ocr-v1"
@@ -210,12 +213,12 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
         method="POST",
     )
     try:
-        with urlopen(request, timeout=timeout) as response:
+        with urlopen(request, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as response:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
         raise RuntimeError(f"OCR provider returned HTTP {error.code}") from error
     except URLError as error:
-        raise RuntimeError("OCR provider could not be reached") from error
+        raise RuntimeError(f"OCR provider could not be reached: {error.reason}") from error
     if not isinstance(result, dict):
         raise RuntimeError("OCR provider response was not a JSON object")
     return result

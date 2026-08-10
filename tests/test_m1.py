@@ -9,6 +9,8 @@ from pathlib import Path
 
 from research_workbench.db import connect
 from research_workbench.service import (
+    correct_block,
+    correct_printed_page,
     import_structure,
     initialize_project,
     list_anomalies,
@@ -17,6 +19,8 @@ from research_workbench.service import (
     register_source,
     submit_block_repair,
     submit_page_repair,
+    verify_block,
+    verify_page,
 )
 
 
@@ -144,6 +148,84 @@ class M1KernelTests(unittest.TestCase):
             audit_types = [row[0] for row in connection.execute("SELECT event_type FROM audit_events")]
         self.assertEqual(repair_count, 1)
         self.assertIn("block_repaired", audit_types)
+
+    def test_clean_page_requires_explicit_human_verification(self) -> None:
+        packet = self.root / "clean-structure.json"
+        packet.write_text(json.dumps({"pages": [{
+            "id": "P1", "physical_page": 1, "page_type": "body",
+            "blocks": [{"id": "B1", "order": 1, "type": "paragraph", "text": "Verified text."}],
+        }]}), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        page_id = f"{self.source['source_id']}:P1"
+        result = verify_page(self.project, page_id, "Professor", "Compared every line with the rendered page")
+        self.assertEqual(result["verification_state"], "human_verified")
+        with connect(self.project) as connection:
+            page_state = connection.execute("SELECT verification_state FROM pages WHERE page_id = ?", (page_id,)).fetchone()[0]
+            block_state = connection.execute("SELECT verification_state FROM blocks WHERE page_id = ?", (page_id,)).fetchone()[0]
+        self.assertEqual(page_state, "human_verified")
+        self.assertEqual(block_state, "human_verified")
+
+    def test_single_block_verification_marks_only_a_page_spot_check(self) -> None:
+        packet = self.root / "spot-check.json"
+        packet.write_text(json.dumps({"pages": [{
+            "id": "P1", "physical_page": 1, "page_type": "body",
+            "blocks": [
+                {"id": "B1", "order": 1, "type": "paragraph", "text": "Checked paragraph."},
+                {"id": "B2", "order": 2, "type": "paragraph", "text": "Unchecked paragraph."},
+            ],
+        }]}), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        result = verify_block(self.project, f"{self.source['source_id']}:B1", "Professor", "Checked this paragraph")
+        self.assertEqual(result["verification_state"], "human_verified")
+        with connect(self.project) as connection:
+            page_state = connection.execute("SELECT verification_state FROM pages WHERE page_id = ?", (result["page_id"],)).fetchone()[0]
+            states = [row[0] for row in connection.execute("SELECT verification_state FROM blocks ORDER BY block_order")]
+        self.assertEqual(page_state, "human_spot_checked")
+        self.assertEqual(states, ["human_verified", "machine_parsed"])
+
+    def test_user_can_correct_an_undetected_block_error(self) -> None:
+        packet = self.root / "manual-correction.json"
+        packet.write_text(json.dumps({"pages": [{
+            "id": "P1", "physical_page": 1, "page_type": "body",
+            "blocks": [{"id": "B1", "order": 1, "type": "paragraph", "text": "The rode was busy."}],
+        }]}), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        block_id = f"{self.source['source_id']}:B1"
+        result = correct_block(
+            self.project, block_id, "The road was busy.", "Professor", "Corrected against the image",
+            block_type="heading",
+        )
+        self.assertTrue(result["repair_id"].startswith("REP_"))
+        with connect(self.project) as connection:
+            block = connection.execute(
+                "SELECT machine_text, human_text, block_type, verification_state FROM blocks WHERE block_id = ?", (block_id,)
+            ).fetchone()
+        self.assertEqual(block["machine_text"], "The rode was busy.")
+        self.assertEqual(block["human_text"], "The road was busy.")
+        self.assertEqual(block["block_type"], "heading")
+        self.assertEqual(block["verification_state"], "human_repaired")
+
+    def test_user_can_reconstruct_a_missing_printed_page_label(self) -> None:
+        packet = self.root / "missing-printed-page.json"
+        packet.write_text(json.dumps({"pages": [{
+            "id": "P310", "physical_page": 310, "page_type": "body",
+            "blocks": [{"id": "B1", "order": 1, "type": "paragraph", "text": "Page text."}],
+        }]}), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        page_id = f"{self.source['source_id']}:P310"
+        result = correct_printed_page(
+            self.project, page_id, "300", "Professor", "Read the printed header on the rendered page"
+        )
+        self.assertEqual(result["printed_page"], "300")
+        with connect(self.project) as connection:
+            page = connection.execute(
+                "SELECT printed_page, verification_state FROM pages WHERE page_id = ?", (page_id,)
+            ).fetchone()
+            audit = connection.execute(
+                "SELECT event_type FROM audit_events WHERE entity_id = ? ORDER BY event_id DESC", (page_id,)
+            ).fetchone()[0]
+        self.assertEqual(tuple(page), ("300", "human_spot_checked"))
+        self.assertEqual(audit, "printed_page_corrected")
 
 
 if __name__ == "__main__":

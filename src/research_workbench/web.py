@@ -27,8 +27,12 @@ from .authoring import (
     decide_writing_proposal,
     export_manuscript,
     import_manuscript,
+    manuscript_detail,
 )
-from .document_model import document_detail, ensure_document, export_document, import_docx, reimport_docx, save_document
+from .document_model import (
+    document_detail, ensure_document, export_document, import_docx, reimport_docx, save_document,
+    sync_approved_section,
+)
 from .citations import create_note, decide_note, revise_note
 from .pdf_ingestion import ingest_pdf
 from .library import (
@@ -60,6 +64,8 @@ from .scholarship import (
 )
 from .service import (
     accept_ocr_proposal,
+    correct_block,
+    correct_printed_page,
     create_ocr_proposal,
     list_sources,
     page_image_path,
@@ -70,9 +76,12 @@ from .service import (
     submit_block_repair,
     submit_page_repair,
     submit_relation_repair,
+    verify_block,
+    verify_page,
 )
 from .vision import capability
 from .translation import capability as translation_capability, translate_evidence
+from .text_ingestion import ingest_docx_locator
 from .model_settings import SETTINGS_FILE, apply_settings, probe_role, public_settings, save_role
 from .workspace import (
     create_workspace_project,
@@ -272,6 +281,23 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["reviewer"]),
                     str(payload["reason"]),
                 )
+            elif parsed.path == "/api/block/correct":
+                result = correct_block(
+                    self.server.project_root,
+                    str(payload["block_id"]),
+                    str(payload["text"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                    str(payload["block_type"]) if payload.get("block_type") else None,
+                )
+            elif parsed.path == "/api/page/printed-page":
+                result = correct_printed_page(
+                    self.server.project_root,
+                    str(payload["page_id"]),
+                    str(payload["printed_page"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                )
             elif parsed.path == "/api/repair/page":
                 result = submit_page_repair(
                     self.server.project_root,
@@ -285,6 +311,20 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root,
                     str(payload["anomaly_id"]),
                     bool(payload["continues"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                )
+            elif parsed.path == "/api/page/verify":
+                result = verify_page(
+                    self.server.project_root,
+                    str(payload["page_id"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                )
+            elif parsed.path == "/api/block/verify":
+                result = verify_block(
+                    self.server.project_root,
+                    str(payload["block_id"]),
                     str(payload["reviewer"]),
                     str(payload["reason"]),
                 )
@@ -414,6 +454,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root, self.server.library_root,
                     str(payload["work_id"]), str(payload["file_id"]),
                 )
+            elif parsed.path == "/api/source/ingest-docx-locator":
+                result = ingest_docx_locator(self.server.project_root, str(payload["source_id"]))
             elif parsed.path == "/api/research/search":
                 result = search(
                     self.server.project_root, str(payload["provider"]), str(payload["query"]),
@@ -433,6 +475,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/freeze/approve":
                 result = approve_freeze(
                     self.server.project_root, str(payload["freeze_id"]), str(payload["reviewer"]),
+                    str(payload["reason"]),
                 )
             elif parsed.path == "/api/draft/create":
                 result = draft_from_freeze(
@@ -470,6 +513,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     raise ValueError("document must be an object")
                 result = save_document(
                     self.server.project_root, str(payload["manuscript_id"]), payload["document"],
+                )
+            elif parsed.path == "/api/manuscript/document/sync-section":
+                manuscript = manuscript_detail(self.server.project_root, str(payload["manuscript_id"]))
+                section = next(
+                    (item for item in manuscript["sections"] if item["section_id"] == str(payload["section_id"])),
+                    None,
+                )
+                if section is None:
+                    raise KeyError("section does not belong to the selected manuscript")
+                result = sync_approved_section(
+                    self.server.project_root, manuscript["manuscript_id"], section["section_id"],
+                    section["content"], section["current_version_id"],
                 )
             elif parsed.path == "/api/manuscript/document/export":
                 result = export_document(
@@ -509,6 +564,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = decide_writing_proposal(
                     self.server.project_root, str(payload["proposal_id"]), bool(payload["approved"]),
                     str(payload["reviewer"]), str(payload["edited_content"]) if "edited_content" in payload else None,
+                    str(payload.get("reason", "")),
                 )
             elif parsed.path == "/api/reading/create":
                 result = create_reading_job(
@@ -522,6 +578,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = create_journal_template(
                     self.server.project_root, str(payload["name"]), str(payload["citation_style"]),
                     [str(value) for value in payload["section_rules"]],
+                    str(payload.get("version_label", "")), str(payload.get("effective_date", "")),
+                    str(payload.get("source_url", "")), str(payload.get("verified_at", "")),
+                    str(payload.get("verification_status", "USER_DEFINED")),
+                    payload.get("requirements", {}) if isinstance(payload.get("requirements"), dict) else {},
                 )
             elif parsed.path == "/api/manuscript/export":
                 result = export_manuscript(

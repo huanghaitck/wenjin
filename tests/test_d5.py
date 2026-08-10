@@ -66,6 +66,12 @@ class D5DesktopPackagingTests(unittest.TestCase):
         self.assertIn("/api/model-settings/save", script)
         self.assertIn("Windows 凭据管理器", script)
 
+    def test_desktop_sidecar_bundles_https_runtime(self) -> None:
+        build_script = (Path(__file__).parents[1] / "scripts" / "build_desktop.ps1").read_text(encoding="utf-8")
+        self.assertIn("libssl-3-x64.dll", build_script)
+        self.assertIn("libcrypto-3-x64.dll", build_script)
+        self.assertIn("--collect-data certifi", build_script)
+
 
 if __name__ == "__main__":
     unittest.main()

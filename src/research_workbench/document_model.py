@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -151,7 +152,11 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
     fidelity = fidelity or {"level": "native", "warnings": [], "source": "structured_editor"}
     with connect(project_root) as connection:
         existing = {row["section_id"]: dict(row) for row in connection.execute(
-            "SELECT * FROM manuscript_sections WHERE manuscript_id = ?", (manuscript_id,)
+            """SELECT s.*, v.content AS current_content,
+                      v.evidence_refs_json AS current_evidence_refs_json
+               FROM manuscript_sections s
+               LEFT JOIN section_versions v ON v.version_id = s.current_version_id
+               WHERE s.manuscript_id = ?""", (manuscript_id,)
         )}
         for section in tree["children"]:
             if str(section.get("section_id", "")) not in existing:
@@ -172,14 +177,18 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
                     (section_id, manuscript_id, order, str(section["heading"]).strip(), now),
                 )
             content = "\n\n".join(str(node.get("text", "")).strip() for node in section["children"]).strip()
-            version_id = _id("SEV")
-            base = existing.get(section_id, {}).get("current_version_id")
-            connection.execute(
-                """INSERT INTO section_versions(version_id, section_id, base_version_id, operation, content,
-                   evidence_refs_json, model_snapshot_json, status, created_at, approved_at)
-                   VALUES (?, ?, ?, 'manual_structured_edit', ?, '[]', '{"provider":"human_editor"}', 'approved', ?, ?)""",
-                (version_id, section_id, base, content, now, now),
-            )
+            prior = existing.get(section_id, {})
+            base = prior.get("current_version_id")
+            version_id = base
+            if not prior or content != str(prior.get("current_content") or ""):
+                version_id = _id("SEV")
+                evidence_refs = str(prior.get("current_evidence_refs_json") or "[]")
+                connection.execute(
+                    """INSERT INTO section_versions(version_id, section_id, base_version_id, operation, content,
+                       evidence_refs_json, model_snapshot_json, status, created_at, approved_at)
+                       VALUES (?, ?, ?, 'manual_structured_edit', ?, ?, '{"provider":"human_editor"}', 'approved', ?, ?)""",
+                    (version_id, section_id, base, content, evidence_refs, now, now),
+                )
             connection.execute(
                 "UPDATE manuscript_sections SET section_order = ?, heading = ?, current_version_id = ? WHERE section_id = ?",
                 (order, str(section["heading"]).strip(), version_id, section_id),
@@ -192,6 +201,48 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
                            (str(tree.get("title", "")).strip() or "未命名稿件", now, manuscript_id))
         append_audit(connection, "document_revision_saved", "manuscript", manuscript_id,
                      {"revision_id": revision_id, "base_revision_id": current["current_revision_id"]})
+    check_note_anchors(project_root, manuscript_id, tree)
+    return document_detail(project_root, manuscript_id)
+
+
+def sync_approved_section(project_root: Path, manuscript_id: str, section_id: str,
+                          content: str, section_version_id: str) -> dict[str, Any]:
+    """Make an approved section version the current structured-document revision."""
+    current = ensure_document(project_root, manuscript_id)
+    tree = deepcopy(current["document"])
+    section = next((item for item in tree["children"] if item.get("section_id") == section_id), None)
+    if section is None:
+        raise KeyError(f"structured document is missing section: {section_id}")
+    old_children = section.get("children", [])
+    new_children = _paragraphs(content)
+    for index, node in enumerate(new_children):
+        if index < len(old_children):
+            node["node_id"] = old_children[index]["node_id"]
+    if [node.get("text", "") for node in old_children] == [node["text"] for node in new_children]:
+        return current
+    section["children"] = new_children
+    revision_id, now = _id("DREV"), utc_now()
+    digest = hashlib.sha256(_plain_text(tree).encode("utf-8")).hexdigest()
+    fidelity = {
+        "level": "evidence_reviewed", "warnings": [],
+        "source": "approved_section_version", "section_version_id": section_version_id,
+    }
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO document_revisions(revision_id, document_id, base_revision_id, document_json,
+               plain_text_hash, source_format, status, fidelity_json, created_at)
+               VALUES (?, ?, ?, ?, ?, 'approved_section_version', 'approved', ?, ?)""",
+            (revision_id, current["document_id"], current["current_revision_id"], _json(tree), digest,
+             _json(fidelity), now),
+        )
+        connection.execute(
+            "UPDATE manuscript_documents SET current_revision_id = ?, updated_at = ? WHERE document_id = ?",
+            (revision_id, now, current["document_id"]),
+        )
+        append_audit(connection, "approved_section_synced", "manuscript", manuscript_id, {
+            "section_id": section_id, "section_version_id": section_version_id,
+            "revision_id": revision_id, "base_revision_id": current["current_revision_id"],
+        })
     check_note_anchors(project_root, manuscript_id, tree)
     return document_detail(project_root, manuscript_id)
 
