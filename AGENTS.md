@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D4_PRACTICAL_AUTHORING_AND_CITATIONS`.
+Current milestone: `D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -50,6 +50,12 @@ The user supplied D3 use feedback on 2026-08-10 and authorized the bounded D4 in
 `docs/D4_PRACTICAL_AUTHORING_CITATIONS_TASK_SPEC.md`: two versioned journal presets, structured notes with
 human approval and source-page status, true DOCX footnote export, a more usable manuscript workspace, and
 local Ollama/Codex comparison. Do not expand this into a full Word clone or Library Processing migration.
+
+D4 completed on 2026-08-10 with package 0.9.0.dev1, project schema 7, 57 passing tests, browser checks and
+a Microsoft Word render check of a true footnote. The two built-in journal presets are versioned; the
+`《历史研究》` public reference remains explicitly gated for pre-submission recheck. The next increment must
+come from real use feedback. Do not start full Word parity, template-library expansion, Library Processing
+migration or desktop packaging without a new bounded scope.
 
 ## Startup order
 

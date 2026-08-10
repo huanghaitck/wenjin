@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO_COMPLETE
-last_completed_stage: D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO
-active_human_gate: REAL_USE_FEEDBACK_BEFORE_LIBRARY_PROCESSING_MIGRATION_OR_DESKTOP_PACKAGING
+current_stage: D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE
+last_completed_stage: D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO
+active_human_gate: REAL_USE_FEEDBACK_BEFORE_NEXT_AUTHORING_INCREMENT_OR_DESKTOP_PACKAGING
 
 m1:
   status: complete
@@ -39,14 +39,48 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: post_D3_use_feedback
+  stage: post_D4_use_feedback
   authorized: false
-  objective: choose_one_bounded_increment_from_real_demo_use
-  proposed_scope: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
+  objective: use_the_demo_then_choose_one_bounded_increment
+  proposed_scope: null
   excluded:
     - credential_capture
     - unattended_authenticated_browser
     - full_manuscript_generation
+    - desktop_packaging
+
+d4_practical_authoring_and_citations:
+  status: complete_awaiting_use_feedback
+  package_version: 0.9.0.dev1
+  project_database_schema: 7
+  built_in_journal_presets: 2
+  journal_template_revisions: implemented
+  chinese_social_sciences_preset: official_sources_checked_2026_08_10
+  historical_research_preset: public_reference_requires_pre_submission_recheck
+  structured_manuscript_notes: implemented
+  note_modes:
+    - VERIFY_AND_INSERT
+    - METADATA_FIRST_PAGE_LATER
+    - REFORMAT_EXISTING
+  evidence_backlink_separate_from_formal_note: true
+  human_note_approval: required
+  immutable_note_versions: implemented
+  anchor_change_quarantine: implemented
+  markdown_footnotes: implemented
+  true_docx_footnotes: implemented
+  docx_microsoft_word_render: passed
+  libreoffice_adjacent_chinese_footnote_compatibility: known_limitation_reported
+  local_ollama_comparison: completed_single_sample
+  semantic_strength_review_needed: true
+  full_test_suite: 57_passed
+  javascript_syntax_check: passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/?mode=article
+  deferred:
+    - full_word_feature_parity
+    - complex_docx_round_trip
+    - automatic_semantic_entailment_approval
+    - library_processing_cross_database_migration
     - desktop_packaging
 
 d3_information_architecture_planning:

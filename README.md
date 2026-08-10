@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
+`D4_PRACTICAL_AUTHORING_AND_CITATIONS_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -67,6 +67,13 @@ manuscript workspace uses a structured document tree with immutable revisions, c
 adapters and explicit fidelity reports. Its research sidebar can bind a message to the current manuscript,
 revision, section, node and selected text without silently promoting conversation into approved prose.
 The research browser now occupies the central workspace and keeps domain/session receipts in its sidebar.
+
+D4 makes the manuscript workspace usable for a first citation-writing loop. It provides two versioned built-in
+journal presets, structured note proposals with page/evidence status and human approval, immutable note versions,
+anchor invalidation after relevant prose changes, Markdown footnotes and true Word footnotes. The
+`《中国社会科学》` preset is tied to official checked sources; the `《历史研究》` preset is deliberately marked as a
+public reference that must be rechecked before submission. The article layout, template selector, note sidebar,
+revision status and dynamic package/schema display are available at `http://127.0.0.1:8765/?mode=article`.
 
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,

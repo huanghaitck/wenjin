@@ -110,6 +110,20 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 可读；Library Processing 的共享迁移、复杂 DOCX 往返、自动保存/崩溃恢复和桌面内置登录浏览器仍
 需后续单独验收。
 
+### D4｜Practical Authoring and Citations
+
+状态：可用 Demo 已完成，等待真实写作反馈（2026-08-10）。
+
+- 内置《历史研究》《中国社会科学》两套带来源、版本、核验日期和状态的模板；
+- 注释与证据回链分层保存，支持原页已核、元数据先行、整理既有注释三种模式；
+- 注释提案必须人工批准，版本不可覆盖；相关正文变化后锚点自动转为待复核；
+- Markdown 标准脚注和真实 Word 脚注导出，导出回执记录模板修订与保真风险；
+- 文章画布、稿件导航、模板选择、注释侧栏、版本和统计信息完成一轮可用性整理；
+- 本地 Ollama 与当前交互式 Codex 完成单样本保真润色对照，确认还需人工检查语义强度。
+
+本阶段不等同于完整 Word、全期刊模板库或自动事实核验。真实 Library Processing 跨库迁移、复杂
+DOCX 往返和桌面打包仍保持未授权。
+
 ### M6｜Open Research Retrieval
 
 - OpenAlex 与 Crossref connector；

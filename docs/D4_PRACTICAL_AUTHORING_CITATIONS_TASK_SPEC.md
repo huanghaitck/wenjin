@@ -1,6 +1,6 @@
 # D4 Task Spec｜Practical Authoring and Citations
 
-状态：实施中
+状态：已完成，等待真实使用反馈
 日期：2026-08-10
 
 ## 目标
