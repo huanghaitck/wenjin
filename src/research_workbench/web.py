@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import secrets
 import tempfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -26,7 +28,7 @@ from .authoring import (
     export_manuscript,
     import_manuscript,
 )
-from .document_model import document_detail, ensure_document, export_document, import_docx, save_document
+from .document_model import document_detail, ensure_document, export_document, import_docx, reimport_docx, save_document
 from .citations import create_note, decide_note, revise_note
 from .pdf_ingestion import ingest_pdf
 from .library import (
@@ -71,6 +73,7 @@ from .service import (
 )
 from .vision import capability
 from .translation import capability as translation_capability, translate_evidence
+from .model_settings import SETTINGS_FILE, apply_settings, probe_role, public_settings, save_role
 from .workspace import (
     create_workspace_project,
     initialize_workspace,
@@ -86,6 +89,10 @@ class WorkbenchServer(ThreadingHTTPServer):
     project_root: Path
     library_root: Path
     workspace_root: Path
+    config_root: Path
+    session_token: str
+    desktop_mode: bool
+    desktop_bridge_ready: bool
 
 
 class WorkbenchHandler(BaseHTTPRequestHandler):
@@ -124,7 +131,21 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "retrievals": list_retrievals(self.server.project_root),
                     "research": research_state(self.server.project_root),
                     "authoring": authoring_state(self.server.project_root),
+                    "runtime": {
+                        "mode": "desktop" if self.server.desktop_mode else "browser",
+                        "desktop_build": os.getenv("HRW_DESKTOP_BUILD", ""),
+                        "desktop_bridge_ready": self.server.desktop_bridge_ready,
+                    },
                 })
+                return
+            if parsed.path == "/api/health":
+                self._json({"status": "ok", "mode": "desktop" if self.server.desktop_mode else "browser"})
+                return
+            if parsed.path == "/api/session":
+                self._json({"token": self.server.session_token})
+                return
+            if parsed.path == "/api/model-settings":
+                self._json(public_settings(self.server.config_root))
                 return
             if parsed.path == "/api/capabilities":
                 self._json({
@@ -237,7 +258,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._json(import_docx(self.server.project_root, title, data), 201)
                 return
             payload = self._body_json()
-            if parsed.path == "/api/repair/block":
+            if parsed.path == "/api/desktop/bridge-ready":
+                if not self.server.desktop_mode or self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "desktop bridge is unavailable"}, 403)
+                    return
+                self.server.desktop_bridge_ready = True
+                result = {"ready": True}
+            elif parsed.path == "/api/repair/block":
                 result = submit_block_repair(
                     self.server.project_root,
                     str(payload["anomaly_id"]),
@@ -289,6 +316,43 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["profile_id"]),
                     str(payload.get("role", "main_reasoning")),
                 )
+            elif parsed.path == "/api/model-settings/save":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                role = str(payload["role"])
+                settings = save_role(self.server.config_root, role, payload)
+                profiles = sync_model_profiles(self.server.project_root)
+                if role == "main_reasoning":
+                    configured = next(item for item in settings["roles"] if item["role"] == role)
+                    target = "environment-main" if configured["provider"] != "disabled" and (
+                        configured["provider"] == "ollama" or configured["has_secret"]
+                    ) else "builtin-mock"
+                    assign_model(self.server.project_root, target)
+                    profiles = sync_model_profiles(self.server.project_root)
+                result = {"settings": settings, "model_profiles": profiles}
+            elif parsed.path == "/api/model-settings/probe":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                result = probe_role(self.server.config_root, str(payload["role"]))
+            elif parsed.path == "/api/desktop/import-path":
+                if not self.server.desktop_mode or self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "desktop bridge is unavailable"}, 403)
+                    return
+                source_path = Path(str(payload["path"])).resolve()
+                if not source_path.is_file():
+                    raise FileNotFoundError("selected file is unavailable")
+                kind = str(payload["kind"])
+                if kind == "pdf" and source_path.suffix.lower() == ".pdf":
+                    source = register_source(self.server.project_root, source_path, str(payload.get("title", source_path.stem)))
+                    result = {"source": source, "intake": ingest_pdf(self.server.project_root, source["source_id"])}
+                elif kind == "docx" and source_path.suffix.lower() == ".docx":
+                    manuscript_id = str(payload.get("manuscript_id", ""))
+                    result = reimport_docx(self.server.project_root, manuscript_id, source_path.read_bytes()) if manuscript_id else import_docx(
+                        self.server.project_root, str(payload.get("title", source_path.stem)), source_path.read_bytes())
+                else:
+                    raise ValueError("selected file type does not match the requested import")
             elif parsed.path == "/api/agent/message":
                 result = send_message(
                     self.server.project_root,
@@ -412,6 +476,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root, str(payload["manuscript_id"]), str(payload["format"]),
                     str(payload.get("template_id", "builtin-history-research")),
                 )
+                if self.server.desktop_mode and result.get("project_path"):
+                    result["native_path"] = str((self.server.project_root / result["project_path"]).resolve())
             elif parsed.path == "/api/note/create":
                 result = create_note(
                     self.server.project_root, str(payload["manuscript_id"]), str(payload["anchor_node_id"]),
@@ -483,6 +549,8 @@ def build_server(
     port: int = 8765,
     library_root: Path | None = None,
     workspace_root: Path | None = None,
+    config_root: Path | None = None,
+    desktop_mode: bool = False,
 ) -> WorkbenchServer:
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("workbench may only bind to a loopback address")
@@ -492,6 +560,13 @@ def build_server(
     server = WorkbenchServer((host, port), WorkbenchHandler)
     server.library_root = resolve_library_root(project_root, library_root)
     server.workspace_root = (workspace_root or (project_root.parent / "historical-workbench-workspace")).resolve()
+    server.config_root = (config_root or (server.workspace_root / "config")).resolve()
+    server.config_root.mkdir(parents=True, exist_ok=True)
+    if desktop_mode or (server.config_root / SETTINGS_FILE).is_file():
+        apply_settings(server.config_root)
+    server.session_token = secrets.token_urlsafe(32)
+    server.desktop_mode = desktop_mode
+    server.desktop_bridge_ready = False
     registry = initialize_workspace(server.workspace_root, project_root)
     server.project_root = Path(registry["current_project"])
     return server
@@ -503,8 +578,10 @@ def serve(
     port: int = 8765,
     library_root: Path | None = None,
     workspace_root: Path | None = None,
+    config_root: Path | None = None,
+    desktop_mode: bool = False,
 ) -> None:
-    server = build_server(project_root, host, port, library_root, workspace_root)
+    server = build_server(project_root, host, port, library_root, workspace_root, config_root, desktop_mode)
     try:
         print(f"Historical Research Workbench: http://{host}:{server.server_port}")
         server.serve_forever()

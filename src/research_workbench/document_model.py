@@ -142,11 +142,13 @@ def document_detail(project_root: Path, manuscript_id: str) -> dict[str, Any]:
     return result
 
 
-def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any]) -> dict[str, Any]:
+def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
+                  source_format: str = "structured_editor",
+                  fidelity: dict[str, Any] | None = None) -> dict[str, Any]:
     _validate_tree(tree)
     current = ensure_document(project_root, manuscript_id)
     revision_id, now = _id("DREV"), utc_now()
-    fidelity = {"level": "native", "warnings": [], "source": "structured_editor"}
+    fidelity = fidelity or {"level": "native", "warnings": [], "source": "structured_editor"}
     with connect(project_root) as connection:
         existing = {row["section_id"]: dict(row) for row in connection.execute(
             "SELECT * FROM manuscript_sections WHERE manuscript_id = ?", (manuscript_id,)
@@ -158,9 +160,9 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any]) 
         connection.execute(
             """INSERT INTO document_revisions(revision_id, document_id, base_revision_id, document_json,
                plain_text_hash, source_format, status, fidelity_json, created_at)
-               VALUES (?, ?, ?, ?, ?, 'structured_editor', 'approved', ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, 'approved', ?, ?)""",
             (revision_id, current["document_id"], current["current_revision_id"], _json(tree), digest,
-             _json(fidelity), now),
+             source_format, _json(fidelity), now),
         )
         for order, section in enumerate(tree["children"], start=1):
             section_id = str(section.get("section_id", ""))
@@ -260,6 +262,59 @@ def import_docx(project_root: Path, title: str, data: bytes) -> dict[str, Any]:
     _record_receipt(project_root, manuscript["manuscript_id"], detail["current_revision_id"],
                     "import", "docx", "", {"level": "limited", "warnings": warnings})
     result = document_detail(project_root, manuscript["manuscript_id"])
+    result["import_fidelity"] = {"level": "limited", "warnings": warnings}
+    return result
+
+
+def reimport_docx(project_root: Path, manuscript_id: str, data: bytes) -> dict[str, Any]:
+    current = ensure_document(project_root, manuscript_id)
+    document = Document(io.BytesIO(data))
+    old_sections = current["document"].get("children", [])
+    sections: list[dict[str, Any]] = []
+    active: dict[str, Any] | None = None
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+        if not text:
+            continue
+        style = paragraph.style.name if paragraph.style else ""
+        if style.startswith("Heading"):
+            active = {
+                "type": "section", "node_id": _id("NOD"), "section_id": "",
+                "heading": text, "children": [],
+            }
+            sections.append(active)
+            continue
+        if active is None:
+            active = {
+                "type": "section", "node_id": _id("NOD"), "section_id": "",
+                "heading": "正文", "children": [],
+            }
+            sections.append(active)
+        node_type = "quote" if style == "Quote" else ("list_item" if style.startswith("List") else "paragraph")
+        active["children"].append({"type": node_type, "node_id": _id("NOD"), "text": text})
+    if not sections:
+        raise ValueError("DOCX does not contain readable paragraphs")
+    for index, section in enumerate(sections):
+        if index < len(old_sections):
+            section["section_id"] = str(old_sections[index].get("section_id", ""))
+        if not section["children"]:
+            section["children"].append({"type": "paragraph", "node_id": _id("NOD"), "text": ""})
+    warnings = ["Word 修改稿已作为新修订导回，原导出与旧修订保持不变",
+                "批注、修订、域代码、脚注与嵌入对象未做无损往返保证",
+                "原结构化注释锚点因 Word 段落身份变化而需要重新核对"]
+    if document.tables:
+        warnings.append(f"{len(document.tables)} 个表格未导入")
+    tree = {
+        "type": "document", "node_id": _id("NOD"),
+        "title": str(current["document"].get("title", "未命名稿件")), "children": sections,
+    }
+    result = save_document(
+        project_root, manuscript_id, tree, "docx_reimport",
+        {"level": "limited", "warnings": warnings, "source": "microsoft_word_roundtrip"},
+    )
+    _record_receipt(project_root, manuscript_id, result["current_revision_id"], "import", "docx", "",
+                    {"level": "limited", "warnings": warnings})
+    result = document_detail(project_root, manuscript_id)
     result["import_fidelity"] = {"level": "limited", "warnings": warnings}
     return result
 

@@ -4,6 +4,7 @@ const state = {
   contextMode: 'sources', retrievalRecord: null,
   manuscriptId: '', sectionId: '', authoringMode: 'dialogue', proposalId: '',
   document: null, documentManuscriptId: '', selection: null, browserSession: null,
+  modelSettings: null, sessionToken: '', lastDocxExport: '', nativeBridge: '',
 };
 const $ = (id) => document.getElementById(id);
 
@@ -13,6 +14,38 @@ async function request(url, options = {}) {
   const data = type.includes('json') ? await response.json() : await response.text();
   if (!response.ok) throw new Error(data.error || `请求失败：${response.status}`);
   return data;
+}
+
+function nativeAvailable() {
+  return Boolean(state.nativeBridge);
+}
+
+function tauriInvoke() {
+  if(window.parent!==window){
+    return (command,args={})=>new Promise((resolve,reject)=>{
+      const id=crypto.randomUUID();
+      const receive=(event)=>{
+        const response=event.data?.hrwDesktopResponse;
+        if(event.source!==window.parent||response?.id!==id)return;
+        window.removeEventListener('message',receive);
+        if(response.error)reject(new Error(response.error));else resolve(response.result);
+      };
+      window.addEventListener('message',receive);
+      window.parent.postMessage({hrwDesktopRequest:{id,command,args}},'*');
+    });
+  }
+  if(window.__TAURI__?.core?.invoke)return window.__TAURI__.core.invoke;
+  if(window.__TAURI_INTERNALS__?.invoke)return window.__TAURI_INTERNALS__.invoke;
+  return null;
+}
+
+async function nativeInvoke(command, args = {}) {
+  if (!nativeAvailable()) throw new Error('这个动作只在安装后的桌面客户端中可用。');
+  return tauriInvoke()(command, args);
+}
+
+function localSessionOptions(payload) {
+  return {method:'POST', headers:{'Content-Type':'application/json','X-HRW-Session':state.sessionToken}, body:JSON.stringify(payload)};
 }
 
 function notice(message, error = false) {
@@ -28,10 +61,22 @@ function reviewerPayload() {
 }
 
 async function loadSnapshot(selectId = '') {
-  [state.snapshot, state.capabilities] = await Promise.all([
+  const [snapshot, capabilities, modelSettings, session] = await Promise.all([
     request('/api/snapshot'),
     request('/api/capabilities'),
+    request('/api/model-settings'),
+    request('/api/session'),
   ]);
+  state.snapshot = snapshot; state.capabilities = capabilities;
+  state.modelSettings = modelSettings; state.sessionToken = session.token;
+  state.nativeBridge='';
+  if(state.snapshot?.runtime?.mode==='desktop'&&tauriInvoke()){
+    try{
+      state.nativeBridge=await tauriInvoke()('desktop_status');
+      await request('/api/desktop/bridge-ready',localSessionOptions({build:state.nativeBridge}));
+    }catch(error){console.warn('Desktop bridge unavailable',error);}
+  }
+  for (const element of document.querySelectorAll('.desktop-only')) element.hidden = !nativeAvailable();
   renderAgentShell();
   renderAuthoring();
   state.libraryWorks = state.snapshot.library_works || [];
@@ -900,9 +945,37 @@ function renderAnomalies() {
 function renderSettings() {
   const container = $('settingsContent'); if (!container || !state.snapshot) return; container.replaceChildren();
   const project = state.snapshot.project || {}; const caps = state.capabilities || {};
-  container.append(card('版本与项目', `Historical Research Workbench ${project.app_version || '—'} · Project schema ${project.schema_version || '—'}\n${project.title || ''} · ${project.project_id || ''}\n项目文件保持本地，原始材料只读。`));
-  const models = card('模型角色', '主推理模型可以在研究对话中选择；视觉 OCR 与翻译是辅助角色，输出仍须人工验收。');
-  for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? '当前主模型' : profile.status} · ${profile.provider} / ${profile.model}`}));
+  const runtime=state.snapshot.runtime||{};
+  container.append(card('版本与项目', `Historical Research Workbench ${project.app_version || '—'} · Project schema ${project.schema_version || '—'}\n客户端：${runtime.mode||'browser'}${runtime.desktop_build ? ` · build ${runtime.desktop_build}` : ''} · 原生桥接：${state.nativeBridge?`已就绪 ${state.nativeBridge}`:'不可用'}\n${project.title || ''} · ${project.project_id || ''}\n项目文件保持本地，原始材料只读。`));
+  for(const item of state.modelSettings?.roles||[]){
+    const panel=card(item.label, `${item.provider==='disabled'?'尚未启用':`${item.provider} / ${item.model}`} · 密钥：${item.has_secret?'已保存到 Windows 凭据管理器':'未保存'}`);
+    const form=document.createElement('section');form.className='context-form model-role-form';
+    const provider=document.createElement('select');
+    provider.append(new Option('未启用','disabled'),new Option('本地 Ollama','ollama'),new Option('OpenAI 兼容接口','openai_compatible'));provider.value=item.provider;
+    const providerLabel=document.createElement('label');providerLabel.textContent='接口类型';providerLabel.append(provider);
+    const model=document.createElement('input');model.value=item.model;model.placeholder='例如 qwen3.5:9b 或 glm-4.6v-flash';
+    const modelLabel=document.createElement('label');modelLabel.textContent='模型名称';modelLabel.append(model);
+    const baseUrl=document.createElement('input');baseUrl.value=item.base_url;baseUrl.placeholder='例如 http://127.0.0.1:11434';
+    const urlLabel=document.createElement('label');urlLabel.textContent='接口地址';urlLabel.append(baseUrl);
+    const apiKey=document.createElement('input');apiKey.type='password';apiKey.autocomplete='new-password';apiKey.placeholder=item.has_secret?'已安全保存；留空表示不更换':'远程接口需要，Ollama 留空';
+    const keyLabel=document.createElement('label');keyLabel.textContent='API Key';keyLabel.append(apiKey);
+    const timeout=document.createElement('input');timeout.type='number';timeout.min='5';timeout.max='600';timeout.value=item.timeout_seconds;
+    const timeoutLabel=document.createElement('label');timeoutLabel.textContent='超时（秒）';timeoutLabel.append(timeout);
+    const clear=document.createElement('input');clear.type='checkbox';clear.style.minHeight='auto';
+    const clearLabel=document.createElement('label');clearLabel.append(clear,document.createTextNode(' 清除已经保存的密钥'));
+    const row=document.createElement('div');row.className='row';
+    row.append(actionButton('保存并应用',async()=>{
+      try{
+        const result=await request('/api/model-settings/save',localSessionOptions({role:item.role,provider:provider.value,model:model.value,base_url:baseUrl.value,api_key:apiKey.value,clear_secret:clear.checked,timeout_seconds:Number(timeout.value)}));
+        state.modelSettings=result.settings;await loadSnapshot();notice(`${item.label}已经保存；之后的新任务会记录实际模型快照。`);
+      }catch(error){notice(error.message,true);}
+    },true),actionButton('测试连接',async()=>{
+      try{const result=await request('/api/model-settings/probe',localSessionOptions({role:item.role}));notice(result.detail,!result.available);}catch(error){notice(error.message,true);}
+    }));
+    form.append(providerLabel,modelLabel,urlLabel,keyLabel,timeoutLabel,clearLabel,row);panel.append(form);container.append(panel);
+  }
+  const models = card('当前生效快照', '主推理模型可以在研究对话中选择；视觉 OCR 与翻译是辅助角色，输出仍须人工验收。');
+  for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? '当前主模型' : profile.status} · ${profile.provider} / ${profile.model} · ${profile.endpoint||'本机规则'}`}));
   models.append(Object.assign(document.createElement('p'), {textContent:`视觉辅助：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : '未配置'}\n翻译辅助：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : '未配置'}`})); container.append(models);
   const skills = card('Skills 兼容', '当前只发现并展示 SKILL.md 指令，不自动执行任意脚本。');
   for (const skill of state.snapshot.library?.skills || []) skills.append(Object.assign(document.createElement('p'), {textContent:`${skill.name} · ${skill.execution}\n${skill.description}`})); container.append(skills);
@@ -983,12 +1056,26 @@ $('saveDocument').onclick = async () => {
 async function exportCurrentDocument(format) {
   if (!state.manuscriptId) throw new Error('请先选择稿件。');
   const result = await request('/api/manuscript/document/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,format,template_id:$('exportTemplate').value})});
-  const link=document.createElement('a'); link.href=result.download_url; link.download=''; document.body.append(link); link.click(); link.remove();
+  if(result.native_path){
+    if(format==='docx'){state.lastDocxExport=result.native_path;$('openInWord').disabled=false;}
+  }else{
+    const link=document.createElement('a'); link.href=result.download_url; link.download=''; document.body.append(link); link.click(); link.remove();
+  }
   await loadDocument(state.manuscriptId); renderAuthoring();
-  notice(`${format.toUpperCase()} 已导出。保真级别：${result.fidelity.level}${result.fidelity.warnings.length ? `；${result.fidelity.warnings.join('；')}` : ''}`);
+  notice(`${format.toUpperCase()} 已导出${result.native_path?`到项目目录：${result.native_path}`:''}。保真级别：${result.fidelity.level}${result.fidelity.warnings.length ? `；${result.fidelity.warnings.join('；')}` : ''}`);
 }
 $('exportMarkdown').onclick = () => exportCurrentDocument('markdown').catch((error)=>notice(error.message,true));
 $('exportDocx').onclick = () => exportCurrentDocument('docx').catch((error)=>notice(error.message,true));
+$('openInWord').onclick=()=>nativeInvoke('open_in_word',{path:state.lastDocxExport}).then(()=>notice('已经把这一精确导出版本交给 Microsoft Word；保存后可用“导回 Word 修改稿”。')).catch((error)=>notice(error.message,true));
+$('reimportWord').onclick=async()=>{
+  if(!state.manuscriptId){notice('请先选择要接收 Word 修改稿的稿件。',true);return;}
+  try{
+    const path=await nativeInvoke('choose_file',{kind:'docx'});if(!path)return;
+    const result=await request('/api/desktop/import-path',localSessionOptions({kind:'docx',path,manuscript_id:state.manuscriptId}));
+    state.document=result;state.documentManuscriptId=state.manuscriptId;state.sectionId=result.document.children[0]?.section_id||'';
+    await refreshAuthoring(`Word 修改稿已导回为新修订。保真提示：${result.import_fidelity.warnings.join('；')}`);
+  }catch(error){notice(error.message,true);}
+};
 $('insertNote').onclick = () => { currentSelectionContext(); state.authoringMode='notes'; renderAuthoringControl(selectedSection(),null); };
 for (const button of document.querySelectorAll('[data-command]')) button.onclick = () => document.execCommand(button.dataset.command, false);
 $('paragraphButton').onclick = () => document.execCommand('formatBlock', false, 'p');
@@ -1024,6 +1111,23 @@ $('scanLibrary').onclick = async () => {
     renderScan(); notice(`盘点完成：${state.libraryScan.candidates.length} 个候选，等待你决定是否入库。`);
   } catch (error) { notice(error.message, true); }
   finally { $('scanLibrary').disabled = false; }
+};
+$('chooseFolder').onclick=async()=>{try{const path=await nativeInvoke('choose_folder');if(path)$('scanRoot').value=path;}catch(error){notice(error.message,true);}};
+$('choosePdf').onclick=async()=>{
+  try{
+    const path=await nativeInvoke('choose_file',{kind:'pdf'});if(!path)return;
+    notice('正在复制原 PDF、渲染页面并检查文本层……');
+    const result=await request('/api/desktop/import-path',localSessionOptions({kind:'pdf',path}));
+    await loadSnapshot(result.source.source_id);setMode('library');notice(`已导入 ${result.intake.page_count} 页；原文件没有被修改。`);
+  }catch(error){notice(error.message,true);}
+};
+$('chooseDocx').onclick=async()=>{
+  try{
+    const path=await nativeInvoke('choose_file',{kind:'docx'});if(!path)return;
+    const result=await request('/api/desktop/import-path',localSessionOptions({kind:'docx',path,title:$('manuscriptTitle').value}));
+    state.manuscriptId=result.manuscript_id;state.sectionId=result.document.children[0]?.section_id||'';state.document=result;state.documentManuscriptId=result.manuscript_id;
+    await refreshAuthoring(`DOCX 已导入。保真提示：${result.import_fidelity.warnings.join('；')}`);
+  }catch(error){notice(error.message,true);}
 };
 $('approveCandidates').onclick = async () => {
   const candidateIds = [...$('scanCandidates').querySelectorAll('input[type=checkbox]:checked')].map((item) => item.dataset.candidateId);

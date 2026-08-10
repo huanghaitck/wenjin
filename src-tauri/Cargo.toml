@@ -1,0 +1,15 @@
+[package]
+name = "historical-research-workbench"
+version = "1.0.0-dev.1"
+description = "Local-first historical research workbench"
+authors = ["Historical Research Workbench"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+rfd = "0.17.2"
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-shell = "2.3.5"
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

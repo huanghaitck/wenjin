@@ -11,4 +11,6 @@ dist/
 *.egg-info/
 .venv/
 tmp/
-
+node_modules/
+src-tauri/target/
+src-tauri/binaries/*.exe

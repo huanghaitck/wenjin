@@ -42,6 +42,7 @@ from .service import (
 )
 from .vision import capability
 from .web import serve
+from .desktop_runtime import serve_desktop
 
 
 def _emit(value: Any) -> None:
@@ -204,6 +205,13 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--port", type=int, default=8765)
     web.add_argument("--library-root", type=Path)
     web.add_argument("--workspace-root", type=Path)
+    web.add_argument("--config-root", type=Path)
+
+    desktop = commands.add_parser("desktop-serve", help="start a first-run desktop workspace")
+    desktop.add_argument("--data-root", type=Path, required=True)
+    desktop.add_argument("--host", default="127.0.0.1")
+    desktop.add_argument("--port", type=int, required=True)
+    desktop.add_argument("--desktop-build", default="development")
     return parser
 
 
@@ -312,7 +320,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "library-link":
         result = link_work_to_project(args.project_root, args.work_id, args.library_root)
     elif args.command == "serve":
-        serve(args.project_root, args.host, args.port, args.library_root, args.workspace_root)
+        serve(args.project_root, args.host, args.port, args.library_root, args.workspace_root, args.config_root)
+        return 0
+    elif args.command == "desktop-serve":
+        serve_desktop(args.data_root, args.host, args.port, args.desktop_build)
         return 0
     else:
         raise AssertionError(args.command)

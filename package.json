@@ -1,0 +1,11 @@
+{
+  "name": "historical-research-workbench-desktop",
+  "private": true,
+  "version": "1.0.0-dev.1",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}
