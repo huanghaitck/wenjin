@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D3_USABLE_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`.
+Current milestone: `D4_PRACTICAL_AUTHORING_AND_CITATIONS`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -45,6 +45,11 @@ D3 completed on 2026-08-10 with package 0.8.0.dev1, project schema 6, 52 passing
 across the four permanent workspaces. The next increment must be selected from real use feedback. Do not
 start Library Processing cross-database migration, complex DOCX round-trip work, desktop packaging or an
 authenticated WebView without a new bounded scope.
+
+The user supplied D3 use feedback on 2026-08-10 and authorized the bounded D4 increment documented in
+`docs/D4_PRACTICAL_AUTHORING_CITATIONS_TASK_SPEC.md`: two versioned journal presets, structured notes with
+human approval and source-page status, true DOCX footnote export, a more usable manuscript workspace, and
+local Ollama/Codex comparison. Do not expand this into a full Word clone or Library Processing migration.
 
 ## Startup order
 
