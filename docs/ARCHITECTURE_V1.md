@@ -152,6 +152,13 @@ Reading Job/Note、Historiography Entry 和 Journal Template。模型写作不�
 人工批准的 Proposal 才创建新的 immutable Section Version。润色批准前检查受保护引语、数字、
 脚注和来源标记，分节写作则要求已批准 Evidence Freeze。
 
+D3 将项目数据库增量升级为 schema 6，增加 Manuscript Document、Document Revision、
+Thread Context Binding 和 Document I/O Receipt。结构化文档树是稿件编辑的当前表示；每次人工
+保存创建不可变 Document Revision，同时写回 D2 Section Version 作为兼容读模型。DOCX 与
+Markdown 均从文档树导入或导出，并保存保真警告。对话绑定保存稿件、修订、章节、节点和选区文本
+哈希，但对话本身不进入正文。Library Processing 仍通过旧项目 Page/Block/Repair 兼容读取，本轮
+没有搬动或删除真实处理记录。
+
 ## 3. 事件与数据模型
 
 M4 在现有 `audit_events` 之外增加面向运行时的类型化事件。`audit_events` 继续记录领域状态改变；

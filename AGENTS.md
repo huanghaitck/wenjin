@@ -8,7 +8,7 @@ private research projects.
 
 ## Current gate
 
-Current milestone: `D3_USABLE_DEMO_IMPLEMENTATION`.
+Current milestone: `D3_USABLE_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`.
 
 The user authorized and completed M5 on 2026-08-10. M5 adds a pre-desktop, usable research-library vertical slice:
 SKILL.md discovery, explicitly scoped read-only folder inventory, human-approved index-in-place, durable
@@ -40,6 +40,11 @@ workspace. ADR 0008 and `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` are
 artifacts. The user authorized a usable D3 demo on 2026-08-10. Follow `docs/D3_DEMO_TASK_SPEC.md`.
 Implementation must remain additive-first: preserve D1/D2 tables and APIs, do not migrate real library page
 processing records yet, and do not remove compatibility reads during this increment.
+
+D3 completed on 2026-08-10 with package 0.8.0.dev1, project schema 6, 52 passing tests and browser checks
+across the four permanent workspaces. The next increment must be selected from real use feedback. Do not
+start Library Processing cross-database migration, complex DOCX round-trip work, desktop packaging or an
+authenticated WebView without a new bounded scope.
 
 ## Startup order
 

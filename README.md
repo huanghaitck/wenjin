@@ -19,7 +19,7 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING_COMPLETE_AWAITING_USE_FEEDBACK`
+`D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO_COMPLETE_AWAITING_USE_FEEDBACK`
 
 M1 provides the project state kernel. M2 adds:
 
@@ -60,6 +60,13 @@ frozen-evidence section drafting create reviewable proposals rather than overwri
 Direct quotations, numbers, footnote markers and source identifiers are protected during polishing.
 Bounded reading jobs, page-linked reading notes, historiography candidates and Markdown-first journal
 templates support the writing loop without silently becoming evidence.
+
+D3 reorganizes the client into four permanent workspaces: research dialogue, research library,
+manuscript workbench and project settings. PDF import and page repair now live under the library. The
+manuscript workspace uses a structured document tree with immutable revisions, controlled DOCX/Markdown
+adapters and explicit fidelity reports. Its research sidebar can bind a message to the current manuscript,
+revision, section, node and selected text without silently promoting conversation into approved prose.
+The research browser now occupies the central workspace and keeps domain/session receipts in its sidebar.
 
 The built-in deterministic model makes the complete M4 approval path testable offline. To expose one
 real main-reasoning profile, set the uncommitted `HRW_AGENT_PROVIDER`, `HRW_AGENT_BASE_URL`,
@@ -106,7 +113,8 @@ open retrieval, evidence, frozen writing, browser receipts and memory candidates
 In **研究图书馆**, paste only the folder you want to inventory. The first action is read-only preview;
 selected candidates enter the library only after a second approval. Files remain in place. Exact hashes,
 all observed file versions, the intake Skill hash and whether each recorded byte version is still available
-at the current path are shown in the work detail panel.
+at the current path are shown in the work detail panel. Single-PDF compatibility import and the project's
+original-page repair view also live here rather than in the global navigation.
 
 Then open `http://127.0.0.1:8765`. The interface can also import a PDF directly. The server binds
 to loopback only. CLI commands continue to emit JSON so a later Tauri bridge can call the same
@@ -118,7 +126,9 @@ If the Demo service is not running, start or restart it with:
 & "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -File .\scripts\start_demo.ps1 -Restart
 ```
 
-Open the article workbench directly at `http://127.0.0.1:8765/?mode=article`.
+Open the article workbench directly at `http://127.0.0.1:8765/?mode=article`. DOCX support intentionally
+covers headings, paragraphs and quotations only; comments, tracked changes, fields, complex footnotes and
+embedded objects are reported as fidelity risks for manual review in Word.
 
 Check the configured OCR role without exposing its key:
 

@@ -1,8 +1,8 @@
 project: historical-research-workbench
 updated_at: "2026-08-10"
-current_stage: D3_INFORMATION_ARCHITECTURE_AND_DOCUMENT_MODEL_PLANNING_COMPLETE
-last_completed_stage: D2_EVIDENCE_PRESERVING_READING_AND_SECTION_WRITING
-active_human_gate: D3_IMPLEMENTATION_APPROVAL_AFTER_PLAN_REVIEW
+current_stage: D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO_COMPLETE
+last_completed_stage: D3_RESEARCH_OBJECT_WORKSPACES_USABLE_DEMO
+active_human_gate: REAL_USE_FEEDBACK_BEFORE_LIBRARY_PROCESSING_MIGRATION_OR_DESKTOP_PACKAGING
 
 m1:
   status: complete
@@ -39,9 +39,9 @@ protected_sibling_projects:
   - D:\AI_Workflows\rare-source-history-lab
 
 next_scope:
-  stage: D3_implementation
+  stage: post_D3_use_feedback
   authorized: false
-  objective: migrate_to_research_object_workspaces_and_structured_document_model
+  objective: choose_one_bounded_increment_from_real_demo_use
   proposed_scope: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
   excluded:
     - credential_capture
@@ -50,7 +50,7 @@ next_scope:
     - desktop_packaging
 
 d3_information_architecture_planning:
-  status: complete_awaiting_implementation_approval
+  status: accepted_and_partially_implemented
   adr: docs/adr/0008-research-object-workspaces-and-contextual-dialogue.md
   migration_plan: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
   permanent_workspaces:
@@ -63,9 +63,34 @@ d3_information_architecture_planning:
   docx_and_markdown: import_export_adapters
   manuscript_research_sidebar: contextual_same_main_agent
   browser_location: central_object_tab_with_context_sidebar
-  runtime_code_changed: false
-  schema_changed: false
+  runtime_code_changed: true
+  schema_changed: true
   real_data_migrated: false
+
+d3_usable_demo:
+  status: complete_awaiting_use_feedback
+  package_version: 0.8.0.dev1
+  project_database_schema: 6
+  permanent_workspaces: 4
+  library_import_and_repair_navigation: implemented
+  structured_document_tree: implemented
+  immutable_document_revisions: implemented
+  legacy_section_compatibility_write: implemented
+  docx_markdown_adapters: implemented_with_fidelity_reports
+  contextual_manuscript_dialogue: implemented
+  central_browser_workspace: implemented_with_embed_fallback
+  settings_capability_view: implemented
+  full_test_suite: 52_passed
+  browser_ui_check: passed
+  real_histra_sources_visible: 3
+  demo_manuscript_created: true
+  demo_url: http://127.0.0.1:8765/
+  deferred:
+    - library_processing_cross_database_migration
+    - rich_inline_format_persistence
+    - complex_docx_round_trip
+    - autosave_crash_recovery
+    - desktop_authenticated_webview
 
 d2_authoring_reading:
   status: complete

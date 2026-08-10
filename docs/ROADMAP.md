@@ -97,7 +97,7 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 
 ### D3｜Research Object Workspaces and Structured Document Model
 
-状态：ADR 与迁移方案完成，等待实施批准。
+状态：可用 Demo 已完成，等待真实使用反馈；真实 Library Processing 跨库迁移仍未执行。
 
 - 四个永久工作空间：研究对话、研究图书馆、文章工作台、项目设置；
 - 文件导入、收件箱、页面处理和文献修复归入图书馆；
@@ -106,7 +106,9 @@ OpenAI-compatible/Ollama 视觉模型、provenance、人工接受/拒绝和真�
 - 研究浏览器作为中央对象标签，右侧保存检索、收集和审批；
 - additive-first 迁移，旧表和旧路径在核验前保持可读。
 
-实施前必须通过 `docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md` 的人工门禁。
+已完成 Phase 1、受控的 Phase 4 文档模型与 Phase 5 上下文/浏览器界面。旧 D1/D2 表和 API 继续
+可读；Library Processing 的共享迁移、复杂 DOCX 往返、自动保存/崩溃恢复和桌面内置登录浏览器仍
+需后续单独验收。
 
 ### M6｜Open Research Retrieval
 
