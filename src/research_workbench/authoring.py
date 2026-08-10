@@ -236,7 +236,8 @@ def _secondary_review_write(prompt: str) -> str:
 
 
 def create_writing_proposal(project_root: Path, section_id: str, operation: str,
-                            instruction: str, freeze_id: str = "", writer: Writer | None = None) -> dict[str, Any]:
+                            instruction: str, freeze_id: str = "", writer: Writer | None = None,
+                            evidence_ids: list[str] | None = None) -> dict[str, Any]:
     operation, instruction = operation.strip(), instruction.strip()
     if operation not in OPERATIONS:
         raise ValueError(f"unsupported writing operation: {operation}")
@@ -254,20 +255,40 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         freeze = freeze_detail(project_root, freeze_id)
         if freeze["status"] != "approved":
             raise ValueError("section drafting requires an approved evidence freeze")
+        frozen_ids = {
+            evidence["evidence_id"]
+            for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
+        }
+        if evidence_ids is not None:
+            selected_ids = list(dict.fromkeys(value.strip() for value in evidence_ids if value.strip()))
+            if not selected_ids:
+                raise ValueError("section drafting requires at least one selected frozen evidence item")
+            unknown = [value for value in selected_ids if value not in frozen_ids]
+            if unknown:
+                raise ValueError(f"evidence is not part of the approved freeze: {unknown[0]}")
+            selected = set(selected_ids)
+        else:
+            selected = frozen_ids
+        scoped_claims = []
+        for claim in freeze["payload"]["claims"]:
+            scoped_evidence = [evidence for evidence in claim["evidence"] if evidence["evidence_id"] in selected]
+            if scoped_evidence:
+                scoped_claims.append({**claim, "evidence": scoped_evidence})
         evidence_refs = [
             {"claim_id": claim["claim_id"], "evidence_id": evidence["evidence_id"],
              "page_id": evidence["page_id"], "source_version_id": evidence["source_version_id"]}
-            for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
+            for claim in scoped_claims for evidence in claim["evidence"]
         ]
         evidence_contract = {
-            "evidence_ids": [evidence["evidence_id"] for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]],
-            "quotes": [evidence["quote"] for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]],
+            "evidence_ids": [evidence["evidence_id"] for claim in scoped_claims for evidence in claim["evidence"]],
+            "quotes": [evidence["quote"] for claim in scoped_claims for evidence in claim["evidence"]],
         }
         evidence_text = "\n".join(
             f"人工批准的解释性主张（不能替代原文证据）：{claim['text']}\n" + "\n".join(
-                f"- [EVID:{e['evidence_id']}]｜关系 {e['relation']}｜物理页 {e['physical_page']}｜原文：{e['quote']}"
+                f"- [EVID:{e['evidence_id']}]｜关系 {e['relation']}｜物理页 "
+                f"{'–'.join(str(page) for page in e.get('physical_pages', [e['physical_page']]))}｜原文：{e['quote']}"
                 for e in claim["evidence"]
-            ) for claim in freeze["payload"]["claims"]
+            ) for claim in scoped_claims
         )
         boundary = freeze["payload"].get("boundary", "")
         approval_reason = freeze["payload"].get("approval", {}).get("reason", "")
@@ -285,7 +306,7 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             f"{claim['text']}\n\n" + "".join(
                 f"材料记载：“{e['quote']}”[EVID:{e['evidence_id']}]（物理页 {e['physical_page']}）。"
                 for e in claim["evidence"]
-            ) for claim in freeze["payload"]["claims"]
+            ) for claim in scoped_claims
         )
     else:
         evidence_contract = None

@@ -80,16 +80,37 @@ class D2AuthoringReadingTests(unittest.TestCase):
             self.project, claim["claim_id"], f"{self.source['source_id']}:B2",
             "The sentence continues toward the page boundary", "直接记载", "supports",
         )
-        freeze = create_freeze(self.project, "章节证据", [claim["claim_id"]])
+        other_claim = create_claim(self.project, "出发时间构成另一项独立主张。")
+        other_claim = create_evidence(
+            self.project, other_claim["claim_id"], f"{self.source['source_id']}:B1",
+            "The expedition left the station in spring.", "另一节使用", "supports",
+        )
+        freeze = create_freeze(self.project, "章节证据", [claim["claim_id"], other_claim["claim_id"]])
         section = self.manuscript["sections"][1]
         with self.assertRaisesRegex(ValueError, "approved"):
             create_writing_proposal(self.project, section["section_id"], "section_draft", "写一段", freeze["freeze_id"])
         approve_freeze(self.project, freeze["freeze_id"], "Professor", "Checked freeze boundary")
         evidence_id = claim["evidence"][0]["evidence_id"]
+        other_id = other_claim["evidence"][0]["evidence_id"]
+        with self.assertRaisesRegex(ValueError, "at least one selected"):
+            create_writing_proposal(
+                self.project, section["section_id"], "section_draft", "形成一段",
+                freeze["freeze_id"], evidence_ids=[],
+            )
+        with self.assertRaisesRegex(ValueError, "not part of the approved freeze"):
+            create_writing_proposal(
+                self.project, section["section_id"], "section_draft", "形成一段",
+                freeze["freeze_id"], evidence_ids=["EVI_not_frozen"],
+            )
+        captured_prompts: list[str] = []
         translated = create_writing_proposal(
             self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"],
-            writer=lambda prompt: f"材料记载：“远征队在春天离开了站点。”[EVID:{evidence_id}]",
+            writer=lambda prompt: captured_prompts.append(prompt) or
+            f"材料记载：“远征队在春天离开了站点。”[EVID:{evidence_id}]",
+            evidence_ids=[evidence_id],
         )
+        self.assertIn(evidence_id, captured_prompts[0])
+        self.assertNotIn(other_id, captured_prompts[0])
         self.assertFalse(translated["validation"]["valid"])
         self.assertTrue(translated["validation"]["altered_quotes"])
         with self.assertRaisesRegex(ValueError, "evidence contract"):
@@ -99,11 +120,13 @@ class D2AuthoringReadingTests(unittest.TestCase):
         german_quotes = create_writing_proposal(
             self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"],
             writer=lambda prompt: f'材料记载：„The expedition left the station in winter." [EVID:{evidence_id}]',
+            evidence_ids=[evidence_id],
         )
         self.assertFalse(german_quotes["validation"]["valid"])
         self.assertIn("winter", german_quotes["validation"]["altered_quotes"][0])
         proposal = create_writing_proposal(
-            self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"]
+            self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"],
+            evidence_ids=[evidence_id],
         )
         self.assertEqual(len(proposal["evidence_refs"]), 1)
         decision = decide_writing_proposal(

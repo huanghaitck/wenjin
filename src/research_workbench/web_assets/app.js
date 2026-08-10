@@ -744,11 +744,17 @@ function renderAuthoringControl(section, proposal) {
     const freeze=document.createElement('select'); freeze.id='writingFreeze'; freeze.append(new Option('不使用冻结包',''));
     for (const item of state.snapshot.research?.freezes || []) if(item.status==='approved') freeze.append(new Option(item.title,item.freeze_id));
     const freezeLabel=document.createElement('label'); freezeLabel.textContent='批准的证据冻结包'; freezeLabel.append(freeze);
-    form.append(operationLabel, formField('修改或写作要求','writingInstruction','保持史学语气，不改变事实与引文',true), freezeLabel);
+    const evidenceScope=document.createElement('select');evidenceScope.id='writingEvidenceScope';evidenceScope.multiple=true;evidenceScope.size=7;evidenceScope.disabled=true;
+    const evidenceScopeLabel=document.createElement('label');evidenceScopeLabel.textContent='本节允许使用的冻结证据（可多选）';evidenceScopeLabel.append(evidenceScope);
+    const populateEvidenceScope=()=>{evidenceScope.replaceChildren();const selectedFreeze=(state.snapshot.research?.freezes||[]).find((item)=>item.freeze_id===freeze.value);for(const claim of selectedFreeze?.payload?.claims||[])for(const item of claim.evidence||[])evidenceScope.append(new Option(`${item.relation} · 物理页 ${(item.physical_pages||[item.physical_page]).join('–')} · ${item.quote.slice(0,48)}`,item.evidence_id));evidenceScope.disabled=operation.value!=='section_draft'||!selectedFreeze;};
+    freeze.onchange=populateEvidenceScope;operation.onchange=populateEvidenceScope;
+    form.append(operationLabel, formField('修改或写作要求','writingInstruction','保持史学语气，不改变事实与引文',true), freezeLabel, evidenceScopeLabel);
     const generate=actionButton('生成待审提案', async()=>{
+      const evidence_ids=[...evidenceScope.selectedOptions].map((option)=>option.value);
+      if(operation.value==='section_draft'&&!evidence_ids.length) throw new Error('请为本节至少选择一条已冻结证据。');
       generate.disabled=true; notice('写作模型正在生成待审提案，请勿重复提交。');
       try {
-        const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value})});
+        const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value,evidence_ids})});
         state.proposalId=result.proposal_id; await refreshAuthoring(result.validation.valid?'写作提案已生成，等待逐项核对。':'提案违反证据契约，已阻断批准。');
         const drawer=document.querySelector('details.proposal-drawer'); drawer.open=true; drawer.scrollIntoView({block:'center'});
       } finally { generate.disabled=false; }

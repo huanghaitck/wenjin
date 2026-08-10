@@ -556,9 +556,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["reviewer"]),
                 )
             elif parsed.path == "/api/writing/propose":
+                evidence_ids = ([str(value) for value in payload["evidence_ids"]]
+                                if isinstance(payload.get("evidence_ids"), list) else None)
                 result = create_writing_proposal(
                     self.server.project_root, str(payload["section_id"]), str(payload["operation"]),
                     str(payload.get("instruction", "")), str(payload.get("freeze_id", "")),
+                    evidence_ids=evidence_ids,
                 )
             elif parsed.path == "/api/writing/decide":
                 if not isinstance(payload.get("approved"), bool):
