@@ -81,6 +81,7 @@ unfinished at the bottom of a page, inspect the next physical page before report
 Cross-page evidence requires a human-confirmed continuation relation in the workbench.
 Write final content for a researcher as readable prose with short headings or bullet lines.
 Do not return a Python repr, JSON dump, or an object-shaped report unless the user explicitly asks for one.
+Never expose or echo internal lines beginning with TOOL_RESULT in the final answer.
 """
 
 
@@ -383,6 +384,9 @@ def _thread_history(project_root: Path, thread_id: str) -> tuple[list[dict[str, 
         text = str(_decode(row["content_json"], {}).get("text", "")).strip()
         if not text:
             continue
+        if str(row["role"]) == "assistant" and _looks_like_internal_tool_transcript(text):
+            truncated = True
+            continue
         if len(text) > MAX_HISTORY_MESSAGE_CHARS:
             half = (MAX_HISTORY_MESSAGE_CHARS - 25) // 2
             text = text[:half] + "\n...[message clipped]...\n" + text[-half:]
@@ -559,6 +563,18 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             continue
         action_type = action.get("type")
         if action_type == "final":
+            final_content = str(action.get("content", ""))
+            if _looks_like_internal_tool_transcript(final_content):
+                message = "internal TOOL_RESULT transcripts are not a researcher-readable final answer"
+                with connect(project_root) as connection:
+                    _append_run_event(connection, run_id, "model_action_invalid", {"error": message})
+                observations.append({
+                    "tool": "model.response",
+                    "arguments": {},
+                    "result": None,
+                    "error": message + ". Synthesize the requested conclusions in readable prose now.",
+                })
+                continue
             required_tool_completed = required_tool and any(
                 item.get("tool") == required_tool
                 and item.get("error") is None
@@ -584,7 +600,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                     "error": message,
                 })
                 continue
-            _complete_run(project_root, run_id, str(action.get("content", "")))
+            _complete_run(project_root, run_id, final_content)
             return
         if action_type != "tool_call":
             raise ValueError("model action must be tool_call or final")
@@ -620,6 +636,10 @@ def _explicit_required_tool(objective: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def _looks_like_internal_tool_transcript(text: str) -> bool:
+    return bool(re.search(r"(?m)^\s*TOOL_RESULT\s+[\[{]", text))
 
 
 def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict[str, Any]:

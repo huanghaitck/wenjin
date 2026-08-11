@@ -645,3 +645,30 @@ mutation requirement.
 2. Let the model return a final sentence promising or describing the first page read.
 3. Before the fix the run becomes `COMPLETED`; after the fix the runtime returns `required_tool_missing` and keeps the
    same run active until the named tool succeeds or the bounded retry fails.
+
+### ISSUE-022: Internal tool transcripts can be accepted as a completed researcher answer
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | agent completion / conversation boundary |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — run `RUN_9ba56ab24060428bbbd869ddeeb69730` preserves the malformed final message |
+
+**Description**
+
+During a bounded search for Piassetsky's actual departure from Hanzhong, DeepSeek completed its search and two page
+reads but returned a plain-text sequence beginning with `TOOL_RESULT` instead of the requested A–E research summary.
+The plain-text fallback treated that internal transcript as a safe final answer, exposed tool payloads in the main
+conversation and marked the run complete.
+
+The runtime now rejects any proposed final answer containing an internal `TOOL_RESULT` line, returns a concise format
+error to the same model run and asks for a researcher-readable synthesis. Previously stored malformed assistant
+transcripts are also excluded from bounded thread history so one bad completion cannot contaminate later turns.
+
+**Repro Steps**
+
+1. Run a guided task that performs `source.search` followed by one or more `source.page` calls.
+2. Let the provider return the accumulated internal transcript as plain final text beginning with `TOOL_RESULT`.
+3. Before the fix the run becomes `COMPLETED` and displays the transcript; after the fix it records
+   `model_action_invalid` and continues until the model returns readable research prose or exhausts the bounded run.
