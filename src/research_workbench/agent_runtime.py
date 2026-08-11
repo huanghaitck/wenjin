@@ -64,6 +64,10 @@ Every non-empty source-derived event field must name its exact supporting blocks
 NR, UNC and PND are missing-data codes, not source-field values. Leave the affected source-derived
 field blank and put the code plus explanation in missing_reason; never invent an anchor for absence.
 Do not cite one set of blocks while taking dates, places, participants or tasks from unanchored page context.
+Preserve the source's speaker and epistemic status. If an author generalizes, interprets, infers,
+reports hearsay or expresses uncertainty, write the event field as that author's statement rather
+than an unqualified historical fact. Keep witnessed actions and measurements distinct from the
+author's explanations and from information attributed to other people.
 Normally omit original_text: the workbench copies the exact effective text from its original_text field anchors.
 Supply original_text only when selecting a shorter verbatim substring, and never normalize spelling or typography.
 For source.list, use_state describes page-processing usability, not whether a work is relevant,

@@ -535,6 +535,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("unfinished at the bottom of a page", SYSTEM_PROMPT)
         self.assertIn("not independent corroboration", SYSTEM_PROMPT)
         self.assertIn("Prior thread messages", SYSTEM_PROMPT)
+        self.assertIn("unqualified historical fact", SYSTEM_PROMPT)
 
     def test_loopback_api_exposes_thread_run_and_approval(self) -> None:
         server = build_server(self.project, port=0)

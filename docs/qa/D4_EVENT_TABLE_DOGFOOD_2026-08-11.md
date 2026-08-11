@@ -588,3 +588,32 @@ unchanged.
 2. Let it read one or two pages and return a final sentence promising another page read.
 3. Observe that the unpatched run becomes `COMPLETED` without an event; after the fix, the same final
    answer triggers `required_tool_missing` and the run continues with its existing page observations.
+
+### ISSUE-020: A travel author's generalization is flattened into an unqualified fact
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | source criticism / event semantics |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — compared against David physical pages 236–238 |
+
+**Description**
+
+For David's 14 January 1873 event, the model summarized a long first-person explanation as “Chinese
+cemetery customs and burial institutions.” The page supports that David wrote this explanation, but
+does not independently establish every institutional claim inside it. Flattening the speaker and the
+claim type would let a travel author's generalization enter the comparison table as an unqualified
+historical fact.
+
+The event harness now requires source-derived fields to preserve both speaker and epistemic status.
+Witnessed actions and measurements must remain distinct from the author's interpretation, inference,
+uncertainty and attributed information. During GUI approval, the field was revised to identify the
+passage as David's statement and to reserve independent factual use pending corroboration.
+
+**Repro Steps**
+
+1. Ask the guided agent to code David's 14 January entry from physical pages 236–238.
+2. Inspect the proposed investigation field for the cemetery discussion.
+3. Observe whether David's explanation is preserved as a source statement or rewritten as a fact
+   about Chinese institutions.
