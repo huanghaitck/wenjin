@@ -317,8 +317,8 @@ def decide_event(
             by_id = {block["block_id"]: block for block in blocks}
             blocks = [by_id[value] for value in block_ids]
             for block in blocks:
-                if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
-                    raise ValueError("blocked page content cannot approve a research event")
+                if block["block_use_state"] != "research_usable":
+                    raise ValueError("blocked block content cannot approve a research event")
             unverified_blocks = [
                 block["block_id"] for block in blocks
                 if block["block_verification_state"] not in {"human_verified", "human_repaired"}

@@ -562,7 +562,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 12)
+        self.assertEqual(version, 13)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:
@@ -673,6 +673,12 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         page = _read_page(self.project, source_id=source_id, physical_page=1)
         self.assertEqual(page["physical_page"], 1)
         self.assertEqual(page["page_id"], f"{source_id}:P1")
+        self.assertTrue(all("verification_state" in block for block in page["blocks"]))
+        self.assertTrue(all("use_state" in block for block in page["blocks"]))
+        self.assertTrue(all(
+            block["usable_for_evidence"] == (block["use_state"] == "research_usable")
+            for block in page["blocks"]
+        ))
 
     def test_source_search_splits_multilingual_alternatives(self) -> None:
         results = _search_source_blocks(self.project, "station/page boundary")

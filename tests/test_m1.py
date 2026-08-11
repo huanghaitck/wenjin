@@ -331,6 +331,81 @@ class M1KernelTests(unittest.TestCase):
         self.assertEqual(block["block_type"], "heading")
         self.assertEqual(block["verification_state"], "human_repaired")
 
+    def test_local_block_repair_remains_usable_under_an_open_page_anomaly(self) -> None:
+        packet = self.root / "page-local-repair.json"
+        packet.write_text(json.dumps({
+            "pages": [{
+                "id": "P_LOCAL", "physical_page": 3, "page_type": "body",
+                "blocks": [
+                    {"id": "B_LOCAL_1", "order": 1, "type": "paragraph", "text": "Correct me."},
+                    {"id": "B_LOCAL_2", "order": 2, "type": "paragraph", "text": "Still unchecked."},
+                ],
+            }],
+            "anomalies": [{
+                "id": "A_PAGE_LOCAL", "scope_type": "page", "target_id": "P_LOCAL",
+                "severity": "local", "category": "content", "message": "Page needs partial review.",
+            }],
+        }), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        block_id = f"{self.source['source_id']}:B_LOCAL_1"
+        correct_block(
+            self.project, block_id, "Corrected text.", "Professor", "Checked against the original page",
+        )
+
+        with connect(self.project) as connection:
+            page = connection.execute(
+                "SELECT use_state FROM pages WHERE page_id = ?",
+                (f"{self.source['source_id']}:P_LOCAL",),
+            ).fetchone()[0]
+            blocks = [tuple(row) for row in connection.execute(
+                "SELECT block_id, use_state FROM blocks WHERE page_id = ? ORDER BY block_order",
+                (f"{self.source['source_id']}:P_LOCAL",),
+            )]
+            anomaly = connection.execute(
+                "SELECT status FROM anomalies WHERE anomaly_id = ?",
+                (f"{self.source['source_id']}:A_PAGE_LOCAL",),
+            ).fetchone()[0]
+
+        self.assertEqual(page, "blocked")
+        self.assertEqual(blocks, [
+            (block_id, "research_usable"),
+            (f"{self.source['source_id']}:B_LOCAL_2", "blocked"),
+        ])
+        self.assertEqual(anomaly, "open")
+
+    def test_schema_thirteen_restores_existing_local_repairs(self) -> None:
+        packet = self.root / "legacy-local-repair.json"
+        packet.write_text(json.dumps({
+            "pages": [{
+                "id": "P_LEGACY", "physical_page": 4, "page_type": "body",
+                "blocks": [{"id": "B_LEGACY", "order": 1, "type": "paragraph", "text": "Old OCR."}],
+            }],
+            "anomalies": [{
+                "id": "A_PAGE_LEGACY", "scope_type": "page", "target_id": "P_LEGACY",
+                "severity": "local", "category": "content", "message": "Whole page remains incomplete.",
+            }],
+        }), encoding="utf-8")
+        import_structure(self.project, self.source["source_id"], packet)
+        block_id = f"{self.source['source_id']}:B_LEGACY"
+        correct_block(self.project, block_id, "Checked text.", "Professor", "Checked against the page")
+
+        connection = sqlite3.connect(self.project / "project.sqlite3")
+        try:
+            connection.execute("UPDATE blocks SET use_state = 'blocked' WHERE block_id = ?", (block_id,))
+            connection.execute("DELETE FROM schema_meta WHERE version = 13")
+            connection.commit()
+        finally:
+            connection.close()
+
+        project_status(self.project)
+        with connect(self.project) as connection:
+            version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
+            use_state = connection.execute(
+                "SELECT use_state FROM blocks WHERE block_id = ?", (block_id,),
+            ).fetchone()[0]
+        self.assertEqual(version, 13)
+        self.assertEqual(use_state, "research_usable")
+
     def test_user_can_reconstruct_a_missing_printed_page_label(self) -> None:
         packet = self.root / "missing-printed-page.json"
         packet.write_text(json.dumps({"pages": [{

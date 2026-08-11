@@ -434,7 +434,7 @@ function renderResearchEvents(container) {
       const wrapper=document.createElement('label');wrapper.textContent=label;
       const input=document.createElement(['translation','notes'].includes(key)?'textarea':'input');input.value=item[key]||'';input.readOnly=item.status==='rejected';editors[key]=input;wrapper.append(input);node.append(wrapper);
       const anchors=item.field_anchors?.[key]||[];
-      if(item.status==='approved'&&sourceFields.has(key)){
+      if(item.status!=='rejected'&&sourceFields.has(key)){
         const anchorLabel=document.createElement('label');anchorLabel.textContent='字段锚点（逗号分隔）';
         const anchorInput=document.createElement('input');anchorInput.value=anchors.join(', ');anchorEditors[key]=anchorInput;anchorLabel.append(anchorInput);node.append(anchorLabel);
       }else if(anchors.length)node.append(Object.assign(document.createElement('small'),{textContent:`字段锚点：${anchors.join('、')}`}));
@@ -442,7 +442,7 @@ function renderResearchEvents(container) {
     const quoteLabel=document.createElement('label');quoteLabel.textContent='原文（必须逐字存在于所引文本块）';
     const quote=document.createElement('textarea');quote.value=item.original_text;quote.readOnly=item.status==='rejected';editors.original_text=quote;quoteLabel.append(quote);node.append(quoteLabel);
     const quoteAnchors=item.field_anchors?.original_text||[];
-    if(item.status==='approved'){
+    if(item.status!=='rejected'){
       const anchorLabel=document.createElement('label');anchorLabel.textContent='原文锚点（逗号分隔）';
       const anchorInput=document.createElement('input');anchorInput.value=quoteAnchors.join(', ');anchorEditors.original_text=anchorInput;anchorLabel.append(anchorInput);node.append(anchorLabel);
     }else if(quoteAnchors.length)node.append(Object.assign(document.createElement('small'),{textContent:`原文锚点：${quoteAnchors.join('、')}`}));
@@ -450,7 +450,7 @@ function renderResearchEvents(container) {
     node.append(actionButton('打开原页并人工核对',async()=>{await loadSource(item.source_id);const pageId=item.page_ids?.[0];const index=state.view.pages.findIndex((page)=>page.page_id===pageId);if(index>=0)state.pageIndex=index;setMode('source');render();notice('请对照原图核验并确认候选引用的文本块；返回逐事件表后再批准。');}));
     if(item.status==='draft'){
       node.append(actionButton('按当前已核锚块刷新原文',async()=>{const current=await request(`/api/research-event/anchor-text?id=${encodeURIComponent(item.event_id)}`);quote.value=current.original_text;notice(current.changed?'已把当前锚块文本回填到审批表单；尚未保存或批准。':'锚块文本与候选原文一致。');}));
-      const decide=async(approved)=>{const reviewer=window.prompt('决定人','Professor');if(!reviewer)return;const reason=window.prompt(approved?'批准依据':'拒绝依据',approved?'已核原页与事件编码':'候选不符合比较口径');if(!reason)return;const edits=Object.fromEntries(Object.entries(editors).map(([key,input])=>[key,input.value]));await request('/api/research-event/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:item.event_id,approved,reviewer,reason,edits})});await refreshResearch(approved?'事件行已人工批准；仍须另建主张和冻结证据。':'事件候选已拒绝，记录保留。');state.contextMode='events';renderContext();};
+      const decide=async(approved)=>{const reviewer=window.prompt('决定人','Professor');if(!reviewer)return;const reason=window.prompt(approved?'批准依据':'拒绝依据',approved?'已核原页与事件编码':'候选不符合比较口径');if(!reason)return;const edits=Object.fromEntries(Object.entries(editors).map(([key,input])=>[key,input.value]));const field_anchors=Object.fromEntries(Object.entries(anchorEditors).map(([key,input])=>[key,input.value.split(/[,，\n]/).map(value=>value.trim()).filter(Boolean)]));await request('/api/research-event/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:item.event_id,approved,reviewer,reason,edits,field_anchors:approved?field_anchors:undefined})});await refreshResearch(approved?'事件行已人工批准；仍须另建主张和冻结证据。':'事件候选已拒绝，记录保留。');state.contextMode='events';renderContext();};
       node.append(actionButton('核页后批准',()=>decide(true),true),actionButton('拒绝候选',()=>decide(false)));
     } else if(item.status==='approved'){
       const revise=async()=>{const reviewer=window.prompt('修订人','Professor');if(!reviewer)return;const reason=window.prompt('修订依据','根据已核原页补齐比较字段');if(!reason)return;const edits=Object.fromEntries(Object.entries(editors).map(([key,input])=>[key,input.value]));const field_anchors=Object.fromEntries(Object.entries(anchorEditors).map(([key,input])=>[key,input.value.split(/[,，\n]/).map(value=>value.trim()).filter(Boolean)]));await request('/api/research-event/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:item.event_id,approved:true,reviewer,reason,edits,field_anchors})});await refreshResearch('已批准事件的人工修订已保存；原决定与差异保留在审计记录中。');state.contextMode='events';renderContext();};

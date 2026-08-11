@@ -1454,8 +1454,12 @@ def _recalculate_source_state(connection: Any, source_id: str) -> None:
             elif anomaly["scope_type"] == "page":
                 connection.execute("UPDATE pages SET use_state = 'blocked' WHERE page_id = ?",
                                    (anomaly["target_id"],))
-                connection.execute("UPDATE blocks SET use_state = 'blocked' WHERE page_id = ?",
-                                   (anomaly["target_id"],))
+                connection.execute(
+                    """UPDATE blocks SET use_state = 'blocked'
+                       WHERE page_id = ? AND verification_state NOT IN
+                             ('human_verified', 'human_repaired')""",
+                    (anomaly["target_id"],),
+                )
             elif anomaly["scope_type"] == "relation":
                 relation = connection.execute(
                     "SELECT from_block_id, to_block_id FROM page_relations WHERE relation_id = ?",

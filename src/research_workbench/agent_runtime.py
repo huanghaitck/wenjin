@@ -60,6 +60,8 @@ If a tool reports a correctable locator or argument error, use the error to corr
 explicit user scope. Do not repeat the same failed call, guess source content, or abandon the whole task.
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
+source.page reports each block's verification_state, use_state and usable_for_evidence flag. A blocked
+block may help locate a repair target, but it must not support an event field, quotation or historical claim.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
 Movement mode, genre, participant visibility and outcome destination are comparison fields, not free
 inference slots; leave them blank with a missing code when the cited blocks do not support them.
@@ -1068,7 +1070,10 @@ def _read_page(
         "use_state": page["use_state"],
         "blocks": [
             {"block_id": block["block_id"], "order": block["block_order"], "type": block["block_type"],
-             "text": block["effective_text"]}
+             "text": block["effective_text"],
+             "verification_state": block["verification_state"],
+             "use_state": block["use_state"],
+             "usable_for_evidence": block["use_state"] == "research_usable"}
             for block in page["blocks"]
         ],
         "open_anomalies": anomalies,

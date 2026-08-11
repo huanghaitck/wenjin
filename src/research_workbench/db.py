@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -810,6 +810,27 @@ def _ensure_event_comparison_columns(connection: sqlite3.Connection) -> None:
             )
 
 
+def _restore_locally_repaired_blocks(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """UPDATE blocks
+           SET use_state = 'research_usable'
+           WHERE use_state != 'superseded'
+             AND verification_state IN ('human_verified', 'human_repaired')
+             AND page_id IN (SELECT page_id FROM pages WHERE page_type != 'docx_locator')
+             AND NOT EXISTS (
+                 SELECT 1 FROM anomalies a
+                 WHERE a.status = 'open' AND a.scope_type = 'block'
+                   AND a.target_id = blocks.block_id
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM anomalies a
+                 JOIN page_relations r ON r.relation_id = a.target_id
+                 WHERE a.status = 'open' AND a.scope_type = 'relation'
+                   AND (r.from_block_id = blocks.block_id OR r.to_block_id = blocks.block_id)
+             )"""
+    )
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
 
@@ -894,6 +915,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (12, utc_now()),
+        )
+        version = 12
+    if version < 13:
+        _restore_locally_repaired_blocks(connection)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (13, utc_now()),
         )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.

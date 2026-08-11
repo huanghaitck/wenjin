@@ -159,7 +159,7 @@ class D2AuthoringReadingTests(unittest.TestCase):
 
     def test_schema_eleven_is_current(self) -> None:
         with connect(self.project) as connection:
-            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 12)
+            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 13)
 
     def test_loopback_authoring_api_imports_and_proposes_without_overwriting(self) -> None:
         server = build_server(
