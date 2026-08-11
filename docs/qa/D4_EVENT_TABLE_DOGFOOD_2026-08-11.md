@@ -617,3 +617,31 @@ passage as David's statement and to reserve independent factual use pending corr
 2. Inspect the proposed investigation field for the cemetery discussion.
 3. Observe whether David's explanation is preserved as a source statement or rewritten as a fact
    about Chinese institutions.
+
+### ISSUE-021: Natural completion wording does not activate the required-tool contract
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | agent completion / task contract |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — run receipt and thread history preserve the premature final message |
+
+**Description**
+
+After source repair, the operator asked DeepSeek to read pages 239–240 and “再调用
+`research_event.propose_batch` 一次”. The model returned “读取法文原件物理页239以重新核对该日条目全文”
+and the run completed without creating a new draft. The existing completion guard recognized only the fixed phrase
+“恰好/只成功调用一次 tool.name”, so ordinary Chinese word order did not activate the same contract.
+
+The runtime now recognizes both the original narrow phrase and explicit forms such as “再调用 tool.name 一次”.
+It still requires the word “一次”, so ordinary discussion of a tool or a negative instruction is not converted into a
+mutation requirement.
+
+**Repro Steps**
+
+1. Ask the guided agent to read two pages and then call `research_event.propose_batch` once, using the natural word
+   order “再调用 research_event.propose_batch 一次”.
+2. Let the model return a final sentence promising or describing the first page read.
+3. Before the fix the run becomes `COMPLETED`; after the fix the runtime returns `required_tool_missing` and keeps the
+   same run active until the named tool succeeds or the bounded retry fails.

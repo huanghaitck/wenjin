@@ -611,12 +611,15 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
 
 
 def _explicit_required_tool(objective: str) -> str:
-    match = re.search(
+    patterns = (
         r"(?:恰好|只)\s*成功调用一次\s+`?([a-z][a-z0-9_.]+)`?",
-        objective,
-        flags=re.IGNORECASE,
+        r"(?:再|重新|务必|必须|请)?\s*调用\s*`?([a-z][a-z0-9_.]+)`?\s*(?:恰好|只)?一次",
     )
-    return match.group(1) if match else ""
+    for pattern in patterns:
+        match = re.search(pattern, objective, flags=re.IGNORECASE)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict[str, Any]:
