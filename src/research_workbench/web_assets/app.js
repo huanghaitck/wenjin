@@ -2,9 +2,11 @@ const state = {
   snapshot: null, capabilities: null, view: null, thread: null, threadId: '', pageIndex: 0, zoom: 1,
   libraryScan: null, libraryWorks: [], libraryWork: null, libraryWorkId: '',
   contextMode: 'sources', retrievalRecord: null,
-  manuscriptId: '', sectionId: '', authoringMode: 'dialogue', proposalId: '',
+  manuscriptId: sessionStorage.getItem('hrwManuscriptId') || '',
+  sectionId: sessionStorage.getItem('hrwSectionId') || '', authoringMode: 'dialogue', proposalId: '',
   document: null, documentManuscriptId: '', selection: null, browserSession: null,
   modelSettings: null, sessionToken: '', lastDocxExport: '', nativeBridge: '',
+  eventFreezeDraft: [],
   planningMode: sessionStorage.getItem('hrwPlanningMode') || 'independent_planning',
 };
 const $ = (id) => document.getElementById(id);
@@ -87,6 +89,7 @@ async function loadSnapshot(selectId = '') {
   state.libraryWorks = state.snapshot.library_works || [];
   renderLibraryShell();
   renderSettings();
+  renderSkillCatalog();
   renderBrowserControls();
   const select = $('sourceSelect');
   select.replaceChildren();
@@ -123,7 +126,7 @@ function renderLibraryShell() {
   const counts = library?.counts || {};
   $('libraryCounts').textContent = `${counts.works || 0} 部作品 · ${counts.library_files || 0} 个文件位置 · ${counts.file_versions || 0} 个精确版本`;
   const skills = $('intakeSkill'); skills.replaceChildren();
-  for (const skill of (library?.skills || [])) {
+  for (const skill of (library?.skills || []).filter((item)=>item.compatible_actions?.includes('library_intake'))) {
     const option = new Option(`${skill.name} · ${skill.execution}`, skill.name);
     option.title = `${skill.description}\nSHA-256 ${skill.sha256}`; skills.append(option);
   }
@@ -599,6 +602,68 @@ function renderContext() {
     }
   } else if (state.contextMode === 'writing') {
     const claims = research.claims || [];
+    const approvedEvents = (state.snapshot.research_events?.events || []).filter((item) => item.status === 'approved');
+    const eventForm = document.createElement('section'); eventForm.className = 'context-form';
+    eventForm.append(
+      Object.assign(document.createElement('h3'), {textContent:'逐事件表正式冻结'}),
+      Object.assign(document.createElement('p'), {className:'boundary-note', textContent:'只接受已人工批准、保留原页锚点的事件；待核和已拒绝事件不能进入冻结包。'}),
+      formField('冻结包标题', 'eventFreezeTitle', '秦岭三案比较正式证据包（1871—1875）'),
+      formField('最低可写主张', 'eventFreezeClaim', '', true),
+      formField('不能支持的强说法', 'eventFreezeLimit', '', true),
+    );
+    const eventSelect = document.createElement('select'); eventSelect.id = 'eventFreezeEvents'; eventSelect.multiple = true; eventSelect.size = 9;
+    for (const item of approvedEvents) {
+      const summary = item.route || item.investigation_object || item.institutional_task || item.outcome_destination || item.notes;
+      eventSelect.append(new Option(`${item.case_id} · ${item.event_date || '日期待核'} · ${item.event_id} · ${String(summary).slice(0,62)}`, item.event_id));
+    }
+    const eventLabel = document.createElement('label'); eventLabel.textContent = '支持该主张的已批准事件（可多选）'; eventLabel.append(eventSelect);
+    const relation = document.createElement('select'); relation.id = 'eventFreezeRelation';
+    for (const value of ['supports','background','counterevidence','weakens']) relation.append(new Option(value, value));
+    const relationLabel = document.createElement('label'); relationLabel.textContent = '证据关系'; relationLabel.append(relation);
+    const draftList = document.createElement('div'); draftList.className = 'event-freeze-draft';
+    const renderEventDraft = () => {
+      draftList.replaceChildren();
+      for (const [index, item] of state.eventFreezeDraft.entries()) {
+        const draft = card(item.text, `${item.evidence.length} 条事件证据 · ${item.evidence[0]?.relation || 'supports'}`);
+        if (item.does_not_support) draft.append(Object.assign(document.createElement('small'), {textContent:`禁写边界：${item.does_not_support}`}));
+        draft.append(actionButton('从草案移除', () => { state.eventFreezeDraft.splice(index, 1); renderEventDraft(); }));
+        draftList.append(draft);
+      }
+    };
+    const addClaim = actionButton('加入冻结草案', () => {
+      const text = $('eventFreezeClaim').value.trim();
+      const eventIds = [...eventSelect.selectedOptions].map((option) => option.value);
+      if (!text || !eventIds.length) throw new Error('请填写主张并至少选择一条已批准事件。');
+      state.eventFreezeDraft.push({
+        text,
+        does_not_support: $('eventFreezeLimit').value.trim(),
+        evidence: eventIds.map((event_id) => ({event_id, relation: relation.value})),
+      });
+      $('eventFreezeClaim').value = ''; $('eventFreezeLimit').value = '';
+      for (const option of eventSelect.options) option.selected = false;
+      renderEventDraft();
+    }, true);
+    eventForm.append(
+      eventLabel, relationLabel, addClaim, draftList,
+      formField('未决项（每行一项）', 'eventFreezeUnresolved', '', true),
+      formField('禁止主张（每行一项）', 'eventFreezeProhibited', '', true),
+      actionButton('创建待批准的逐事件冻结包', async () => {
+        if (!state.eventFreezeDraft.length) throw new Error('冻结草案中还没有主张。');
+        const lines = (id) => $(id).value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
+        await request('/api/freeze/events/create', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+            title:$('eventFreezeTitle').value,
+            claims:state.eventFreezeDraft,
+            unresolved:lines('eventFreezeUnresolved'),
+            prohibited_claims:lines('eventFreezeProhibited'),
+          }),
+        });
+        state.eventFreezeDraft = [];
+        await refreshResearch('逐事件冻结包已创建，仍需教授人工批准。');
+      }, true),
+    );
+    renderEventDraft(); container.append(eventForm);
+
     const form = document.createElement('section'); form.className = 'context-form'; form.append(formField('冻结包标题', 'freezeTitle', '试写证据包'));
     for (const claim of claims) { const label = document.createElement('label'); const check = document.createElement('input'); check.type='checkbox'; check.value=claim.claim_id; check.disabled=!claim.evidence.length; label.append(check, document.createTextNode(claim.text)); form.append(label); }
     form.append(actionButton('创建待批准冻结包', async () => {
@@ -608,6 +673,11 @@ function renderContext() {
     for (const freeze of research.freezes || []) {
       const node = card(freeze.title, `${freeze.payload.claims.length} 个主张 · ${freeze.status}`);
       node.append(Object.assign(document.createElement('p'), {className:'boundary-note', textContent:`冻结边界：${freeze.payload.boundary}`}));
+      if (freeze.payload.classifications) {
+        const groups = freeze.payload.classifications;
+        node.append(Object.assign(document.createElement('small'), {textContent:
+          `逐事件冻结｜可写 ${groups.FROZEN_WRITABLE?.length || 0} · 语境 ${groups.CONTEXT_ONLY?.length || 0} · 反证 ${groups.COUNTEREVIDENCE?.length || 0} · 未决 ${groups.UNRESOLVED?.length || 0} · 禁止主张 ${groups.PROHIBITED_CLAIM?.length || 0}`}));
+      }
       for (const claim of freeze.payload.claims) {
         const counters = claim.evidence.filter((item) => ['weakens', 'counterevidence'].includes(item.relation)).length;
         node.append(Object.assign(document.createElement('small'), {textContent:`${claim.evidence.length} 条证据${counters ? ` · ${counters} 条削弱/反证` : ''}｜${claim.text}`}));
@@ -639,10 +709,12 @@ function renderContext() {
     container.append(card('浏览器边界', '网页占据中央区域；只记录允许域名、起始页和操作回执，不读取 Cookie，不代替你登录、过验证码、付费或提交。'));
     for (const session of research.browser_sessions || []) container.append(card(session.allowed_domain, `${session.start_url} · ${session.status}`));
   } else if (state.contextMode === 'memory') {
+    container.append(card('四层分开，不自动沉淀',
+      '研究图书馆保存原文件与版本；项目知识保存研究设计、逐事件表、证据冻结和稿件；对话、检索和工具记录只属于工作过程；长期记忆先在本项目生成带来源候选。即使候选获准保留，也不会自动写入外部长期记忆库。'));
     const form = document.createElement('section'); form.className = 'context-form';
-    form.append(formField('类别', 'memoryCategory', '研究判断'), formField('候选内容', 'memoryContent', '', true), formField('来源 ID（逗号分隔）', 'memoryRefs'));
+    form.append(formField('类别', 'memoryCategory', '研究判断'), formField('候选内容', 'memoryContent', '', true), formField('稳定来源 ID（必填，逗号分隔）', 'memoryRefs'));
     form.append(actionButton('保存为记忆候选', async () => { await request('/api/memory/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:$('memoryCategory').value, content:$('memoryContent').value, source_refs:$('memoryRefs').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean)})}); await refreshResearch('只保存为项目内候选，尚未写入长期记忆库。'); }, true)); container.append(form);
-    for (const item of research.memory_candidates || []) { const node = card(item.category, `${item.content}\n来源：${item.source_refs.join('、')} · ${item.status}`); if(item.status==='candidate') node.append(actionButton('批准为本地候选', async()=>{await request('/api/memory/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidate_id:item.candidate_id,approved:true})}); await refreshResearch('记忆候选已批准，但仍未自动写入外部知识库。');},true)); container.append(node); }
+    for (const item of research.memory_candidates || []) { const node = card(item.category, `${item.content}\n来源：${item.source_refs.join('、')} · ${item.status}`); if(item.status==='candidate') node.append(actionButton('批准留在本项目候选区', async()=>{await request('/api/memory/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({candidate_id:item.candidate_id,approved:true})}); await refreshResearch('候选已批准留在本项目；仍未同步到任何外部长期记忆库。');},true)); container.append(node); }
   }
 }
 
@@ -761,6 +833,8 @@ function renderAuthoring() {
   if (!state.sectionId && manuscript?.sections.length) state.sectionId = manuscript.sections[0].section_id;
   let section = selectedSection();
   if (state.sectionId && !section) { state.sectionId = manuscript?.sections[0]?.section_id || ''; section = selectedSection(); }
+  sessionStorage.setItem('hrwManuscriptId', state.manuscriptId);
+  sessionStorage.setItem('hrwSectionId', state.sectionId);
   const list = $('manuscriptList'); list.replaceChildren();
   for (const item of manuscripts) {
     const node = document.createElement('article'); node.className = 'manuscript-row';
@@ -768,7 +842,7 @@ function renderAuthoring() {
     for (const part of item.sections) {
       const button = document.createElement('button'); button.textContent = `${part.section_order}. ${part.heading}`;
       button.classList.toggle('selected', part.section_id === state.sectionId);
-      button.onclick = () => { state.manuscriptId=item.manuscript_id; state.sectionId=part.section_id; state.proposalId=''; renderAuthoring(); };
+      button.onclick = () => { state.manuscriptId=item.manuscript_id; state.sectionId=part.section_id; state.proposalId=''; sessionStorage.setItem('hrwManuscriptId',state.manuscriptId);sessionStorage.setItem('hrwSectionId',state.sectionId);renderAuthoring(); };
       node.append(button);
     }
     list.append(node);
@@ -869,7 +943,30 @@ function renderAuthoringControl(section, proposal) {
     const model = authoring.writing_model || {};
     container.append(card('写作模型', model.available ? `${model.provider} / ${model.model}` : '未配置真实模型；保真门禁和规则型演示仍可使用'));
     if (!section) { container.append(card('尚未选择章节', '先导入 Markdown 稿件。')); return; }
-    const structuredText=(documentSection()?.children||[]).map((node)=>node.text.trim()).filter(Boolean).join('\n\n');
+    const humanizerSkill=(state.snapshot.library?.skills||[]).find((item)=>item.name==='historical-humanizer-zh');
+    container.append(card('史学语言技能', humanizerSkill
+      ? `historical-humanizer-zh · 指令版本 ${humanizerSkill.sha256.slice(0,12)}…\n只学习史学表达操作，不模仿具体学者，也不追逐检测分数。`
+      : '未发现 historical-humanizer-zh；可在项目设置的 Skills 兼容区检查共享技能目录。'));
+    const profileForm=document.createElement('section');profileForm.className='context-form';
+    profileForm.append(formField('画像名称','styleProfileName','我的历史学期刊论文'),formField('作者或共同体','styleProfileOwner','本人'),formField('适用论文类型','styleProfileScope','历史学期刊论文'));
+    profileForm.append(actionButton('用当前整篇稿件建立画像',async()=>{
+      await request('/api/style-profile/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,name:$('styleProfileName').value,owner_label:$('styleProfileOwner').value,scope:$('styleProfileScope').value})});
+      await refreshAuthoring('已生成 OBSERVED_ONCE 文风候选；只保存高层特征和版本指纹，不保存第二份全文。');
+    }));container.append(profileForm);
+    for(const profile of authoring.style_profiles||[]){
+      const features=profile.features||{};
+      const sampleCount=(profile.samples||[]).length;
+      const node=card(`${profile.name} · ${profile.status}`,`${profile.owner_label} · ${profile.scope}\n${sampleCount} 篇独立稿件：1 篇仅观察，2 篇可判重复，3 篇并经作者批准才可稳定。\n中位段长 ${features.median_paragraph_chars||0} 字 · 中位句长 ${features.median_sentence_chars||0} 字 · 材料坐标开篇 ${Math.round((features.factual_opening_ratio||0)*100)}%\n仅保存高层特征与样本指纹。`);
+      if(profile.status!=='REJECTED') node.append(actionButton('把当前整篇稿件加入此画像',async()=>{await request('/api/style-profile/add-sample',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_id:profile.profile_id,manuscript_id:state.manuscriptId})});await refreshAuthoring('新样本已加入；原有批准状态已回退，须按新的聚合画像重新决定。');}));
+      if(['OBSERVED_ONCE','RECURRING','AUTHOR_APPROVED'].includes(profile.status)){
+        const decide=async(approved)=>{const reviewer=window.prompt('决定人');if(!reviewer?.trim())return;const reason=window.prompt('批准或拒绝依据');if(!reason?.trim())return;await request('/api/style-profile/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile_id:profile.profile_id,approved,reviewer,reason})});await refreshAuthoring(approved?'文风画像已标记为 AUTHOR_APPROVED，可在本项目选择使用。':'文风候选已拒绝，不会再次套用。');};
+        const row=document.createElement('div');row.className='row';row.append(actionButton('批准为我的文风偏好',()=>decide(true),true),actionButton('拒绝',()=>decide(false)));node.append(row);
+      }
+      container.append(node);
+    }
+    const structuredText=(documentSection()?.children||[]).map((node)=>node.type==='table'
+      ? (node.rows||[]).map((row)=>row.join('\t')).join('\n')
+      : (node.text||'').trim()).filter(Boolean).join('\n\n');
     if(structuredText!==section.content.trim()) {
       const syncWarning=card('正文尚未同步当前批准章节','导出仍会使用中央正文。请人工确认后把当前批准章节写入新的结构化稿件修订。');
       syncWarning.append(actionButton('同步到正文并创建新修订',async()=>{await request('/api/manuscript/document/sync-section',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,section_id:section.section_id})});await refreshAuthoring('当前批准章节已同步到正文，并保留旧修订。');},true));
@@ -877,22 +974,29 @@ function renderAuthoringControl(section, proposal) {
     }
     const form = document.createElement('section'); form.className='context-form';
     const operation = document.createElement('select'); operation.id='writingOperation';
-    operation.append(new Option('保真润色','polish'), new Option('基于冻结证据分节写作','section_draft'));
+    operation.append(new Option('保真润色','polish'), new Option('史学去模板化（证据保真）','historical_humanize'), new Option('基于冻结证据分节写作','section_draft'));
     const operationLabel=document.createElement('label'); operationLabel.textContent='操作'; operationLabel.append(operation);
+    const skill=document.createElement('select');skill.id='writingSkill';
+    if(humanizerSkill) skill.append(new Option(`historical-humanizer-zh · ${humanizerSkill.sha256.slice(0,12)}…`,humanizerSkill.name));
+    else skill.append(new Option('未发现史学语言技能',''));
+    const skillLabel=document.createElement('label');skillLabel.textContent='史学语言技能版本';skillLabel.append(skill);
+    const styleProfile=document.createElement('select');styleProfile.id='writingStyleProfile';styleProfile.append(new Option('不套用个人文风画像',''));
+    for(const item of authoring.style_profiles||[]) if(['AUTHOR_APPROVED','STABLE_PROFILE'].includes(item.status)) styleProfile.append(new Option(`${item.name} · ${item.status}`,item.profile_id));
+    const styleProfileLabel=document.createElement('label');styleProfileLabel.textContent='作者批准的高层文风画像';styleProfileLabel.append(styleProfile);
     const freeze=document.createElement('select'); freeze.id='writingFreeze'; freeze.append(new Option('不使用冻结包',''));
     for (const item of state.snapshot.research?.freezes || []) if(item.status==='approved') freeze.append(new Option(item.title,item.freeze_id));
     const freezeLabel=document.createElement('label'); freezeLabel.textContent='批准的证据冻结包'; freezeLabel.append(freeze);
     const evidenceScope=document.createElement('select');evidenceScope.id='writingEvidenceScope';evidenceScope.multiple=true;evidenceScope.size=7;evidenceScope.disabled=true;
     const evidenceScopeLabel=document.createElement('label');evidenceScopeLabel.textContent='本节允许使用的冻结证据（可多选）';evidenceScopeLabel.append(evidenceScope);
-    const populateEvidenceScope=()=>{evidenceScope.replaceChildren();const selectedFreeze=(state.snapshot.research?.freezes||[]).find((item)=>item.freeze_id===freeze.value);for(const claim of selectedFreeze?.payload?.claims||[])for(const item of claim.evidence||[])evidenceScope.append(new Option(`${item.relation} · 物理页 ${(item.physical_pages||[item.physical_page]).join('–')} · ${item.quote.slice(0,48)}`,item.evidence_id));evidenceScope.disabled=operation.value!=='section_draft'||!selectedFreeze;};
+    const populateEvidenceScope=()=>{evidenceScope.replaceChildren();const selectedFreeze=(state.snapshot.research?.freezes||[]).find((item)=>item.freeze_id===freeze.value);const shownEvidence=new Set();for(const claim of selectedFreeze?.payload?.claims||[])for(const item of claim.evidence||[]){if(shownEvidence.has(item.evidence_id))continue;shownEvidence.add(item.evidence_id);evidenceScope.append(new Option(`${item.relation} · 物理页 ${(item.physical_pages||[item.physical_page]).join('–')} · ${item.quote.slice(0,48)}`,item.evidence_id));}evidenceScope.disabled=operation.value!=='section_draft'||!selectedFreeze;skill.disabled=operation.value!=='historical_humanize';styleProfile.disabled=operation.value!=='historical_humanize';};
     freeze.onchange=populateEvidenceScope;operation.onchange=populateEvidenceScope;
-    form.append(operationLabel, formField('修改或写作要求','writingInstruction','保持史学语气，不改变事实与引文',true), freezeLabel, evidenceScopeLabel);
+    form.append(operationLabel, skillLabel, styleProfileLabel, formField('修改或写作要求','writingInstruction','让材料和行动者先于概念，不改变事实、引文与限定',true), freezeLabel, evidenceScopeLabel);populateEvidenceScope();
     const generate=actionButton('生成待审提案', async()=>{
       const evidence_ids=[...evidenceScope.selectedOptions].map((option)=>option.value);
       if(operation.value==='section_draft'&&!evidence_ids.length) throw new Error('请为本节至少选择一条已冻结证据。');
       generate.disabled=true; notice('写作模型正在生成待审提案，请勿重复提交。');
       try {
-        const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value,evidence_ids})});
+        const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value,evidence_ids,skill_name:skill.value,style_profile_id:styleProfile.value})});
         state.proposalId=result.proposal_id; await refreshAuthoring(result.validation.valid?'写作提案已生成，等待逐项核对。':'提案违反证据契约，已阻断批准。');
         const drawer=document.querySelector('details.proposal-drawer'); drawer.open=true; drawer.scrollIntoView({block:'center'});
       } finally { generate.disabled=false; }
@@ -902,11 +1006,13 @@ function renderAuthoringControl(section, proposal) {
       if(proposal.validation.missing_markers?.length) problems.push('缺失受保护内容：'+proposal.validation.missing_markers.join('、'));
       if(proposal.validation.altered_quotes?.length) problems.push('发现未获准或被改写的直接引文：'+proposal.validation.altered_quotes.join('；'));
       if(proposal.validation.invalid_evidence_ids?.length) problems.push('无效证据编号：'+proposal.validation.invalid_evidence_ids.join('、'));
+      if(proposal.validation.guard_status==='BLOCKED_PROTECTED_CHANGE') problems.push('精确保护项发生变化，禁止批准');
       if(proposal.operation==='section_draft'&&!proposal.validation.evidence_linked) problems.push('正文没有绑定冻结证据编号');
       const contractChecked=proposal.operation!=='section_draft'||Object.hasOwn(proposal.validation,'evidence_linked');
       const detail=!contractChecked?'旧提案未经过当前证据契约检查，不可直接批准。':(proposal.validation.valid?'证据契约检查通过；仍须人工核对解释。':problems.join('\n'));
       const node=card(`${proposal.operation} · ${proposal.status}`, detail);
-      node.append(Object.assign(document.createElement('small'),{textContent:`基础版本 ${proposal.base_version_id} · ${new Date(proposal.created_at).toLocaleString()}`}));
+      node.append(Object.assign(document.createElement('small'),{textContent:`提案 ${proposal.proposed_content.length} 字符 · 基础版本 ${proposal.base_version_id} · ${new Date(proposal.created_at).toLocaleString()}`}));
+      if(proposal.operation==='historical_humanize') node.append(Object.assign(document.createElement('p'),{textContent:`精确保护：${proposal.validation.guard_status}；事实、归因、因果、范围和限定仍须逐段人工复核。\n段落决定：${(proposal.validation.paragraph_decisions||[]).map((item)=>`${item.paragraph}:${item.decision}`).join(' · ')||'待核'}`}));
       if(proposal.validation.decision_reason) node.append(Object.assign(document.createElement('p'),{textContent:`人工决定：${proposal.validation.decision_reason}`}));
       if(proposal.status==='pending') {
         node.append(formField('决定人','writingReviewer',''),formField('批准或拒绝依据','writingDecisionReason','',true));
@@ -1396,11 +1502,49 @@ function renderSettings() {
   const models = card('当前生效快照', '主推理模型可以在研究对话中选择；视觉 OCR 与翻译是辅助角色，输出仍须人工验收。');
   for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? '当前主模型' : profile.status} · ${profile.provider} / ${profile.model} · ${profile.endpoint||'本机规则'}`}));
   models.append(Object.assign(document.createElement('p'), {textContent:`视觉辅助：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : '未配置'}\n翻译辅助：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : '未配置'}`})); container.append(models);
-  const skills = card('Skills 兼容', '当前只发现并展示 SKILL.md 指令，不自动执行任意脚本。');
-  for (const skill of state.snapshot.library?.skills || []) skills.append(Object.assign(document.createElement('p'), {textContent:`${skill.name} · ${skill.execution}\n${skill.description}`})); container.append(skills);
+  const skillItems=state.snapshot.library?.skills||[];
+  const skills = card('用户可用 Skills', '只展示能产生明确研究产物的入口；具体页面只会列出与当前动作兼容的技能。');
+  for (const skill of skillItems.filter((item)=>item.placement==='user_action')) skills.append(Object.assign(document.createElement('p'), {textContent:`${skill.name} · ${skill.compatible_actions.join('、')} · ${skill.sha256.slice(0,12)}…\n${skill.description}`})); container.append(skills);
+  const policies=card('Harness 内部策略', '这些规则由工作流自动调用，不作为教授需要逐项选择的按钮。');
+  for(const skill of skillItems.filter((item)=>item.placement==='harness_policy')) policies.append(Object.assign(document.createElement('p'),{textContent:`${skill.name} · ${skill.sha256.slice(0,12)}…\n${skill.description}`}));container.append(policies);
+  const integrations=card('程序集成能力','浏览器、长期记忆和 Obsidian 等能力由对应页面或 Harness 调用，不混入史学任务按钮。');
+  for(const skill of skillItems.filter((item)=>item.placement==='integration')) integrations.append(Object.assign(document.createElement('p'),{textContent:`${skill.name} · ${skill.sha256.slice(0,12)}…`}));container.append(integrations);
+  container.append(card('程序级硬契约','原页锚点、来源资格、证据状态、冻结包、版本指纹和校验器由程序强制执行，不依赖模型是否记得某条 Skill。'));
   const connectors = card('研究连接器', '公开数据库可有界检索；已登录数据库只能在用户合法权限内操作。');
   for (const capability of caps.research_connectors || []) connectors.append(Object.assign(document.createElement('p'), {textContent:`${capability.provider} · ${capability.available ? '可用' : '未配置'} · ${capability.mode}${capability.missing?.length ? ` · 缺少 ${capability.missing.join('、')}` : ''}`})); container.append(connectors);
   container.append(card('隐私与人工门禁', '不保存 Cookie、密码、API Key 或未脱敏网络日志。远程模型只接收用户明确选择的页块、章节和选区。证据冻结、正文采用与记忆提升都必须由人决定。'));
+}
+
+function renderSkillCatalog() {
+  const container=$('skillCatalog');if(!container||!state.snapshot)return;container.replaceChildren();
+  const query=($('skillQuery')?.value||'').trim().toLowerCase();
+  const labels={user_action:'可直接调用',harness_policy:'Harness 自动编排',integration:'程序集成'};
+  const skills=(state.snapshot.library?.skills||[]).filter((item)=>!query||`${item.name} ${item.description} ${item.agent_program?.display_name||''}`.toLowerCase().includes(query));
+  for(const placement of ['user_action','harness_policy','integration']){
+    const group=skills.filter((item)=>item.placement===placement);if(!group.length)continue;
+    const section=document.createElement('section');section.className='skill-group';
+    const heading=document.createElement('h2');heading.textContent=`${labels[placement]} · ${group.length}`;section.append(heading);
+    for(const skill of group){
+      const program=skill.agent_program||{};
+      const node=card(program.display_name||skill.name,`${skill.invocation} · ${skill.sha256.slice(0,12)}…\n${program.short_description||skill.description}\n${placement==='user_action'?'运行时会固定技能与 Agent 程序版本；所有写入仍经过工作台门禁。':placement==='harness_policy'?'由研究阶段和权限自动触发，不提供直接按钮。':'由对应页面调用，不混入研究动作。'}`);
+      if(program.sha256) node.append(Object.assign(document.createElement('small'),{textContent:`Agent 程序 ${program.sha256.slice(0,12)}… · ${program.allow_implicit_invocation?'允许 Harness 建议':'仅显式调用'}`}));
+      if(placement==='user_action') node.append(actionButton(`在对话中调用 ${skill.invocation}`,()=>{setMode('agent');$('messageInput').value=`${skill.invocation} `;$('messageInput').focus();renderSlashMenu();},true));
+      section.append(node);
+    }
+    container.append(section);
+  }
+  if(!skills.length)container.append(card('没有匹配项','换一个技能名、研究动作或 Agent 程序关键词。'));
+}
+
+function renderSlashMenu() {
+  const menu=$('slashMenu');if(!menu||!state.snapshot)return;
+  const text=$('messageInput').value;
+  if(!text.startsWith('/')){menu.hidden=true;menu.replaceChildren();return;}
+  const query=text.slice(1).split(/\s/,1)[0].toLowerCase();
+  const matches=(state.snapshot.library?.skills||[]).filter((item)=>item.placement==='user_action'&&item.name.toLowerCase().includes(query)).slice(0,10);
+  menu.replaceChildren();
+  for(const skill of matches){const button=document.createElement('button');button.type='button';button.textContent=`${skill.invocation}  ${skill.agent_program?.display_name||skill.description}`;button.onclick=()=>{$('messageInput').value=`${skill.invocation} `;menu.hidden=true;$('messageInput').focus();};menu.append(button);}
+  menu.hidden=!matches.length||text.includes(' ');
 }
 
 function renderBrowserControls() {
@@ -1422,6 +1566,18 @@ function render() {
   const page = currentPage(); const source = state.view?.source;
   $('sourceTitle').textContent = source?.title || '尚未导入文献';
   $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : '等待材料';
+  const citation=source?.citation_metadata||{};
+  $('citationAuthor').value=citation.author||'';
+  $('citationTitle').value=citation.title||source?.title||'';
+  $('citationEdition').value=citation.edition||'';
+  $('citationPlace').value=citation.place||'';
+  $('citationPublisher').value=citation.publisher||'';
+  $('citationYear').value=citation.year||'';
+  $('citationTypeCode').value=citation.type_code||'';
+  $('citationVerifiedBy').value=citation.verified_by||'human-reviewer';
+  $('citationMetadataState').textContent=citation.verification_status==='HUMAN_VERIFIED'
+    ? `已由 ${citation.verified_by} 核验 · ${new Date(citation.verified_at).toLocaleString()}`
+    : '未核验的题名页信息不会被导出器补造。';
   const locator = page?.page_type === 'docx_locator';
   $('pageRailTitle').textContent = locator ? '译稿片段' : '物理页';
   $('pageLabel').textContent = page ? (locator ? `逻辑片段 ${page.physical_page} · locator_only` : `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}`) : '原 PDF 页面始终是校对依据';
@@ -1435,6 +1591,17 @@ function render() {
 }
 
 $('sourceSelect').onchange = (event) => loadSource(event.target.value).catch((error) => notice(error.message, true));
+$('saveCitationMetadata').onclick=async()=>{
+  const sourceId=state.view?.source?.source_id;if(!sourceId){notice('请先打开一份项目文献。',true);return;}
+  try{
+    await request('/api/source/citation-metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      source_id:sourceId,author:$('citationAuthor').value,title:$('citationTitle').value,
+      edition:$('citationEdition').value,place:$('citationPlace').value,publisher:$('citationPublisher').value,
+      year:$('citationYear').value,type_code:$('citationTypeCode').value,verified_by:$('citationVerifiedBy').value,
+    })});
+    await loadSource(sourceId,true);notice('引文元数据已人工核验；导出仍会逐条检查原书页码。');
+  }catch(error){notice(error.message,true);}
+};
 function setMode(mode) {
   $('libraryWorkbench').hidden = mode !== 'library';
   $('agentWorkbench').hidden = mode !== 'agent';
@@ -1442,17 +1609,23 @@ function setMode(mode) {
   $('pdfWorkbench').hidden = mode !== 'source';
   $('browserWorkbench').hidden = mode !== 'browser';
   $('settingsWorkbench').hidden = mode !== 'settings';
+  $('skillsWorkbench').hidden = mode !== 'skills';
   $('libraryMode').classList.toggle('mode-active', mode === 'library');
   $('agentMode').classList.toggle('mode-active', mode === 'agent');
   $('articleMode').classList.toggle('mode-active', mode === 'article');
   $('settingsMode').classList.toggle('mode-active', mode === 'settings');
+  $('skillsMode').classList.toggle('mode-active', mode === 'skills');
   if (mode === 'settings') renderSettings();
+  if (mode === 'skills') renderSkillCatalog();
   if (mode === 'browser') renderBrowserControls();
 }
 $('libraryMode').onclick = () => setMode('library');
 $('agentMode').onclick = () => setMode('agent');
 $('articleMode').onclick = () => { setMode('article'); renderAuthoring(); };
+$('skillsMode').onclick = () => setMode('skills');
 $('settingsMode').onclick = () => setMode('settings');
+$('skillQuery').oninput=renderSkillCatalog;
+$('messageInput').oninput=renderSlashMenu;
 $('openSourceRepair').onclick = async () => {
   const sourceId = $('sourceSelect').value;
   if (!sourceId) { notice('当前项目还没有可复核的文献。', true); return; }
@@ -1507,6 +1680,26 @@ $('reimportWord').onclick=async()=>{
   }catch(error){notice(error.message,true);}
 };
 $('insertNote').onclick = () => { currentSelectionContext(); state.authoringMode='notes'; renderAuthoringControl(selectedSection(),null); };
+$('insertSection').onclick=async()=>{
+  if(!state.document||!documentSection()){notice('请先选择稿件章节。',true);return;}
+  const heading=window.prompt('新章节标题','摘要与关键词');if(!heading?.trim())return;
+  const tree=structuredClone(state.document.document);const currentIndex=tree.children.findIndex((item)=>item.section_id===state.sectionId);
+  const nodeId=`NOD_${crypto.randomUUID().replaceAll('-', '')}`;
+  tree.children.splice(Math.max(0,currentIndex),0,{type:'section',node_id:nodeId,section_id:'',heading:heading.trim(),children:[{type:'paragraph',node_id:`NOD_${crypto.randomUUID().replaceAll('-', '')}`,text:''}]});
+  const result=await request('/api/manuscript/document/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,document:tree})});
+  const created=result.document.children.find((item)=>item.node_id===nodeId);state.document=result;state.documentManuscriptId=state.manuscriptId;state.sectionId=created?.section_id||result.document.children[0]?.section_id||'';state.proposalId='';sessionStorage.setItem('hrwSectionId',state.sectionId);
+  await refreshAuthoring('新章节已加入当前章节之前；填写后点击“保存新修订”。');
+};
+$('insertSectionAfter').onclick=async()=>{
+  if(!state.document||!documentSection()){notice('请先选择稿件章节。',true);return;}
+  const heading=window.prompt('新章节标题','英文题名、摘要与关键词');if(!heading?.trim())return;
+  const tree=structuredClone(state.document.document);const currentIndex=tree.children.findIndex((item)=>item.section_id===state.sectionId);
+  const nodeId=`NOD_${crypto.randomUUID().replaceAll('-', '')}`;
+  tree.children.splice(currentIndex+1,0,{type:'section',node_id:nodeId,section_id:'',heading:heading.trim(),children:[{type:'paragraph',node_id:`NOD_${crypto.randomUUID().replaceAll('-', '')}`,text:''}]});
+  const result=await request('/api/manuscript/document/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,document:tree})});
+  const created=result.document.children.find((item)=>item.node_id===nodeId);state.document=result;state.documentManuscriptId=state.manuscriptId;state.sectionId=created?.section_id||result.document.children.at(-1)?.section_id||'';state.proposalId='';sessionStorage.setItem('hrwSectionId',state.sectionId);
+  await refreshAuthoring('新章节已加入当前章节之后；填写后点击“保存新修订”。');
+};
 $('insertTable').onclick = () => {
   if (!documentSection()) { notice('请先选择稿件章节。', true); return; }
   const columnInput=window.prompt('表格列数（2—8）','4');if(columnInput===null)return;
@@ -1530,7 +1723,7 @@ $('contextTabs').onclick = (event) => {
 $('projectSelect').onchange = async (event) => {
   try {
     await request('/api/project/select', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({project_id:event.target.value})});
-    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId='';
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId=''; sessionStorage.removeItem('hrwManuscriptId');sessionStorage.removeItem('hrwSectionId');
     await loadSnapshot(); setMode('agent'); notice('已切换项目；对话和研究对象按项目隔离。');
   } catch (error) { notice(error.message, true); }
 };
@@ -1538,7 +1731,7 @@ $('newProject').onclick = async () => {
   const title = window.prompt('新项目名称', '新的历史研究项目'); if (!title?.trim()) return;
   try {
     await request('/api/project/create', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({title})});
-    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId='';
+    state.threadId = ''; state.thread = null; state.view = null; state.libraryWork = null; state.libraryWorkId = ''; state.manuscriptId=''; state.sectionId=''; sessionStorage.removeItem('hrwManuscriptId');sessionStorage.removeItem('hrwSectionId');
     await loadSnapshot(); setMode('agent'); notice('新项目已建立，可以从图书馆加入材料。');
   } catch (error) { notice(error.message, true); }
 };
@@ -1653,5 +1846,5 @@ $('loadBrowser').onclick = () => {
 $('externalBrowser').onclick = () => { const url=$('browserAddress').value.trim(); try { new URL(url); window.open(url,'_blank','noopener'); } catch { notice('请输入完整的网址。',true); } };
 
 const initialMode = new URLSearchParams(window.location.search).get('mode');
-setMode(['agent', 'article', 'library', 'settings', 'browser', 'source'].includes(initialMode) ? initialMode : 'agent');
+setMode(['agent', 'article', 'library', 'skills', 'settings', 'browser', 'source'].includes(initialMode) ? initialMode : 'agent');
 loadSnapshot().then(() => notice('对话工作台已就绪。')).catch((error) => notice(error.message, true));

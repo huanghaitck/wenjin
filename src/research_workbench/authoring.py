@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import ssl
+import statistics
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -13,11 +15,17 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .db import append_audit, connect, utc_now
+from .research_design import current_shared_design
 from .scholarship import freeze_detail, research_state
+from .skill_registry import get_skill
 
 
 Writer = Callable[[str], str]
-OPERATIONS = {"polish", "section_draft"}
+OPERATIONS = {"polish", "historical_humanize", "section_draft"}
+HISTORICAL_QUALIFIERS = (
+    "可能", "尚不足以", "不能据此", "只能说明", "未见", "尚无", "仅限于",
+    "最有把握", "再进一步", "有些", "在此个案中",
+)
 REVIEW_ROLES = {
     "argument_reviewer": "检查问题意识、比较结构、章节任务、因果强度和竞争解释；不要替作者重写正文。",
     "source_critic": "检查每项事实是否由已登记证据支持、是否把同一见证的译本当作独立证据，并标出过度解释。",
@@ -122,6 +130,183 @@ def _markers(text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _historical_markers(text: str) -> list[str]:
+    found = _markers(text)
+    for pattern in (r"《[^》]+》", r"https?://\S+", r"\b10\.\d{4,9}/\S+", r"[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё\-.'’ ]{2,}"):
+        found.extend(value.strip() for value in re.findall(pattern, text) if value.strip())
+    found.extend(value for value in HISTORICAL_QUALIFIERS if value in text)
+    return list(dict.fromkeys(found))
+
+
+def _style_features(text: str) -> dict[str, Any]:
+    paragraphs = [value.strip() for value in re.split(r"\n\s*\n", text) if value.strip()]
+    sentences = [value.strip() for value in re.split(r"(?<=[。！？；])", text) if value.strip()]
+    paragraph_lengths = [len(value) for value in paragraphs] or [0]
+    sentence_lengths = [len(value) for value in sentences] or [0]
+    factual_openings = sum(
+        bool(re.search(r"(?:\d{3,4}年|材料|日记|书信|档案|记载|据|在[^，。]{0,18}(?:年|月|日|地|县|府))", value[:48]))
+        for value in paragraphs
+    )
+    return {
+        "sample_scope": "HIGH_LEVEL_ONLY",
+        "character_count": len(text),
+        "paragraph_count": len(paragraphs),
+        "median_paragraph_chars": int(statistics.median(paragraph_lengths)),
+        "median_sentence_chars": int(statistics.median(sentence_lengths)),
+        "factual_opening_ratio": round(factual_openings / max(1, len(paragraphs)), 2),
+        "direct_quote_count": len(re.findall(r"“[^”]+”", text)),
+        "observed_qualifiers": [value for value in HISTORICAL_QUALIFIERS if value in text],
+        "rules": ["材料先于概念", "叙事与分析交替", "限定紧贴推论", "不模仿可识别个人声腔"],
+    }
+
+
+def _manuscript_style_sample(project_root: Path, manuscript_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        rows = connection.execute(
+            """SELECT s.current_version_id, v.content
+               FROM manuscript_sections s JOIN section_versions v ON v.version_id = s.current_version_id
+               WHERE s.manuscript_id = ? ORDER BY s.section_order""", (manuscript_id,),
+        ).fetchall()
+    if not rows:
+        raise KeyError(f"unknown manuscript: {manuscript_id}")
+    content = "\n\n".join(row["content"].strip() for row in rows if row["content"].strip())
+    if len(content) < 800:
+        raise ValueError("style sample is too short; use a complete approved manuscript with at least 800 characters")
+    return {
+        "manuscript_id": manuscript_id,
+        "content": content,
+        "source_version_ids": [row["current_version_id"] for row in rows],
+        "sample_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "features": _style_features(content),
+    }
+
+
+def _aggregate_style_features(samples: list[dict[str, Any]]) -> dict[str, Any]:
+    features = [sample["features"] for sample in samples]
+    qualifiers = set(features[0]["observed_qualifiers"]) if features else set()
+    for item in features[1:]:
+        qualifiers &= set(item["observed_qualifiers"])
+    return {
+        "sample_scope": "HIGH_LEVEL_ONLY",
+        "sample_count": len(samples),
+        "total_characters": sum(sample["character_count"] for sample in samples),
+        "median_paragraph_chars": int(statistics.median(item["median_paragraph_chars"] for item in features)),
+        "median_sentence_chars": int(statistics.median(item["median_sentence_chars"] for item in features)),
+        "factual_opening_ratio": round(statistics.mean(item["factual_opening_ratio"] for item in features), 2),
+        "recurring_qualifiers": sorted(qualifiers),
+        "rules": ["材料先于概念", "叙事与分析交替", "限定紧贴推论", "不模仿可识别个人声腔"],
+    }
+
+
+def create_style_profile(project_root: Path, manuscript_id: str, name: str,
+                         owner_label: str = "", scope: str = "historical_articles") -> dict[str, Any]:
+    name, owner_label, scope = name.strip(), owner_label.strip(), scope.strip()
+    if not name:
+        raise ValueError("style profile name is required")
+    sample = _manuscript_style_sample(project_root, manuscript_id)
+    with connect(project_root) as connection:
+        profile_id, sample_id, now = _id("STY"), _id("STS"), utc_now()
+        first_section = connection.execute(
+            "SELECT section_id FROM manuscript_sections WHERE manuscript_id = ? ORDER BY section_order LIMIT 1",
+            (manuscript_id,),
+        ).fetchone()[0]
+        connection.execute(
+            """INSERT INTO style_profiles(profile_id, name, owner_label, scope, manuscript_id, section_id,
+               source_version_id, sample_sha256, features_json, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'OBSERVED_ONCE', ?)""",
+            (profile_id, name, owner_label or name, scope or "historical_articles", manuscript_id,
+             first_section, sample["source_version_ids"][0], sample["sample_sha256"],
+             _json(sample["features"]), now),
+        )
+        connection.execute(
+            """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sample_id, profile_id, manuscript_id, _json(sample["source_version_ids"]),
+             sample["sample_sha256"], len(sample["content"]), _json(sample["features"]), now),
+        )
+        append_audit(connection, "style_profile_created", "style_profile", profile_id,
+                     {"manuscript_id": manuscript_id, "sample_id": sample_id})
+    return style_profile_detail(project_root, profile_id)
+
+
+def add_style_profile_sample(project_root: Path, profile_id: str, manuscript_id: str) -> dict[str, Any]:
+    profile = style_profile_detail(project_root, profile_id)
+    if profile["status"] == "REJECTED":
+        raise ValueError("cannot add samples to a rejected style profile")
+    sample, sample_id, now = _manuscript_style_sample(project_root, manuscript_id), _id("STS"), utc_now()
+    if any(item["sample_sha256"] == sample["sample_sha256"] for item in profile["samples"]):
+        raise ValueError("this manuscript version is already part of the style profile")
+    samples = profile["samples"] + [{
+        "sample_id": sample_id, "manuscript_id": manuscript_id,
+        "source_version_ids": sample["source_version_ids"], "sample_sha256": sample["sample_sha256"],
+        "character_count": len(sample["content"]), "features": sample["features"], "created_at": now,
+    }]
+    aggregate = _aggregate_style_features(samples)
+    status = "RECURRING" if len(samples) >= 2 else "OBSERVED_ONCE"
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (sample_id, profile_id, manuscript_id, _json(sample["source_version_ids"]),
+             sample["sample_sha256"], len(sample["content"]), _json(sample["features"]), now),
+        )
+        connection.execute(
+            """UPDATE style_profiles SET features_json = ?, status = ?, decided_by = NULL,
+               decision_reason = NULL, decided_at = NULL WHERE profile_id = ?""",
+            (_json(aggregate), status, profile_id),
+        )
+        append_audit(connection, "style_profile_sample_added", "style_profile", profile_id,
+                     {"manuscript_id": manuscript_id, "sample_id": sample_id, "sample_count": len(samples)})
+    return style_profile_detail(project_root, profile_id)
+
+
+def decide_style_profile(project_root: Path, profile_id: str, approved: bool,
+                         reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("reviewer and decision reason are required")
+    profile = style_profile_detail(project_root, profile_id)
+    if profile["status"] not in {"OBSERVED_ONCE", "RECURRING", "AUTHOR_APPROVED"}:
+        raise ValueError(f"style profile is already {profile['status']}")
+    status = ("STABLE_PROFILE" if len(profile["samples"]) >= 3 else "AUTHOR_APPROVED") if approved else "REJECTED"
+    now = utc_now()
+    with connect(project_root) as connection:
+        connection.execute(
+            "UPDATE style_profiles SET status = ?, decided_by = ?, decision_reason = ?, decided_at = ? WHERE profile_id = ?",
+            (status, reviewer, reason, now, profile_id),
+        )
+        append_audit(connection, "style_profile_decided", "style_profile", profile_id,
+                     {"approved": approved, "reviewer": reviewer, "reason": reason})
+    return style_profile_detail(project_root, profile_id)
+
+
+def style_profile_detail(project_root: Path, profile_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT * FROM style_profiles WHERE profile_id = ?", (profile_id,)).fetchone()
+        sample_rows = connection.execute(
+            "SELECT * FROM style_profile_samples WHERE profile_id = ? ORDER BY created_at", (profile_id,),
+        ).fetchall()
+    if row is None:
+        raise KeyError(f"unknown style profile: {profile_id}")
+    result = dict(row)
+    result["features"] = json.loads(result.pop("features_json"))
+    result["samples"] = []
+    for sample_row in sample_rows:
+        sample = dict(sample_row)
+        sample["source_version_ids"] = json.loads(sample.pop("source_version_ids_json"))
+        sample["features"] = json.loads(sample.pop("features_json"))
+        result["samples"].append(sample)
+    return result
+
+
+def list_style_profiles(project_root: Path) -> list[dict[str, Any]]:
+    with connect(project_root) as connection:
+        ids = [row[0] for row in connection.execute("SELECT profile_id FROM style_profiles ORDER BY created_at DESC")]
+    return [style_profile_detail(project_root, value) for value in ids]
+
+
 def _validate_markers(content: str, markers: list[str], evidence_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     missing = [marker for marker in markers if marker not in content]
     result: dict[str, Any] = {"valid": not missing, "missing_markers": missing}
@@ -194,15 +379,18 @@ def _review_model_write(prompt: str, prefix: str) -> str:
     provider = os.environ[f"{prefix}_PROVIDER"].strip().lower()
     model = os.environ[f"{prefix}_MODEL"].strip()
     base = os.environ[f"{prefix}_BASE_URL"].rstrip("/")
+    output_budget = int(os.getenv(f"{prefix}_REVIEW_MAX_TOKENS", "8192"))
     if provider == "ollama":
         url = base if base.endswith("/api/chat") else base + "/api/chat"
-        payload = {"model": model, "stream": False, "options": {"num_predict": 8192},
+        payload = {"model": model, "stream": False, "options": {"num_predict": output_budget},
                    "messages": [{"role": "user", "content": prompt}]}
         headers = {"Content-Type": "application/json"}
     else:
         url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-        payload = {"model": model, "temperature": 0, "max_tokens": 8192,
+        payload = {"model": model, "temperature": 0, "max_tokens": output_budget,
                    "messages": [{"role": "user", "content": prompt}]}
+        if "api.deepseek.com" in base or model.startswith("deepseek-"):
+            payload["thinking"] = {"type": "disabled"}
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ[f'{prefix}_API_KEY']}"}
     request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode(), headers=headers, method="POST")
     timeout = int(os.getenv(f"{prefix}_TIMEOUT_SECONDS", "120"))
@@ -237,7 +425,8 @@ def _secondary_review_write(prompt: str) -> str:
 
 def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                             instruction: str, freeze_id: str = "", writer: Writer | None = None,
-                            evidence_ids: list[str] | None = None) -> dict[str, Any]:
+                            evidence_ids: list[str] | None = None, skill_name: str = "",
+                            style_profile_id: str = "") -> dict[str, Any]:
     operation, instruction = operation.strip(), instruction.strip()
     if operation not in OPERATIONS:
         raise ValueError(f"unsupported writing operation: {operation}")
@@ -250,7 +439,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     if row is None:
         raise KeyError(f"unknown manuscript section: {section_id}")
     base_content, evidence_refs = row["content"], []
-    markers = _markers(base_content) if operation == "polish" else []
+    markers = (_historical_markers(base_content) if operation == "historical_humanize"
+               else (_markers(base_content) if operation == "polish" else []))
     if operation == "section_draft":
         freeze = freeze_detail(project_root, freeze_id)
         if freeze["status"] != "approved":
@@ -308,6 +498,25 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                 for e in claim["evidence"]
             ) for claim in scoped_claims
         )
+    elif operation == "historical_humanize":
+        evidence_contract = None
+        selected_skill = get_skill(skill_name or "historical-humanizer-zh")
+        profile = None
+        if style_profile_id:
+            profile = style_profile_detail(project_root, style_profile_id)
+            if profile["status"] not in {"AUTHOR_APPROVED", "STABLE_PROFILE"}:
+                raise ValueError("style profile must be author approved before use")
+        style_context = _json(profile["features"]) if profile else "未选择作者画像；只使用通用史学表达规则"
+        prompt = (
+            "对以下中文历史学段落制作证据保真的语言修订副本。只返回修订正文。\n"
+            "硬约束：不得改变事实、归因、因果、时间顺序、论证范围、限定词、阴性结果；不得改变引文、译文、"
+            "脚注、页码、档号、专名、数字、术语、URL；不得增加第一人称、情绪、反问或模仿具体学者。\n"
+            "表达操作：让材料和行动者先于抽象概念，叙事与分析交替，删除内部流程语言和重复总结；"
+            "无法确定为纯语言变化时保留原句。\n"
+            f"技能：{selected_skill['name']} / SHA-256 {selected_skill['sha256']}。\n"
+            f"经批准的高层文风画像：{style_context}\n具体要求：{instruction}\n\n{base_content}"
+        )
+        fallback = base_content
     else:
         evidence_contract = None
         prompt = (
@@ -317,10 +526,24 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         fallback = re.sub(r"[ \t]+", " ", base_content).replace(" ,", "，").replace(" .", "。")
     proposed = (writer(prompt) if writer else (_model_write(prompt) if _model_capability()["available"] else fallback)).strip()
     validation = _validate_markers(proposed, markers, evidence_contract)
+    if operation == "historical_humanize":
+        before = [value.strip() for value in re.split(r"\n\s*\n", base_content) if value.strip()]
+        after = [value.strip() for value in re.split(r"\n\s*\n", proposed) if value.strip()]
+        validation.update({
+            "semantic_review_required": True,
+            "guard_status": "PASS_EXACT_GUARD_NEEDS_MANUAL_REVIEW" if validation["valid"] else "BLOCKED_PROTECTED_CHANGE",
+            "paragraph_decisions": [
+                {"paragraph": index + 1, "decision": "KEEP" if old == new else "MANUAL_REVIEW"}
+                for index, (old, new) in enumerate(zip(before, after))
+            ],
+        })
     proposal_id, now = _id("WPR"), utc_now()
     snapshot = {
         **_model_capability(), "mode": "injected" if writer else "runtime", "freeze_id": freeze_id,
         "evidence_contract": evidence_contract,
+        "skill": ({"name": selected_skill["name"], "sha256": selected_skill["sha256"]}
+                  if operation == "historical_humanize" else None),
+        "style_profile_id": style_profile_id,
     }
     with connect(project_root) as connection:
         connection.execute(
@@ -630,25 +853,47 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
         role_name = "交叉评审模型" if use_secondary else "主推理模型"
         raise ValueError(f"{role_name}尚未配置")
     section_versions = [section["current_version_id"] for section in manuscript["sections"]]
-    manuscript_text = "\n\n".join(
+    internal_manuscript_text = "\n\n".join(
         f"## {section['heading']}\n{section['content']}" for section in manuscript["sections"]
     )
+    from .document_model import preview_document_export
+    export_preview = preview_document_export(project_root, manuscript_id, template_id)
+    manuscript_text = export_preview["markdown"]
     research = research_state(project_root)
-    frozen_evidence_ids = {
-        evidence["evidence_id"]
-        for freeze in research["freezes"] if freeze["status"] == "approved"
-        for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
-    }
-    evidence_lines = []
-    for claim in research["claims"]:
-        evidence_lines.append(f"主张 {claim['claim_id']}：{claim['text']}")
-        for evidence in claim["evidence"]:
-            pages = "–".join(str(value) for value in evidence.get("physical_pages", [evidence["physical_page"]]))
-            evidence_lines.append(
-                f"- {evidence['evidence_id']}｜{evidence['relation']}｜{evidence['source_id']}｜物理页 {pages}"
-                f"｜{'FROZEN_APPROVED' if evidence['evidence_id'] in frozen_evidence_ids else 'CANDIDATE_NOT_FROZEN'}"
-                f"｜{evidence['qualification']}｜{evidence['quote']}"
-            )
+    shared_design = current_shared_design(project_root)
+    cited_evidence_ids = set(re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", internal_manuscript_text))
+    approved_freezes = [freeze for freeze in research["freezes"] if freeze["status"] == "approved"]
+    relevant_freezes = [
+        freeze for freeze in approved_freezes
+        if any(
+            evidence["evidence_id"] in cited_evidence_ids
+            for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
+        )
+    ] or approved_freezes
+    with connect(project_root) as connection:
+        page_printed = {
+            row["page_id"]: str(row["printed_page"] or "").strip()
+            for row in connection.execute("SELECT page_id, printed_page FROM pages")
+        }
+    evidence_lines, seen_evidence = [], set()
+    for freeze in relevant_freezes:
+        evidence_lines.append(f"批准冻结包 {freeze['freeze_id']}：{freeze['title']}")
+        for claim in freeze["payload"]["claims"]:
+            evidence_lines.append(f"主张 {claim['claim_id']}：{claim['text']}")
+            for evidence in claim["evidence"]:
+                if evidence["evidence_id"] in seen_evidence:
+                    continue
+                seen_evidence.add(evidence["evidence_id"])
+                pages = "–".join(str(value) for value in evidence.get("physical_pages", [evidence["physical_page"]]))
+                printed_values = evidence.get("printed_pages", []) or [
+                    page_printed.get(str(page_id), "") for page_id in evidence.get("page_ids", [])
+                ]
+                printed = "–".join(str(value) for value in printed_values if value)
+                locator = f"原书页 {printed}｜物理页 {pages}" if printed else f"物理页 {pages}"
+                evidence_lines.append(
+                    f"- {evidence['evidence_id']}｜{evidence['relation']}｜{evidence['source_id']}｜{locator}"
+                    f"｜FROZEN_APPROVED｜{evidence['qualification']}｜{evidence['quote']}"
+                )
     previous_reports = ""
     if use_secondary and manuscript["review_groups"]:
         latest = next((group for group in manuscript["review_groups"] if group["is_current"]), None)
@@ -660,7 +905,10 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
     def generate(role: str) -> dict[str, Any]:
         prompt = (
             "你是历史学论文的独立评审者。只评审，不重写正文，不补造事实或书目信息。"
-            "把稿件中的 [EVID:...] 当作可核对锚点，不把模型记忆当作来源。\n"
+            "正文是按所选期刊模板生成的导出预览；内部 [EVID:...] 已转换为读者可见的引文。"
+            "请结合证据台账核对正文引文，不把模型记忆当作来源。\n"
+            "引文必须使用原书印刷页；物理页只用于在 PDF 中回查，不得用物理页替换原书页。"
+            "参考文献表通常不要求补写卷册总页数，不得因书目条目没有总页数而否定已核原书页。\n"
             "证据台账中的 CANDIDATE_NOT_FROZEN 只能作为有界回退线索，不能当作当前正文已经获准使用的证据；"
             "只有 FROZEN_APPROVED 且实际进入稿件的证据才能支撑当前论断。\n"
             f"本轮角色：{role}\n职责：{REVIEW_ROLES[role]}\n"
@@ -670,8 +918,13 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
             f"稿件题名：{manuscript['title']}\n当前字符数：{len(manuscript_text)}\n"
             f"投稿模板：{template['name']}｜{template['version_label']}｜{template['citation_style']}\n"
             f"模板组成：{'；'.join(template['section_rules'])}\n\n"
+            f"导出门禁：{export_preview['citation_status']}｜"
+            f"{'；'.join(export_preview['warnings']) or '当前未发现导出门禁'}\n\n"
+            "人工批准研究设计（这是作者的范围与方法决定，不是史料事实；不要因其缺少史料引文而否定，"
+            "但可以检查正文是否越出或误用这一边界）：\n"
+            f"{shared_design['title'] + chr(10) + shared_design['content'] if shared_design else '当前没有人工批准的共同计划。'}\n\n"
             f"证据台账：\n{chr(10).join(evidence_lines) or '当前没有已登记证据。'}\n\n"
-            f"稿件：\n{manuscript_text}{previous_reports}"
+            f"期刊导出预览：\n{manuscript_text}{previous_reports}"
         )
         report = (reviewer(prompt) if reviewer else
                   (_secondary_review_write(prompt) if use_secondary else _primary_review_write(prompt))).strip()
@@ -708,4 +961,5 @@ def authoring_state(project_root: Path) -> dict[str, Any]:
     return {"manuscripts": list_manuscripts(project_root), "reading_jobs": list_reading_jobs(project_root),
             "historiography": list_historiography(project_root),
             "journal_templates": ensure_journal_templates(project_root), "writing_model": _model_capability(),
+            "style_profiles": list_style_profiles(project_root),
             "review_models": {"primary": _model_capability(), "secondary": _secondary_review_capability()}}

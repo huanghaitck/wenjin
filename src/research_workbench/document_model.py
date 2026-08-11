@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import re
 import uuid
 from copy import deepcopy
 from pathlib import Path
@@ -237,6 +238,10 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
             (revision_id, current["document_id"], current["current_revision_id"], _json(tree), digest,
              source_format, _json(fidelity), now),
         )
+        connection.execute(
+            "UPDATE manuscript_sections SET section_order = -section_order WHERE manuscript_id = ?",
+            (manuscript_id,),
+        )
         for order, section in enumerate(tree["children"], start=1):
             section_id = str(section.get("section_id", ""))
             if section_id not in existing:
@@ -250,7 +255,7 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
             version_id = base
             if not prior or content != str(prior.get("current_content") or ""):
                 version_id = _id("SEV")
-                evidence_refs = str(prior.get("current_evidence_refs_json") or "[]")
+                evidence_refs = _json(list(dict.fromkeys(re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", content))))
                 connection.execute(
                     """INSERT INTO section_versions(version_id, section_id, base_version_id, operation, content,
                        evidence_refs_json, model_snapshot_json, status, created_at, approved_at)
@@ -374,6 +379,139 @@ def _docx_table_rows(table: Table) -> list[list[str]]:
     return [row + [""] * (width - len(row)) for row in rows]
 
 
+EVIDENCE_MARKER_RE = re.compile(r"(?:\[EVID:[A-Za-z0-9_]+\])+")
+
+
+def _reference_entry(number: int, metadata: dict[str, Any]) -> str:
+    title = metadata.get("title", "")
+    edition = f"，{metadata['edition']}" if metadata.get("edition") else ""
+    publication = "：".join(value for value in (metadata.get("place", ""), metadata.get("publisher", "")) if value)
+    tail = "，".join(value for value in (publication, metadata.get("year", "")) if value)
+    return f"[{number}] {metadata.get('author', '')}. {title}{edition}[{metadata.get('type_code', '')}].{(' ' + tail) if tail else ''}".strip()
+
+
+def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+    prepared = deepcopy(tree)
+    evidence: dict[str, dict[str, Any]] = {}
+    with connect(project_root) as connection:
+        for row in connection.execute(
+            "SELECT payload_json FROM evidence_freezes WHERE status = 'approved' ORDER BY created_at DESC"
+        ):
+            payload = json.loads(row["payload_json"])
+            for claim in payload.get("claims", []):
+                for item in claim.get("evidence", []):
+                    evidence.setdefault(str(item.get("evidence_id", "")), item)
+        metadata = {
+            row["source_id"]: dict(row)
+            for row in connection.execute("SELECT * FROM source_citation_metadata")
+        }
+        page_printed = {
+            row["page_id"]: str(row["printed_page"] or "").strip()
+            for row in connection.execute("SELECT page_id, printed_page FROM pages")
+        }
+    warnings: list[str] = []
+    source_numbers: dict[str, int] = {}
+
+    def marker(match: re.Match[str]) -> str:
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for evidence_id in re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", match.group(0)):
+            item = evidence.get(evidence_id)
+            if item is None:
+                warnings.append(f"证据 {evidence_id} 未出现在已批准冻结包中")
+                continue
+            grouped.setdefault(str(item["source_id"]), []).append(item)
+        rendered: list[str] = []
+        for source_id, items in grouped.items():
+            if source_id not in source_numbers:
+                source_numbers[source_id] = len(source_numbers) + 1
+            pages = list(dict.fromkeys(
+                str(page)
+                for item in items
+                for page in (
+                    item.get("printed_pages", [])
+                    or [page_printed.get(str(page_id), "") for page_id in item.get("page_ids", [])]
+                )
+                if str(page).strip()
+            ))
+            if not pages:
+                digital = list(dict.fromkeys(
+                    str(page) for item in items for page in item.get("physical_pages", []) if str(page).strip()
+                ))
+                warnings.append(f"来源 {source_id} 缺少原书页码；数字页 {','.join(digital) or '未知'} 仅供回查")
+                page_text = "原书页待核"
+            else:
+                page_text = "、".join(pages)
+            rendered.append(f"[{source_numbers[source_id]}]{page_text}")
+        return "；".join(rendered) if rendered else match.group(0)
+
+    for section in prepared.get("children", []):
+        for node in section.get("children", []):
+            if node.get("type") == "table":
+                node["rows"] = [[EVIDENCE_MARKER_RE.sub(marker, str(cell)) for cell in row]
+                                for row in node.get("rows", [])]
+            else:
+                node["text"] = EVIDENCE_MARKER_RE.sub(marker, str(node.get("text", "")))
+
+    references: list[str] = []
+    for source_id, number in sorted(source_numbers.items(), key=lambda item: item[1]):
+        item = metadata.get(source_id)
+        if not item or item.get("verification_status") != "HUMAN_VERIFIED":
+            warnings.append(f"来源 {source_id} 尚未人工核验引文元数据")
+            continue
+        required = ["author", "title", "year", "type_code"]
+        if item.get("type_code") == "M":
+            required.extend(["place", "publisher"])
+        missing = [field for field in required if not str(item.get(field, "")).strip()]
+        if missing:
+            warnings.append(f"来源 {source_id} 缺少引文元数据：{','.join(missing)}")
+        references.append(_reference_entry(number, item))
+    if source_numbers:
+        reference_section = {
+            "type": "section", "node_id": _id("NOD"), "section_id": "",
+            "heading": "参考文献", "children": [
+                {"type": "paragraph", "node_id": _id("NOD"), "text": entry}
+                for entry in references
+            ],
+        }
+        insertion = next((index for index, section in enumerate(prepared["children"])
+                          if any(term in str(section.get("heading", "")) for term in ("英文", "English", "作者简介", "联系方式"))),
+                         len(prepared["children"]))
+        prepared["children"].insert(insertion, reference_section)
+    headings = [str(section.get("heading", "")) for section in prepared.get("children", [])]
+    if not any("英文" in heading or "English" in heading for heading in headings):
+        warnings.append("《唐都学刊》要求参考文献后附英文题名、作者、单位、摘要和关键词")
+    if not any("作者" in heading or "联系方式" in heading for heading in headings):
+        warnings.append("作者简介、项目来源、联系方式、地址和邮编需由作者本人填写")
+    exported_text = _plain_text(prepared)
+    if "待作者填写" in exported_text or "to be supplied by the researcher" in exported_text:
+        warnings.append("英文作者单位及作者投稿信息仍为人工占位，提交前必须由作者填写")
+    return prepared, list(dict.fromkeys(warnings)), "READY" if not warnings else "BLOCKED"
+
+
+def preview_document_export(project_root: Path, manuscript_id: str, template_id: str) -> dict[str, Any]:
+    detail = ensure_document(project_root, manuscript_id)
+    templates = {item["template_id"]: item for item in ensure_journal_templates(project_root)}
+    if template_id not in templates:
+        raise KeyError(f"unknown journal template: {template_id}")
+    template = templates[template_id]
+    export_tree = detail["document"]
+    warnings: list[str] = []
+    citation_status = "NOT_APPLICABLE"
+    if "参考文献置于文后" in str(template.get("citation_style", "")):
+        export_tree, warnings, citation_status = _prepare_sequential_references(project_root, export_tree)
+    notes = list_notes(project_root, manuscript_id, approved_only=True)
+    return {
+        "manuscript_id": manuscript_id,
+        "revision_id": detail["current_revision_id"],
+        "template": template,
+        "document": export_tree,
+        "markdown": markdown_from_tree(export_tree, notes),
+        "notes": notes,
+        "warnings": warnings,
+        "citation_status": citation_status,
+    }
+
+
 def import_docx(project_root: Path, title: str, data: bytes) -> dict[str, Any]:
     from .authoring import import_manuscript
 
@@ -476,20 +614,19 @@ def reimport_docx(project_root: Path, manuscript_id: str, data: bytes) -> dict[s
 
 def export_document(project_root: Path, manuscript_id: str, format_name: str,
                     template_id: str = "builtin-history-research") -> dict[str, Any]:
-    detail = ensure_document(project_root, manuscript_id)
-    tree = detail["document"]
-    templates = {item["template_id"]: item for item in ensure_journal_templates(project_root)}
-    if template_id not in templates:
-        raise KeyError(f"unknown journal template: {template_id}")
-    template = templates[template_id]
-    notes = list_notes(project_root, manuscript_id, approved_only=True)
-    by_node, ordered_notes = _numbered_notes(notes, tree)
+    preview = preview_document_export(project_root, manuscript_id, template_id)
+    detail = {"current_revision_id": preview["revision_id"]}
+    template = preview["template"]
+    export_tree = preview["document"]
+    warnings = list(preview["warnings"])
+    citation_status = preview["citation_status"]
+    notes = preview["notes"]
+    by_node, ordered_notes = _numbered_notes(notes, export_tree)
     export_root = project_root / "exports"
     export_root.mkdir(parents=True, exist_ok=True)
-    warnings: list[str] = []
     if format_name == "markdown":
         path = export_root / f"{manuscript_id}-{detail['current_revision_id']}.md"
-        path.write_text(markdown_from_tree(tree, notes), encoding="utf-8")
+        path.write_text(preview["markdown"], encoding="utf-8")
         level = "native_text"
     elif format_name == "docx":
         path = export_root / f"{manuscript_id}-{detail['current_revision_id']}.docx"
@@ -508,13 +645,13 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
             style.font.size = Pt(size)
             style.font.color.rgb = RGBColor(0, 0, 0)
         title = document.add_paragraph()
-        title_run = title.add_run(str(tree.get("title", "未命名稿件")))
+        title_run = title.add_run(str(export_tree.get("title", "未命名稿件")))
         title_run.bold = True
         title_run.font.name = "SimSun"
         title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         title_run.font.size = Pt(18)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for section in tree.get("children", []):
+        for section in export_tree.get("children", []):
             document.add_heading(str(section.get("heading", "正文")), level=1)
             for node in section.get("children", []):
                 if node.get("type") == "table":
@@ -551,6 +688,7 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         "level": level, "warnings": warnings, "approved_note_count": len(ordered_notes),
         "template_id": template_id, "template_revision_id": template.get("template_revision_id"),
         "template_verification_status": template.get("verification_status"),
+        "citation_status": citation_status,
     }
     receipt = _record_receipt(project_root, manuscript_id, detail["current_revision_id"],
                               "export", format_name, path.relative_to(project_root).as_posix(), fidelity)

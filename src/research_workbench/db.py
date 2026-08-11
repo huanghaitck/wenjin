@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 15
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -793,6 +793,56 @@ CREATE INDEX IF NOT EXISTS idx_research_event_field_anchors
 ON research_event_field_anchors(event_id, field_name, anchor_order);
 """
 
+MIGRATION_14 = """
+CREATE TABLE IF NOT EXISTS style_profiles (
+    profile_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    owner_label TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    manuscript_id TEXT NOT NULL REFERENCES manuscripts(manuscript_id),
+    section_id TEXT NOT NULL REFERENCES manuscript_sections(section_id),
+    source_version_id TEXT NOT NULL REFERENCES section_versions(version_id),
+    sample_sha256 TEXT NOT NULL,
+    features_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_by TEXT,
+    decision_reason TEXT,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_style_profiles_status
+ON style_profiles(status, created_at);
+CREATE TABLE IF NOT EXISTS style_profile_samples (
+    sample_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES style_profiles(profile_id),
+    manuscript_id TEXT NOT NULL REFERENCES manuscripts(manuscript_id),
+    source_version_ids_json TEXT NOT NULL,
+    sample_sha256 TEXT NOT NULL,
+    character_count INTEGER NOT NULL,
+    features_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(profile_id, sample_sha256)
+);
+CREATE INDEX IF NOT EXISTS idx_style_profile_samples_profile
+ON style_profile_samples(profile_id, created_at);
+"""
+
+MIGRATION_15 = """
+CREATE TABLE IF NOT EXISTS source_citation_metadata (
+    source_id TEXT PRIMARY KEY REFERENCES sources(source_id),
+    author TEXT NOT NULL,
+    title TEXT NOT NULL,
+    edition TEXT NOT NULL,
+    place TEXT NOT NULL,
+    publisher TEXT NOT NULL,
+    year TEXT NOT NULL,
+    type_code TEXT NOT NULL,
+    verification_status TEXT NOT NULL,
+    verified_by TEXT NOT NULL,
+    verified_at TEXT NOT NULL
+);
+"""
+
 EVENT_COMPARISON_COLUMNS = (
     "movement_mode",
     "genre",
@@ -923,6 +973,20 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (13, utc_now()),
         )
+        version = 13
+    if version < 14:
+        connection.executescript(MIGRATION_14)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (14, utc_now()),
+        )
+        version = 14
+    if version < 15:
+        connection.executescript(MIGRATION_15)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (15, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -952,6 +1016,8 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_9)
     connection.executescript(MIGRATION_10)
     connection.executescript(MIGRATION_11)
+    connection.executescript(MIGRATION_14)
+    connection.executescript(MIGRATION_15)
     _ensure_event_comparison_columns(connection)
 
 
@@ -987,6 +1053,8 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_9)
         connection.executescript(MIGRATION_10)
         connection.executescript(MIGRATION_11)
+        connection.executescript(MIGRATION_14)
+        connection.executescript(MIGRATION_15)
         _ensure_event_comparison_columns(connection)
         now = utc_now()
         connection.execute(

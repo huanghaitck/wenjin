@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import uuid
@@ -8,13 +9,83 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from .db import append_audit, connect, utc_now
+from .research_events import event_state
 
 
 RELATIONS = {"supports", "weakens", "background", "counterevidence"}
+CLAIM_MAP_COLUMNS = (
+    "claim_id", "claim_text", "claim_strength", "evidence_id", "source_id", "source_role",
+    "original_page", "digital_page", "locator_verified", "witness_independence", "supports",
+    "does_not_support", "citation_full", "citation_short", "status", "notes",
+)
 
 
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
+
+
+def _write_event_claim_map(project_root: Path, freeze_id: str, payload: dict[str, Any],
+                           status: str) -> str:
+    if payload.get("freeze_kind") != "approved_research_events":
+        return ""
+    source_ids = {
+        evidence["source_id"]
+        for claim in payload["claims"] for evidence in claim["evidence"]
+    }
+    with connect(project_root) as connection:
+        sources = {
+            row["source_id"]: dict(row)
+            for row in connection.execute(
+                "SELECT source_id, title, source_type FROM sources WHERE source_id IN ("
+                + ",".join("?" for _ in source_ids) + ")",
+                list(source_ids),
+            )
+        }
+    target = project_root / "research" / "freezes" / freeze_id / "claim_citation_map.csv"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CLAIM_MAP_COLUMNS)
+        writer.writeheader()
+        for claim in payload["claims"]:
+            case_ids = {evidence["case_id"] for evidence in claim["evidence"]}
+            strength = "COMPARATIVE" if len(case_ids) > 1 else "INTERPRETIVE"
+            boundary = claim.get("does_not_support") or "不得超出所列原文、字段锚点与人工决定。"
+            for evidence in claim["evidence"]:
+                source = sources.get(evidence["source_id"], {})
+                physical = "–".join(str(page) for page in evidence.get("physical_pages", []))
+                printed = "–".join(str(page) for page in evidence.get("printed_pages", []) if str(page))
+                title = source.get("title", evidence["source_id"])
+                citation = (
+                    f"{title}，物理页 {physical}（{evidence['source_id']}，"
+                    f"{evidence['source_version_id']}）"
+                )
+                relation = evidence["relation"]
+                support_text = (
+                    claim["text"] if relation == "supports"
+                    else f"{relation}：{claim['text']}"
+                )
+                writer.writerow({
+                    "claim_id": claim["claim_id"],
+                    "claim_text": claim["text"],
+                    "claim_strength": strength,
+                    "evidence_id": evidence["evidence_id"],
+                    "source_id": evidence["source_id"],
+                    "source_role": source.get("source_type", "historical_source"),
+                    "original_page": printed,
+                    "digital_page": physical,
+                    "locator_verified": "true",
+                    "witness_independence": evidence["source_id"],
+                    "supports": support_text,
+                    "does_not_support": boundary,
+                    "citation_full": citation,
+                    "citation_short": f"{title}，物理页 {physical}",
+                    "status": status,
+                    "notes": (
+                        f"event={evidence['event_id']}; relation={relation}; "
+                        f"classification={evidence['classification']}; {evidence.get('missing_reason', '')}"
+                    ).strip(),
+                })
+    return target.relative_to(project_root).as_posix()
 
 
 def create_claim(project_root: Path, text: str) -> dict[str, Any]:
@@ -235,6 +306,130 @@ def create_freeze(project_root: Path, title: str, claim_ids: list[str]) -> dict[
     return freeze_detail(project_root, freeze_id)
 
 
+def create_event_freeze(project_root: Path, title: str, claim_specs: list[dict[str, Any]],
+                        unresolved: list[str] | None = None,
+                        prohibited_claims: list[str] | None = None) -> dict[str, Any]:
+    """Create a pending freeze directly from human-approved research events.
+
+    Research events already carry the original-page anchors and the source-version
+    identity needed by the writing harness.  This bridge snapshots those approved
+    rows without silently promoting draft or rejected events to evidence.
+    """
+    title = title.strip()
+    if not title or not claim_specs:
+        raise ValueError("freeze title and at least one event-backed claim are required")
+
+    requested_ids = list(dict.fromkeys(
+        str(item.get("event_id", "")).strip()
+        for claim in claim_specs for item in claim.get("evidence", [])
+        if str(item.get("event_id", "")).strip()
+    ))
+    if not requested_ids:
+        raise ValueError("every event-backed claim must select at least one event")
+    events = {
+        item["event_id"]: item
+        for item in event_state(project_root, statuses=["approved"], detail="full")["events"]
+        if item["event_id"] in requested_ids
+    }
+    missing = [event_id for event_id in requested_ids if event_id not in events]
+    if missing:
+        raise ValueError(f"event is not approved and cannot be frozen: {missing[0]}")
+
+    with connect(project_root) as connection:
+        versions = {
+            version_id: dict(row)
+            for version_id in {events[event_id]["source_version_id"] for event_id in requested_ids}
+            for row in [connection.execute(
+                "SELECT source_version_id, sha256, project_path FROM source_versions WHERE source_version_id = ?",
+                (version_id,),
+            ).fetchone()]
+            if row is not None
+        }
+
+    claims: list[dict[str, Any]] = []
+    classifications = {
+        "FROZEN_WRITABLE": [],
+        "CONTEXT_ONLY": [],
+        "COUNTEREVIDENCE": [],
+        "UNRESOLVED": [str(value).strip() for value in (unresolved or []) if str(value).strip()],
+        "PROHIBITED_CLAIM": [
+            str(value).strip() for value in (prohibited_claims or []) if str(value).strip()
+        ],
+    }
+    for spec in claim_specs:
+        text = str(spec.get("text", "")).strip()
+        evidence_specs = spec.get("evidence", [])
+        if not text or not evidence_specs:
+            raise ValueError("every event-backed claim requires text and evidence")
+        frozen_evidence = []
+        for evidence_spec in evidence_specs:
+            event_id = str(evidence_spec.get("event_id", "")).strip()
+            relation = str(evidence_spec.get("relation", "supports")).strip()
+            if relation not in RELATIONS:
+                raise ValueError(f"unsupported claim/evidence relation: {relation}")
+            event = events[event_id]
+            if not event["block_ids"] or not event["page_ids"] or not event["original_text"].strip():
+                raise ValueError(f"approved event lacks page-linked original text: {event_id}")
+            classification = (
+                "FROZEN_WRITABLE" if relation == "supports"
+                else "CONTEXT_ONLY" if relation == "background"
+                else "COUNTEREVIDENCE"
+            )
+            classifications[classification].append(event_id)
+            frozen_evidence.append({
+                **event,
+                "evidence_id": event_id,
+                "event_id": event_id,
+                "page_id": event["page_ids"][0],
+                "block_id": event["block_ids"][0],
+                "physical_page": event["physical_pages"][0],
+                "quote": event["original_text"],
+                "note": str(evidence_spec.get("note", "")).strip() or event["notes"],
+                "relation": relation,
+                "classification": classification,
+                "qualification_before_freeze": event["qualification"],
+                "qualification": classification,
+                "source_version": versions.get(event["source_version_id"], {}),
+                "status": "frozen",
+            })
+        claims.append({
+            "claim_id": _id("FCL"),
+            "text": text,
+            "status": "frozen",
+            "does_not_support": str(spec.get("does_not_support", "")).strip(),
+            "evidence": frozen_evidence,
+        })
+
+    for key in ("FROZEN_WRITABLE", "CONTEXT_ONLY", "COUNTEREVIDENCE"):
+        classifications[key] = list(dict.fromkeys(classifications[key]))
+    payload = {
+        "freeze_kind": "approved_research_events",
+        "claims": claims,
+        "classifications": classifications,
+        "boundary": (
+            "Only FROZEN_WRITABLE event quotations and their recorded field anchors may support the draft. "
+            "CONTEXT_ONLY material cannot carry a factual claim; COUNTEREVIDENCE remains binding. "
+            "UNRESOLVED items and PROHIBITED_CLAIM statements must not be converted into facts. "
+            "Missing evidence cannot be recast as proof, and retrieval results remain leads only."
+        ),
+    }
+    freeze_id, now = _id("FRZ"), utc_now()
+    payload["claim_map_project_path"] = _write_event_claim_map(
+        project_root, freeze_id, payload, "VERIFIED"
+    )
+    with connect(project_root) as connection:
+        connection.execute(
+            "INSERT INTO evidence_freezes(freeze_id, title, status, payload_json, created_at) "
+            "VALUES (?, ?, 'pending', ?, ?)",
+            (freeze_id, title, json.dumps(payload, ensure_ascii=False, sort_keys=True), now),
+        )
+        append_audit(
+            connection, "event_evidence_freeze_proposed", "freeze", freeze_id,
+            {"event_ids": requested_ids, "claim_count": len(claims)},
+        )
+    return freeze_detail(project_root, freeze_id)
+
+
 def approve_freeze(project_root: Path, freeze_id: str, reviewer: str, reason: str) -> dict[str, Any]:
     reviewer, reason = reviewer.strip(), reason.strip()
     if not reviewer or not reason:
@@ -250,6 +445,9 @@ def approve_freeze(project_root: Path, freeze_id: str, reviewer: str, reason: st
             raise ValueError(f"freeze is already {row['status']}")
         payload = json.loads(row["payload_json"])
         payload["approval"] = {"reviewer": reviewer, "reason": reason, "approved_at": now}
+        claim_map_path = _write_event_claim_map(project_root, freeze_id, payload, "FROZEN")
+        if claim_map_path:
+            payload["claim_map_project_path"] = claim_map_path
         connection.execute(
             """UPDATE evidence_freezes SET status = 'approved', approved_by = ?, approved_at = ?,
                        payload_json = ? WHERE freeze_id = ?""",
@@ -325,9 +523,16 @@ def review_artifact(project_root: Path, version_id: str, reviewer_role: str = "s
         if version is None:
             raise KeyError(f"unknown artifact version: {version_id}")
         refs = json.loads(version["source_refs_json"])
-        missing = [ref for ref in refs if connection.execute(
-            "SELECT 1 FROM evidence_items WHERE evidence_id = ?", (ref["evidence_id"],)
-        ).fetchone() is None]
+        missing = [
+            ref for ref in refs
+            if connection.execute(
+                "SELECT 1 FROM evidence_items WHERE evidence_id = ?", (ref["evidence_id"],)
+            ).fetchone() is None
+            and connection.execute(
+                "SELECT 1 FROM research_event_rows WHERE event_id = ? AND status = 'approved'",
+                (ref["evidence_id"],),
+            ).fetchone() is None
+        ]
         report = (
             "通过：所有段落引用均可回到冻结证据、物理页和来源版本；仍需作者判断解释是否充分。"
             if not missing else f"阻断：发现 {len(missing)} 个失效证据引用。"

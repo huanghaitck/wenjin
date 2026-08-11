@@ -5,7 +5,8 @@ Local-first, model-selectable Research Codex for auditable historical research p
 The product direction is a persistent Agent workspace in which conversations can use page-aware PDF,
 retrieval, evidence, scholarly dialogue, writing and memory tools without bypassing historical-source
 verification. See [the product baseline](docs/RESEARCH_CODEX_PRODUCT.md),
-[V1 architecture](docs/ARCHITECTURE_V1.md) and [roadmap](docs/ROADMAP.md).
+[V1 architecture](docs/ARCHITECTURE_V1.md), [中文使用手册](docs/USER_MANUAL_ZH.md) and
+[roadmap](docs/ROADMAP.md).
 
 ## Environment
 

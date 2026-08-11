@@ -8,11 +8,14 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from research_workbench.authoring import (
+    add_style_profile_sample,
     create_historiography_entry,
     create_journal_template,
     create_reading_job,
+    create_style_profile,
     create_writing_proposal,
     decide_writing_proposal,
+    decide_style_profile,
     export_manuscript,
     import_manuscript,
     manuscript_detail,
@@ -73,6 +76,51 @@ class D2AuthoringReadingTests(unittest.TestCase):
         document = document_detail(self.project, self.manuscript["manuscript_id"])
         self.assertIn("1908", document["document"]["children"][0]["children"][0]["text"])
         self.assertEqual(decision["document_revision_id"], document["current_revision_id"])
+
+    def test_historical_humanizer_uses_only_approved_high_level_style_profile(self) -> None:
+        paragraph = ("1908年，材料称“队伍进入草原”。[^1]这一记载只能说明队伍当日的位置，"
+                     "尚不足以据此判断整个考察季节的路线。随后一封书信补充了行动次序，"
+                     "但两项材料不能视为独立见证。")
+        sample = import_manuscript(
+            self.project, "作者认可样本",
+            "# 样本\n\n" + "\n\n".join(paragraph for _ in range(10)),
+        )
+        section = sample["sections"][0]
+        profile = create_style_profile(self.project, sample["manuscript_id"], "我的史学文风", "本人", "环境史")
+        self.assertEqual(profile["status"], "OBSERVED_ONCE")
+        self.assertNotIn("1908年", json.dumps(profile["features"], ensure_ascii=False))
+        with self.assertRaisesRegex(ValueError, "author approved"):
+            create_writing_proposal(
+                self.project, section["section_id"], "historical_humanize", "材料先行",
+                style_profile_id=profile["profile_id"], writer=lambda prompt: section["content"],
+            )
+        profile = decide_style_profile(
+            self.project, profile["profile_id"], True, "Professor", "这是我认可的章节",
+        )
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "historical_humanize", "材料先行",
+            style_profile_id=profile["profile_id"], writer=lambda prompt: "材料称队伍进入草原。",
+        )
+        self.assertFalse(proposal["validation"]["valid"])
+        self.assertEqual(proposal["validation"]["guard_status"], "BLOCKED_PROTECTED_CHANGE")
+        self.assertEqual(proposal["model_snapshot"]["skill"]["name"], "historical-humanizer-zh")
+
+    def test_style_profile_requires_three_distinct_manuscripts_for_stable_status(self) -> None:
+        manuscripts = []
+        for index in range(3):
+            paragraph = f"187{index}年，日记记录了第{index + 1}次行程。材料只支持当日行动，不能据此外推整个区域。"
+            manuscripts.append(import_manuscript(
+                self.project, f"样本{index + 1}", "# 正文\n\n" + "\n\n".join(paragraph for _ in range(24)),
+            ))
+        profile = create_style_profile(self.project, manuscripts[0]["manuscript_id"], "多人可选画像", "课题组甲", "旅行史")
+        with self.assertRaisesRegex(ValueError, "already part"):
+            add_style_profile_sample(self.project, profile["profile_id"], manuscripts[0]["manuscript_id"])
+        profile = add_style_profile_sample(self.project, profile["profile_id"], manuscripts[1]["manuscript_id"])
+        self.assertEqual(profile["status"], "RECURRING")
+        profile = add_style_profile_sample(self.project, profile["profile_id"], manuscripts[2]["manuscript_id"])
+        profile = decide_style_profile(self.project, profile["profile_id"], True, "Professor", "三篇独立稿件复现且人工批准")
+        self.assertEqual(profile["status"], "STABLE_PROFILE")
+        self.assertEqual(len(profile["samples"]), 3)
 
     def test_section_draft_requires_approved_freeze_and_keeps_evidence_refs(self) -> None:
         claim = create_claim(self.project, "页边界记录反映文本连续性。")
@@ -159,7 +207,7 @@ class D2AuthoringReadingTests(unittest.TestCase):
 
     def test_schema_eleven_is_current(self) -> None:
         with connect(self.project) as connection:
-            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 13)
+            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 15)
 
     def test_loopback_authoring_api_imports_and_proposes_without_overwriting(self) -> None:
         server = build_server(

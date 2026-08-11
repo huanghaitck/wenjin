@@ -14,6 +14,12 @@ from research_workbench.research_events import (
     event_coverage,
     event_state,
 )
+from research_workbench.scholarship import (
+    approve_freeze,
+    create_event_freeze,
+    draft_from_freeze,
+    review_artifact,
+)
 from research_workbench.service import (
     correct_printed_page,
     import_structure,
@@ -113,6 +119,55 @@ class ResearchEventTests(unittest.TestCase):
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["qualification"], "PAGE_LINKED_EVENT_NOT_FROZEN")
         self.assertEqual(approved["notes"], "人工确认后保留")
+
+    def test_approved_events_can_form_a_pending_freeze_without_duplicate_evidence_rows(self) -> None:
+        candidate = self._create()
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        approved = decide_event(
+            self.project, str(candidate["event_id"]), True,
+            "Professor", "已逐字核对原页",
+        )
+
+        freeze = create_event_freeze(
+            self.project,
+            "Approved event freeze",
+            [{
+                "text": "The route was recorded as an object of investigation.",
+                "does_not_support": "This does not prove a complete survey.",
+                "evidence": [{"event_id": approved["event_id"], "relation": "supports"}],
+            }],
+            unresolved=["The wider chronology remains unresolved."],
+            prohibited_claims=["Do not call this a complete survey."],
+        )
+        self.assertEqual(freeze["status"], "pending")
+        self.assertEqual(freeze["payload"]["freeze_kind"], "approved_research_events")
+        evidence = freeze["payload"]["claims"][0]["evidence"][0]
+        self.assertEqual(evidence["evidence_id"], approved["event_id"])
+        self.assertEqual(evidence["block_ids"], [self.block_id])
+        self.assertEqual(evidence["qualification_before_freeze"], "PAGE_LINKED_EVENT_NOT_FROZEN")
+        self.assertEqual(evidence["qualification"], "FROZEN_WRITABLE")
+        self.assertEqual(
+            freeze["payload"]["classifications"]["PROHIBITED_CLAIM"],
+            ["Do not call this a complete survey."],
+        )
+        with connect(self.project) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM evidence_items").fetchone()[0], 0)
+
+        approved_freeze = approve_freeze(
+            self.project, freeze["freeze_id"], "Professor", "Checked event anchors and boundaries",
+        )
+        artifact = draft_from_freeze(self.project, approved_freeze["freeze_id"], "Event-backed draft")
+        review = review_artifact(self.project, artifact["versions"][0]["version_id"])
+        self.assertEqual(review["status"], "passed")
+
+    def test_unapproved_event_cannot_enter_an_event_freeze(self) -> None:
+        candidate = self._create()
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            create_event_freeze(
+                self.project,
+                "Rejected pending event",
+                [{"text": "Unsafe claim", "evidence": [{"event_id": candidate["event_id"]}]}],
+            )
 
     def test_approval_refreshes_printed_page_snapshot_after_page_repair(self) -> None:
         candidate = self._create()

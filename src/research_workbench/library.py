@@ -219,6 +219,8 @@ def scan_directory(
     if not source_root.is_dir():
         raise FileNotFoundError(f"scan directory does not exist: {source_root}")
     skill = get_skill(skill_name)
+    if "library_intake" not in skill["compatible_actions"]:
+        raise ValueError(f"skill is not compatible with library intake: {skill_name}")
     root = library_root_for(project_root, library_root)
     session_id = f"SCN_{uuid.uuid4().hex}"
     now = utc_now()

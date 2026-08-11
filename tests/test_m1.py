@@ -392,7 +392,7 @@ class M1KernelTests(unittest.TestCase):
         connection = sqlite3.connect(self.project / "project.sqlite3")
         try:
             connection.execute("UPDATE blocks SET use_state = 'blocked' WHERE block_id = ?", (block_id,))
-            connection.execute("DELETE FROM schema_meta WHERE version = 13")
+            connection.execute("DELETE FROM schema_meta WHERE version >= 13")
             connection.commit()
         finally:
             connection.close()
@@ -403,7 +403,7 @@ class M1KernelTests(unittest.TestCase):
             use_state = connection.execute(
                 "SELECT use_state FROM blocks WHERE block_id = ?", (block_id,),
             ).fetchone()[0]
-        self.assertEqual(version, 13)
+        self.assertEqual(version, 15)
         self.assertEqual(use_state, "research_usable")
 
     def test_user_can_reconstruct_a_missing_printed_page_label(self) -> None:

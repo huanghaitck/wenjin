@@ -142,6 +142,18 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(summary["message_count"], 1)
         self.assertEqual(summary["latest_run_status"], "WAITING_FOR_APPROVAL")
 
+    def test_slash_skill_is_versioned_in_the_run_snapshot(self) -> None:
+        result = send_message(
+            self.project, self.thread["thread_id"],
+            "/historical-material-intake 查看项目来源，但不要改变原文件",
+        )
+        skill = result["runs"][0]["model_snapshot"]["active_skill"]
+        self.assertEqual(skill["name"], "historical-material-intake")
+        self.assertEqual(len(skill["sha256"]), 64)
+        self.assertEqual(skill["invocation"], "/historical-material-intake")
+        with self.assertRaises(KeyError):
+            send_message(self.project, self.thread["thread_id"], "/not-installed do something")
+
     def test_interrupted_running_run_is_failed_on_recovery(self) -> None:
         with patch("research_workbench.agent_runtime._mock_action", side_effect=RuntimeError("stop")):
             with self.assertRaises(RuntimeError):
@@ -617,7 +629,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 13)
+        self.assertEqual(version, 15)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:

@@ -874,6 +874,15 @@ def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
         source = dict(source)
         if source_id in contexts:
             source["research_context"] = contexts[source_id]
+        citation_row = connection.execute(
+            "SELECT * FROM source_citation_metadata WHERE source_id = ?", (source_id,)
+        ).fetchone()
+        source["citation_metadata"] = dict(citation_row) if citation_row else {
+            "source_id": source_id, "author": "", "title": source["title"], "edition": "",
+            "place": "", "publisher": "", "year": "", "type_code": "",
+            "verification_status": "UNVERIFIED",
+            "verified_by": "", "verified_at": "",
+        }
         page_rows = connection.execute(
             "SELECT * FROM pages WHERE source_id = ? ORDER BY physical_page",
             (source_id,),
@@ -1304,6 +1313,7 @@ def correct_relation(
             "to_block_id": relation["to_block_id"],
             "human_value": previous_human,
         }
+
         corrected = {
             "from_block_id": from_block_id,
             "to_block_id": to_block_id,
@@ -1336,6 +1346,46 @@ def correct_relation(
         "to_block_id": to_block_id,
         "continues": continues,
     }
+
+
+def save_source_citation_metadata(project_root: Path, source_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    author = str(payload.get("author", "")).strip()
+    title = str(payload.get("title", "")).strip()
+    year = str(payload.get("year", "")).strip()
+    verified_by = str(payload.get("verified_by", "")).strip()
+    if not author or not title or not year or not verified_by:
+        raise ValueError("引文元数据至少需要作者、题名、年份和核验人")
+    now = utc_now()
+    values = {
+        "source_id": source_id,
+        "author": author,
+        "title": title,
+        "edition": str(payload.get("edition", "")).strip(),
+        "place": str(payload.get("place", "")).strip(),
+        "publisher": str(payload.get("publisher", "")).strip(),
+        "year": year,
+        "type_code": str(payload.get("type_code", "")).strip().upper(),
+        "verification_status": "HUMAN_VERIFIED",
+        "verified_by": verified_by,
+        "verified_at": now,
+    }
+    with connect(project_root) as connection:
+        if connection.execute("SELECT 1 FROM sources WHERE source_id = ?", (source_id,)).fetchone() is None:
+            raise KeyError(f"unknown source: {source_id}")
+        connection.execute(
+            """INSERT OR REPLACE INTO source_citation_metadata(
+                   source_id, author, title, edition, place, publisher, year, type_code,
+                   verification_status, verified_by, verified_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            tuple(values[key] for key in (
+                "source_id", "author", "title", "edition", "place", "publisher", "year", "type_code",
+                "verification_status", "verified_by", "verified_at",
+            )),
+        )
+        append_audit(connection, "source_citation_metadata_verified", "source", source_id, {
+            "author": author, "title": title, "year": year, "verified_by": verified_by,
+        })
+    return values
 
 
 def _open_anomaly(connection: Any, anomaly_id: str, expected_scope: str) -> Any:

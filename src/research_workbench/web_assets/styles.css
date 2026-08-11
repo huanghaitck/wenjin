@@ -31,6 +31,11 @@ button:hover { border-color: var(--accent); }
 #notice { min-height: 34px; padding: 8px 20px; color: var(--muted); font-size: 13px; }
 #notice.error { color: var(--danger); }
 .agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(480px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
+.composer { position: relative; }
+.slash-menu { position: absolute; z-index: 20; right: 80px; bottom: calc(100% - 8px); left: 12px; max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 12px 30px #30271f2c; }
+.slash-menu button { width: 100%; margin: 2px 0; text-align: left; }
+.skill-group { display: grid; align-content: start; gap: 8px; }
+.skill-group > h2 { margin: 0; font: 600 16px Georgia, "Songti SC", serif; }
 .library-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: minmax(290px, .8fr) minmax(420px, 1.1fr) minmax(390px, 1fr); gap: 10px; padding: 0 12px 12px; }
 .article-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(500px, 1fr) 360px; gap: 10px; padding: 0 12px 12px; }
 .manuscript-panel, .section-editor, .authoring-control { display: grid; min-height: 0; }

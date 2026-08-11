@@ -131,6 +131,8 @@ class M5ResearchLibraryTests(unittest.TestCase):
     def test_skill_discovery_and_unsupported_candidate_remain_visible(self) -> None:
         skill = next(item for item in discover_skills() if item["name"] == "historical-material-intake")
         self.assertEqual(skill["execution"], "instructions_only")
+        self.assertEqual(skill["placement"], "user_action")
+        self.assertIn("library_intake", skill["compatible_actions"])
         self.assertEqual(len(skill["sha256"]), 64)
         unsupported = self.materials / "scan.jpg"
         unsupported.write_bytes(b"not-a-real-image")

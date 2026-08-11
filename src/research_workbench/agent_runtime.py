@@ -24,6 +24,7 @@ from .research_design import create_design_draft, current_shared_design
 from .research_events import create_event_candidates, event_coverage, event_state
 from .scholarship import research_state
 from .service import list_sources, project_status, source_view
+from .skill_registry import get_skill
 
 
 MAIN_ROLE = "main_reasoning"
@@ -426,6 +427,31 @@ def _thread_history(project_root: Path, thread_id: str) -> tuple[list[dict[str, 
     }
 
 
+def _resolve_skill_invocation(content: str) -> tuple[str, dict[str, Any] | None, str]:
+    match = re.match(r"^/([A-Za-z0-9_.-]+)(?:\s+(.*))?$", content, re.DOTALL)
+    if not match:
+        return content, None, ""
+    skill = get_skill(match.group(1))
+    if skill["placement"] != "user_action":
+        raise ValueError(f"skill is managed by the harness and cannot be invoked directly: {skill['name']}")
+    program = skill.get("agent_program") or {}
+    request_text = (match.group(2) or "").strip() or program.get("default_prompt", "")
+    if not request_text:
+        raise ValueError("slash skill invocation requires a research request")
+    snapshot = {
+        "name": skill["name"], "sha256": skill["sha256"], "skill_file": skill["skill_file"],
+        "invocation": skill["invocation"], "agent_program": program,
+    }
+    skill_context = (
+        "ACTIVE_VERSIONED_SKILL\n"
+        f"name={skill['name']}\nsha256={skill['sha256']}\n"
+        "Follow these instructions only within the workbench tool and approval boundaries. "
+        "Program-level evidence and write gates take precedence.\n\n"
+        + skill["instructions"]
+    )
+    return request_text, snapshot, skill_context
+
+
 def send_message(project_root: Path, thread_id: str, content: str,
                  context: dict[str, Any] | None = None,
                  planning_mode: str = "guided_execution") -> dict[str, Any]:
@@ -434,6 +460,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         raise ValueError("message content is required")
     if planning_mode not in {"independent_planning", "guided_execution"}:
         raise ValueError(f"unknown planning mode: {planning_mode}")
+    resolved_content, active_skill, skill_context = _resolve_skill_invocation(content)
     profile = _assigned_profile(project_root)
     shared_design = current_shared_design(project_root) if planning_mode == "guided_execution" else None
     history, history_receipt = (
@@ -452,6 +479,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "history_message_ids": history_receipt["message_ids"],
         "history_truncated": history_receipt["truncated"],
         "history_character_count": history_receipt["character_count"],
+        "active_skill": active_skill,
     }
     with connect(project_root) as connection:
         thread = connection.execute("SELECT thread_id FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
@@ -508,7 +536,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         })
         _append_run_event(connection, run_id, "user_message", {"message_id": message_id})
     try:
-        objective = content
+        objective = resolved_content
         if context:
             objective += "\n\nCURRENT_RESEARCH_CONTEXT " + _json({
                 "manuscript_id": context.get("manuscript_id", ""),
@@ -525,6 +553,8 @@ def send_message(project_root: Path, thread_id: str, content: str,
             else "APPROVED_SHARED_RESEARCH_DESIGN " + _json(shared_design) if shared_design
             else "GUIDED_EXECUTION: This project has no approved shared research design."
         )
+        if skill_context:
+            design_context += "\n\n" + skill_context
         _advance_run(project_root, run_id, objective, profile, design_context, history)
     except Exception as error:
         with connect(project_root) as connection:

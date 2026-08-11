@@ -20,11 +20,14 @@ from .agent_runtime import (
     thread_view,
 )
 from .authoring import (
+    add_style_profile_sample,
     authoring_state,
     create_historiography_entry,
     create_journal_template,
     create_reading_job,
+    create_style_profile,
     create_writing_proposal,
+    decide_style_profile,
     decide_writing_proposal,
     export_manuscript,
     import_manuscript,
@@ -58,6 +61,7 @@ from .scholarship import (
     create_browser_session,
     create_claim,
     create_evidence,
+    create_event_freeze,
     create_freeze,
     create_memory_candidate,
     decide_memory_candidate,
@@ -78,6 +82,7 @@ from .service import (
     reject_ocr_proposal,
     register_source,
     revise_page,
+    save_source_citation_metadata,
     source_view,
     submit_block_repair,
     submit_page_repair,
@@ -519,6 +524,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/source/ingest-docx-locator":
                 result = ingest_docx_locator(self.server.project_root, str(payload["source_id"]))
+            elif parsed.path == "/api/source/citation-metadata":
+                result = save_source_citation_metadata(
+                    self.server.project_root, str(payload["source_id"]), payload,
+                )
             elif parsed.path == "/api/research/search":
                 result = search(
                     self.server.project_root, str(payload["provider"]), str(payload["query"]),
@@ -535,6 +544,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/freeze/create":
                 result = create_freeze(
                     self.server.project_root, str(payload["title"]), [str(value) for value in payload["claim_ids"]],
+                )
+            elif parsed.path == "/api/freeze/events/create":
+                result = create_event_freeze(
+                    self.server.project_root,
+                    str(payload["title"]),
+                    [dict(value) for value in payload.get("claims", [])],
+                    [str(value) for value in payload.get("unresolved", [])],
+                    [str(value) for value in payload.get("prohibited_claims", [])],
                 )
             elif parsed.path == "/api/freeze/approve":
                 result = approve_freeze(
@@ -623,7 +640,24 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = create_writing_proposal(
                     self.server.project_root, str(payload["section_id"]), str(payload["operation"]),
                     str(payload.get("instruction", "")), str(payload.get("freeze_id", "")),
-                    evidence_ids=evidence_ids,
+                    evidence_ids=evidence_ids, skill_name=str(payload.get("skill_name", "")),
+                    style_profile_id=str(payload.get("style_profile_id", "")),
+                )
+            elif parsed.path == "/api/style-profile/create":
+                result = create_style_profile(
+                    self.server.project_root, str(payload["manuscript_id"]), str(payload["name"]),
+                    str(payload.get("owner_label", "")), str(payload.get("scope", "historical_articles")),
+                )
+            elif parsed.path == "/api/style-profile/add-sample":
+                result = add_style_profile_sample(
+                    self.server.project_root, str(payload["profile_id"]), str(payload["manuscript_id"]),
+                )
+            elif parsed.path == "/api/style-profile/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_style_profile(
+                    self.server.project_root, str(payload["profile_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]), str(payload["reason"]),
                 )
             elif parsed.path == "/api/writing/decide":
                 if not isinstance(payload.get("approved"), bool):

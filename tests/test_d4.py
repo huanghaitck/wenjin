@@ -105,10 +105,12 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
         html = (root / "index.html").read_text(encoding="utf-8")
         script = (root / "app.js").read_text(encoding="utf-8")
-        for marker in ('data-authoring="notes"', 'id="insertNote"', 'id="insertTable"', 'id="exportTemplate"', 'id="manuscriptStats"', 'id="manuscriptTitleEdit"'):
+        for marker in ('data-authoring="notes"', 'id="insertNote"', 'id="insertSection"', 'id="insertTable"', 'id="exportTemplate"', 'id="manuscriptStats"', 'id="manuscriptTitleEdit"'):
             self.assertIn(marker, html)
         self.assertIn("/api/note/create", script)
         self.assertIn("humanStates.has(item.block.verification_state)", script)
+        self.assertIn("const shownEvidence=new Set()", script)
+        self.assertIn("proposal.proposed_content.length", script)
 
 
 if __name__ == "__main__":

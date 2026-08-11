@@ -1,8 +1,28 @@
 project: historical-research-workbench
-updated_at: "2026-08-11"
-current_stage: POST_D5_FIELD_ANCHORED_EVENT_SLICE_COMPLETE
-last_completed_stage: FIELD_ANCHORED_RESEARCH_EVENT_AND_REAL_AGENT_DOGFOOD
-active_human_gate: CORE_EVENT_BATCH_READING_AND_BOUNDED_ARCHIVE_TICKETS
+updated_at: "2026-08-12"
+current_stage: DEMO_1_END_TO_END_DOGFOOD_COMPLETE
+last_completed_stage: SKILLS_LIBRARY_TANGDU_EXPORT_AND_MEMORY_LAYERING
+active_human_gate: AUTHOR_IDENTITY_AFFILIATION_AND_SUBMISSION_METADATA
+
+current_demo:
+  app_version: 1.0.0.dev1
+  project_database_schema: 15
+  full_test_suite: 152_passed
+  home: research_dialogue
+  skills_and_plugins_library: implemented_and_gui_tested
+  slash_skill_invocation: implemented_and_gui_tested
+  sequential_reference_export: implemented_and_gui_tested
+  template_specific_review_preview: implemented_and_gui_tested
+  approved_research_design_in_review_context: implemented
+  latest_human_page_mapping_in_review_context: implemented
+  word_render_pages_checked: 12
+  qinling_demo_manuscript_status: blocked_only_for_author_submission_metadata
+  user_manual: docs/USER_MANUAL_ZH.md
+  memory_layering_adr: docs/adr/0013-information-knowledge-and-memory-layering.md
+  library_database: separate_sqlite
+  project_knowledge_database: per_project_sqlite
+  runtime_records_promote_automatically: false
+  external_long_term_memory_auto_write: false
 
 research_design_workflow:
   status: implemented_and_real_gui_tested

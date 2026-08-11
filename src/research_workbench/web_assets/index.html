@@ -13,6 +13,7 @@
       <button id="agentMode" class="mode-active">研究对话</button>
       <button id="libraryMode">研究图书馆</button>
       <button id="articleMode">文章工作台</button>
+      <button id="skillsMode">技能与插件</button>
       <button id="settingsMode">项目设置</button>
     </div>
   </header>
@@ -78,6 +79,7 @@
       <div id="messages" class="messages"></div>
       <div class="composer">
         <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
+        <div id="slashMenu" class="slash-menu" hidden></div>
         <button id="sendMessage" class="primary-inline">发送</button>
       </div>
     </section>
@@ -101,6 +103,16 @@
     </aside>
   </main>
 
+  <main id="skillsWorkbench" class="settings-workbench" hidden>
+    <section class="settings-main surface">
+      <header class="agent-heading">
+        <div><h1>技能与插件库</h1><p>研究动作可用 / 唤起；Harness 策略和程序集成按权限自动运行</p></div>
+        <input id="skillQuery" placeholder="搜索技能、产物或 Agent 程序">
+      </header>
+      <div id="skillCatalog" class="settings-grid"></div>
+    </section>
+  </main>
+
   <main id="articleWorkbench" class="article-workbench" hidden>
     <aside class="manuscript-panel surface">
       <header class="agent-heading"><div><h2>稿件与章节</h2><p>原稿和历史版本不会覆盖</p></div></header>
@@ -121,7 +133,7 @@
       <div class="editor-toolbar">
         <label class="toolbar-select">稿件题名<input id="manuscriptTitleEdit" aria-label="稿件题名"></label>
         <button id="paragraphButton">正文</button><button id="quoteButton">引文</button>
-        <button id="insertTable">插入表格</button><button id="insertNote">插入注释</button>
+        <button id="insertSection">在此之前新增章节</button><button id="insertSectionAfter">在此之后新增章节</button><button id="insertTable">插入表格</button><button id="insertNote">插入注释</button>
         <button id="saveDocument" class="primary-inline">保存新修订</button>
         <label class="toolbar-select">投稿模板<select id="exportTemplate"></select></label>
         <button id="exportMarkdown">导出 Markdown</button><button id="exportDocx">导出 Word</button>
@@ -187,6 +199,21 @@
         <label>印刷页码<input id="printedPage" placeholder="按原页页眉或页脚填写"></label>
         <button id="savePrintedPage">保存页码关系</button>
       </div>
+      <details class="citation-metadata-panel">
+        <summary>核验这份文献的引文元数据</summary>
+        <div class="review-fields">
+          <label>作者<input id="citationAuthor"></label>
+          <label>题名<input id="citationTitle"></label>
+          <label>版本/卷册<input id="citationEdition"></label>
+          <label>出版地<input id="citationPlace"></label>
+          <label>出版者<input id="citationPublisher"></label>
+          <label>年份<input id="citationYear"></label>
+          <label>文献类型码<input id="citationTypeCode" placeholder="如 M、J、A"></label>
+          <label>核验人<input id="citationVerifiedBy" value="human-reviewer"></label>
+          <button id="saveCitationMetadata">保存人工核验元数据</button>
+        </div>
+        <small id="citationMetadataState">未核验的题名页信息不会被导出器补造。</small>
+      </details>
       <section class="model-assist">
         <div class="model-heading">
           <div><h2>模型修复建议</h2><p id="ocrCapability">正在检查视觉模型……</p></div>
