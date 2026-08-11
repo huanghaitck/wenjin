@@ -97,6 +97,10 @@ class ModelActionFormatError(ValueError):
     """The provider answered, but its action could not be parsed safely."""
 
 
+class EmptyModelContentError(RuntimeError):
+    """The provider returned a response envelope without usable content."""
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
@@ -515,12 +519,27 @@ def send_message(project_root: Path, thread_id: str, content: str,
 def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile,
                  design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
     observations: list[dict[str, Any]] = []
+    empty_content_retries = 0
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
         try:
             action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
                 profile, objective, observations, remaining, design_context, history
             )
+        except EmptyModelContentError as error:
+            if empty_content_retries:
+                raise
+            empty_content_retries += 1
+            message = str(error)
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "model_response_empty", {"error": message})
+            observations.append({
+                "tool": "model.response",
+                "arguments": {},
+                "result": None,
+                "error": message + ". Retry the same action once and return one JSON object.",
+            })
+            continue
         except ModelActionFormatError as error:
             message = f"invalid model action: {error}"
             with connect(project_root) as connection:
@@ -656,7 +675,7 @@ def _model_action(
     else:
         raise ValueError(f"unsupported agent provider: {profile.provider}")
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("agent provider returned empty content")
+        raise EmptyModelContentError("agent provider returned empty content")
     try:
         return _parse_action(content)
     except (json.JSONDecodeError, ValueError) as error:

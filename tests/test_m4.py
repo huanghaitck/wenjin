@@ -11,6 +11,7 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 from research_workbench.agent_runtime import (
+    EmptyModelContentError,
     ModelActionFormatError,
     ModelProfile,
     _model_action,
@@ -212,6 +213,36 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(run["status"], "COMPLETED")
         self.assertIn("invalid model action", observations[1][0]["error"])
         self.assertIn("model_action_invalid", [event["event_type"] for event in run["events"]])
+        self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
+
+    def test_model_retries_empty_content_once_without_restarting_the_run(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions: list[object] = [
+            EmptyModelContentError("agent provider returned empty content"),
+            {"type": "final", "content": "空响应后已在同一运行恢复。"},
+        ]
+        observations: list[list[dict[str, object]]] = []
+
+        def next_action(*args: object) -> dict[str, object]:
+            observations.append(list(args[2]))
+            action = actions.pop(0)
+            if isinstance(action, Exception):
+                raise action
+            return action
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime._model_action", side_effect=next_action):
+                result = send_message(self.project, self.thread["thread_id"], "完成一次来源定位")
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertIn("Retry the same action once", observations[1][0]["error"])
+        self.assertIn("model_response_empty", [event["event_type"] for event in run["events"]])
         self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
 
     def test_independent_planning_hides_baseline_and_guided_mode_injects_only_shared_design(self) -> None:

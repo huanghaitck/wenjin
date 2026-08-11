@@ -13,9 +13,9 @@
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 12 |
+| Medium | 14 |
 | Low | 0 |
-| **Total** | **12** |
+| **Total** | **14** |
 
 The first nine findings were fixed in bounded Git branches and verified by the earlier 99-test suite.
 The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` event
@@ -23,7 +23,9 @@ The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` e
 explicitly below evidence freeze. The corrected 28 January row was then approved after all 19 blocks
 were verified; it remains below evidence freeze. ISSUE-010 remains under investigation and created no
 partial row. ISSUE-011 and ISSUE-012 have bounded fixes and regression coverage. The current
-environment check and full 100-test suite pass before commit.
+environment check and full 100-test suite passed before their commit. ISSUE-013 is handled by an
+exact human repair plus a shorter verbatim span; ISSUE-014 has a bounded one-retry fix. The current
+environment check and full 101-test suite pass.
 
 ## Issues
 
@@ -384,3 +386,64 @@ Evidence screenshot:
 
 Fixed-state screenshot:
 `C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-012-fixed-page-number-synced.png`
+
+### ISSUE-013: One extracted block mixes the end of 29 January with the 30 January heading
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | content / evidence boundary |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — static page image and extracted block |
+
+**Description**
+
+On physical page 258 / printed page 239, the first printed line completes the 29 January paragraph
+with `700 li weit abwärts.`. The marginal `30. Januar,` marker belongs before the next paragraph, but
+the extractor inserted it inside `ein hoher`, producing one block that contains the prior-day ending,
+the next-day marker and next-day body text. The model correctly stopped before that block and marked
+the sentence incomplete; approving the draft would therefore have frozen an artificial boundary.
+
+The block was manually repaired to restore reading order without changing the original image. The
+29 January row was rejected and must be resubmitted with the exact short span ending at
+`700 li weit abwärts.`; the rest of the repaired block belongs to 30 January. This uses the existing
+block-plus-verbatim-substring gate and avoids adding a speculative block-splitting subsystem.
+
+**Repro Steps**
+
+1. Create the 29 January row from P0257_B004 through P0258_B003.
+2. Open physical page 258 and compare B004 with the original image.
+3. Observe that B003 ends mid-sentence while B004 begins with its completion and then interleaves
+   `30. Januar,` into the following sentence.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-013-one-block-spans-two-dates-detail-2.png`
+
+### ISSUE-014: One empty provider message fails the whole research run
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | reliability / ux |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — failed run is durably visible in the thread |
+
+**Description**
+
+When asked to resubmit the corrected 29 January boundary, DeepSeek returned a normal response
+envelope with empty message content. The workbench immediately marked the run failed before any tool
+call, forcing the researcher to resend a long correction even though no unsafe data had been written.
+
+The runtime now records `model_response_empty` and retries the same action once inside the same run,
+including the original objective and thread history. A second empty response still fails the run; the
+harness does not hide a persistent provider problem or retry indefinitely.
+
+**Repro Steps**
+
+1. Send the page-scoped correction in the existing guided thread.
+2. Receive an empty assistant content field from the configured provider.
+3. Observe the thread switch to `FAILED` with reason `agent provider returned empty content` and no
+   event draft created.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-014-empty-model-content-fails-run.png`
