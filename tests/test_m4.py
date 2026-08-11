@@ -217,6 +217,31 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("model_action_invalid", [event["event_type"] for event in run["events"]])
         self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
 
+    def test_repeated_malformed_actions_fail_after_one_retry(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch(
+                "research_workbench.agent_runtime._model_action",
+                side_effect=ModelActionFormatError("Expecting ',' delimiter"),
+            ) as model_action:
+                with self.assertRaisesRegex(RuntimeError, "invalid model action"):
+                    send_message(self.project, self.thread["thread_id"], "完成一个长动作")
+
+        self.assertEqual(model_action.call_count, 2)
+        run = thread_view(self.project, self.thread["thread_id"])["runs"][0]
+        self.assertEqual(run["status"], "FAILED")
+        self.assertEqual(
+            [event["event_type"] for event in run["events"]].count("model_action_invalid"),
+            2,
+        )
+        self.assertIn("run_failed", [event["event_type"] for event in run["events"]])
+
     def test_event_batch_can_mutate_only_once_per_run(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",

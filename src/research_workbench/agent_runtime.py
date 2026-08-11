@@ -530,6 +530,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                  design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
     observations: list[dict[str, Any]] = []
     empty_content_retries = 0
+    action_format_retries = 0
     required_tool = _explicit_required_tool(objective)
     missing_tool_retries = 0
     for _ in range(MAX_TOOL_CALLS + 1):
@@ -556,6 +557,9 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             message = f"invalid model action: {error}"
             with connect(project_root) as connection:
                 _append_run_event(connection, run_id, "model_action_invalid", {"error": message})
+            if action_format_retries >= 1:
+                raise RuntimeError(message) from error
+            action_format_retries += 1
             observations.append({
                 "tool": "model.response",
                 "arguments": {},
