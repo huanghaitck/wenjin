@@ -4,8 +4,10 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import pymupdf as fitz
 
@@ -20,6 +22,7 @@ from research_workbench.service import (
     record_ocr_proposal,
     register_source,
     reject_ocr_proposal,
+    revise_page,
     source_view,
     submit_page_repair,
 )
@@ -50,6 +53,10 @@ class FakeResponse:
 
 
 class M3OcrProposalTests(unittest.TestCase):
+    def test_vision_capability_declares_single_concurrency(self) -> None:
+        state = capability(OcrSettings(provider="mock", model="mock-vision"))
+        self.assertEqual(state["max_concurrency"], 1)
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
@@ -166,6 +173,23 @@ class M3OcrProposalTests(unittest.TestCase):
         self.assertIn("invalid_printed_page", normalized["warnings"])
         self.assertIn("block_regions_missing", normalized["warnings"])
 
+    def test_collapsed_page_text_is_split_into_reviewable_paragraphs(self) -> None:
+        normalized = normalize_ocr_content(json.dumps({
+            "printed_page": True,
+            "blocks": [{"type": "paragraph", "text": "651\nFirst paragraph.\n\nSecond paragraph."}],
+        }))
+        self.assertEqual(normalized["printed_page"], "651")
+        self.assertEqual(
+            [block["text"] for block in normalized["blocks"]],
+            ["First paragraph.", "Second paragraph."],
+        )
+        self.assertIn("printed_page_recovered_from_leading_line", normalized["warnings"])
+        self.assertIn("single_block_split_on_blank_lines", normalized["warnings"])
+
+    def test_truncated_json_is_not_downgraded_to_a_text_proposal(self) -> None:
+        with self.assertRaisesRegex(ValueError, "incomplete or invalid JSON"):
+            normalize_ocr_content('{"printed_page": 659, "blocks": [{"text": "truncated"}')
+
     def test_clean_page_is_rejected_before_a_model_call(self) -> None:
         anomaly = next(
             item for item in source_view(self.project, self.source["source_id"])["anomalies"]
@@ -182,6 +206,83 @@ class M3OcrProposalTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 create_ocr_proposal(self.project, self.page["page_id"], self.settings)
         mocked.assert_not_called()
+
+    def test_unverified_page_without_anomaly_can_request_model_assisted_review(self) -> None:
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            connection.execute("UPDATE anomalies SET status = 'resolved', resolved_at = 'test'")
+            connection.execute(
+                "UPDATE pages SET verification_state = 'machine_parsed', use_state = 'research_usable'"
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        response = ({"id": "mock-response"}, {
+            "printed_page": None,
+            "blocks": [{"order": 1, "type": "paragraph", "text": "Proposed text", "region": None}],
+            "uncertain_characters": [],
+            "warnings": [],
+        })
+        with patch("research_workbench.service.request_page_ocr", return_value=response) as requested:
+            proposal = create_ocr_proposal(self.project, self.page["page_id"], self.settings)
+        requested.assert_called_once()
+        proposal_image = requested.call_args.args[0]
+        pixmap = fitz.Pixmap(proposal_image)
+        self.assertEqual((pixmap.width, pixmap.height), (1440, 1920))
+        self.assertEqual(proposal["status"], "pending")
+        view = source_view(self.project, self.source["source_id"])
+        generated = [
+            item for item in view["anomalies"]
+            if item["scope_type"] == "page" and item["status"] == "open"
+        ]
+        self.assertEqual(len(generated), 1)
+        self.assertEqual(generated[0]["target_id"], self.page["page_id"])
+        self.assertEqual(generated[0]["category"], "content")
+
+    def test_pending_proposal_editor_can_add_and_remove_blocks(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("remove.textContent = '删除此块'", script)
+        self.assertIn("addBlock.textContent = '新增一块'", script)
+        self.assertIn("order: index + 1", script)
+
+    def test_human_repaired_page_can_be_structurally_revised_again(self) -> None:
+        anomaly = next(
+            item for item in source_view(self.project, self.source["source_id"])["anomalies"]
+            if item["scope_type"] == "page"
+        )
+        submit_page_repair(
+            self.project,
+            anomaly["anomaly_id"],
+            {"blocks": [{"order": 1, "type": "paragraph", "text": "Wrong merged text"}]},
+            "reviewer",
+            "First review.",
+        )
+        revised = revise_page(
+            self.project,
+            self.page["page_id"],
+            {"blocks": [
+                {"order": 1, "type": "paragraph", "text": "Correct first paragraph."},
+                {"order": 2, "type": "heading", "text": "Visible heading"},
+            ]},
+            "reviewer",
+            "Second review found a structural omission.",
+        )
+        self.assertEqual(revised["target_id"], self.page["page_id"])
+        active = list_blocks(self.project, self.source["source_id"])
+        self.assertEqual(
+            [(item["block_type"], item["effective_text"]) for item in active],
+            [("paragraph", "Correct first paragraph."), ("heading", "Visible heading")],
+        )
+
+    def test_page_number_save_does_not_reload_pending_edits(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        handler = script.split("$('savePrintedPage').onclick", 1)[1].split("function renderSettings", 1)[0]
+        self.assertNotIn("loadSource", handler)
+        self.assertIn("page.printed_page = $('printedPage').value.trim()", handler)
 
     def test_accepting_one_comparator_supersedes_other_pending_proposals(self) -> None:
         accepted = self.proposal()
@@ -213,10 +314,20 @@ class M3OcrProposalTests(unittest.TestCase):
             api_key="secret",
         )
         with patch("research_workbench.vision.urlopen", return_value=FakeResponse(openai_raw)) as mocked:
-            _, normalized = request_page_ocr(image, openai)
+            _, normalized = request_page_ocr(image, openai, {
+                "printed_page": "659",
+                "blocks": [{"order": 1, "type": "paragraph", "text": "старый текстъ"}],
+            })
             request = mocked.call_args.args[0]
         self.assertEqual(request.full_url, "https://example.invalid/v1/chat/completions")
-        self.assertEqual(json.loads(request.data)["model"], "glm-4.6v-flash")
+        openai_payload = json.loads(request.data)
+        self.assertEqual(openai_payload["model"], "glm-4.6v-flash")
+        self.assertEqual(openai_payload["thinking"], {"type": "disabled"})
+        self.assertEqual(openai_payload["max_tokens"], 4096)
+        self.assertEqual(openai_payload["messages"][0]["content"][0]["type"], "image_url")
+        prompt = openai_payload["messages"][0]["content"][1]["text"]
+        self.assertIn("старый текстъ", prompt)
+        self.assertIn("Never modernize spelling", prompt)
         self.assertEqual(normalized["blocks"][0]["order"], 1)
 
         ollama_raw = {"message": {"content": content}}
@@ -232,6 +343,22 @@ class M3OcrProposalTests(unittest.TestCase):
         self.assertEqual(request.full_url, "http://127.0.0.1:11434/api/chat")
         self.assertEqual(payload["model"], "qwen3-vl:4b-instruct-q4_K_M")
         self.assertFalse(payload["stream"])
+
+    def test_provider_http_error_exposes_only_bounded_error_fields(self) -> None:
+        image = self.root / "page.png"
+        image.write_bytes(b"fake-png")
+        settings = OcrSettings(
+            provider="openai_compatible", model="glm-4.6v",
+            base_url="https://example.invalid/v1", api_key="secret",
+        )
+        body = BytesIO(json.dumps({
+            "error": {"code": "1305", "message": "model is busy", "request": "must stay hidden"}
+        }).encode("utf-8"))
+        failure = HTTPError(settings.base_url, 429, "Too Many Requests", {}, body)
+        with patch("research_workbench.vision.urlopen", side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, r"HTTP 429: 1305 · model is busy") as raised:
+                request_page_ocr(image, settings)
+        self.assertNotIn("must stay hidden", str(raised.exception))
 
 
 if __name__ == "__main__":

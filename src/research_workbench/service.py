@@ -5,8 +5,11 @@ import hashlib
 import json
 import shutil
 import uuid
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
+
+import pymupdf
 
 from . import __version__
 from .db import SCHEMA_VERSION, append_audit, connect, initialize_database, utc_now
@@ -15,6 +18,7 @@ from .vision import (
     PROMPT_VERSION,
     OcrSettings,
     normalize_ocr_content,
+    page_ocr_prompt,
     request_page_ocr,
 )
 
@@ -425,6 +429,7 @@ def submit_page_repair(
         current_blocks = [dict(row) for row in connection.execute(
             "SELECT * FROM blocks WHERE page_id = ? ORDER BY block_order", (page["page_id"],)
         ).fetchall()]
+        relation_snapshots = _page_relation_snapshots(connection, page["page_id"])
         current = {"page": dict(page), "blocks": current_blocks}
         repair_id = f"REP_{uuid.uuid4().hex}"
         _insert_repair(connection, repair_id, anomaly, corrected_page, [page["page_id"]], reviewer, reason,
@@ -482,6 +487,9 @@ def submit_page_repair(
                         block["block_id"],
                     ),
                 )
+        relation_changes = _remap_page_relation_endpoints(
+            connection, page["page_id"], anomaly["source_id"], relation_snapshots,
+        )
         for relation_update in corrected_page.get("relation_updates", []):
             relation_id = str(relation_update["relation_id"])
             relation = connection.execute(
@@ -531,8 +539,186 @@ def submit_page_repair(
                 ("resolved", utc_now(), repair_id, anomaly["source_id"]),
             )
         _recalculate_source_state(connection, anomaly["source_id"])
-        append_audit(connection, "page_repaired", "page", page["page_id"], {"repair_id": repair_id})
+        append_audit(
+            connection,
+            "page_repaired",
+            "page",
+            page["page_id"],
+            {"repair_id": repair_id, "relation_endpoint_changes": relation_changes},
+        )
         return {"repair_id": repair_id, "scope_type": "page", "target_id": page["page_id"]}
+
+
+def _page_relation_snapshots(connection: Any, page_id: str) -> list[dict[str, Any]]:
+    rows = connection.execute(
+        """SELECT r.*,
+                  fb.page_id AS from_page_id, fb.block_type AS from_block_type,
+                  COALESCE(fb.human_text, fb.machine_text) AS from_text,
+                  tb.page_id AS to_page_id, tb.block_type AS to_block_type,
+                  COALESCE(tb.human_text, tb.machine_text) AS to_text
+           FROM page_relations r
+           LEFT JOIN blocks fb ON fb.block_id = r.from_block_id
+           LEFT JOIN blocks tb ON tb.block_id = r.to_block_id
+           WHERE fb.page_id = ? OR tb.page_id = ?""",
+        (page_id, page_id),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _remap_page_relation_endpoints(
+    connection: Any,
+    page_id: str,
+    source_id: str,
+    snapshots: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    active = [dict(row) for row in connection.execute(
+        """SELECT block_id, block_order, block_type,
+                  COALESCE(human_text, machine_text) AS effective_text
+           FROM blocks WHERE page_id = ? AND use_state != 'superseded'
+           ORDER BY block_order""",
+        (page_id,),
+    ).fetchall()]
+    eligible = [block for block in active if block["block_type"] in {"paragraph", "footnote"}]
+    changes: list[dict[str, Any]] = []
+
+    def normalized(value: str | None) -> str:
+        return " ".join((value or "").split())
+
+    for relation in snapshots:
+        endpoints = {
+            "from": relation["from_block_id"],
+            "to": relation["to_block_id"],
+        }
+        invalidated = False
+        for side in ("from", "to"):
+            if relation[f"{side}_page_id"] != page_id:
+                continue
+            old_text = normalized(relation[f"{side}_text"])
+            old_type = relation[f"{side}_block_type"]
+            same_type = [block for block in eligible if block["block_type"] == old_type]
+            matches = [
+                (
+                    SequenceMatcher(None, old_text, normalized(block["effective_text"])).ratio(),
+                    block,
+                )
+                for block in same_type
+            ]
+            best_ratio, best = max(matches, key=lambda item: item[0]) if matches else (0.0, None)
+            if best is not None and best_ratio >= 0.8:
+                endpoints[side] = best["block_id"]
+                continue
+
+            candidates = same_type or [block for block in eligible if block["block_type"] == "paragraph"] or eligible
+            endpoints[side] = (candidates[-1] if side == "from" else candidates[0])["block_id"] if candidates else None
+            invalidated = True
+
+        endpoint_changed = (
+            endpoints["from"] != relation["from_block_id"]
+            or endpoints["to"] != relation["to_block_id"]
+        )
+        if endpoint_changed:
+            connection.execute(
+                """UPDATE page_relations SET from_block_id = ?, to_block_id = ?
+                   WHERE relation_id = ?""",
+                (endpoints["from"], endpoints["to"], relation["relation_id"]),
+            )
+        if invalidated:
+            machine_value = {
+                "continues": None,
+                "confidence": "requires_human",
+                "reason": "page structure changed after repair",
+            }
+            connection.execute(
+                """UPDATE page_relations
+                   SET machine_value = ?, human_value = NULL, verification_state = 'needs_review'
+                   WHERE relation_id = ?""",
+                (json.dumps(machine_value, ensure_ascii=False, sort_keys=True), relation["relation_id"]),
+            )
+            anomaly_id = f"{relation['relation_id']}:A_ENDPOINT_REVIEW"
+            connection.execute(
+                """INSERT INTO anomalies(
+                       anomaly_id, source_id, scope_type, target_id, severity, category,
+                       message, status, created_at, resolved_at, repair_id
+                   ) VALUES (?, ?, 'relation', ?, 'local', 'location', ?, 'open', ?, NULL, NULL)
+                   ON CONFLICT(anomaly_id) DO UPDATE SET
+                       message = excluded.message, status = 'open', created_at = excluded.created_at,
+                       resolved_at = NULL, repair_id = NULL""",
+                (
+                    anomaly_id,
+                    source_id,
+                    relation["relation_id"],
+                    "Page structure changed this relation endpoint; compare both original pages again.",
+                    utc_now(),
+                ),
+            )
+        if endpoint_changed or invalidated:
+            change = {
+                "relation_id": relation["relation_id"],
+                "before": {
+                    "from_block_id": relation["from_block_id"],
+                    "to_block_id": relation["to_block_id"],
+                },
+                "after": endpoints,
+                "human_decision_preserved": not invalidated,
+            }
+            changes.append(change)
+            append_audit(
+                connection,
+                "relation_endpoint_remapped",
+                "relation",
+                relation["relation_id"],
+                change,
+            )
+    return changes
+
+
+def revise_page(
+    project_root: Path,
+    page_id: str,
+    corrected_page: dict[str, Any],
+    reviewer: str,
+    reason: str,
+) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        page = connection.execute(
+            "SELECT page_id, source_id, page_type FROM pages WHERE page_id = ?",
+            (page_id,),
+        ).fetchone()
+        if page is None:
+            raise KeyError(f"unknown page: {page_id}")
+        if page["page_type"] == "docx_locator":
+            raise ValueError("page revisions require an original PDF page")
+        anomaly = connection.execute(
+            """SELECT anomaly_id FROM anomalies
+               WHERE scope_type = 'page' AND target_id = ? AND status = 'open'
+               ORDER BY created_at, anomaly_id LIMIT 1""",
+            (page_id,),
+        ).fetchone()
+        if anomaly is None:
+            anomaly_id = f"ANO_{uuid.uuid4().hex}"
+            connection.execute(
+                """INSERT INTO anomalies(
+                       anomaly_id, source_id, scope_type, target_id, severity, category,
+                       message, status, created_at, resolved_at, repair_id
+                   ) VALUES (?, ?, 'page', ?, 'local', 'content', ?, 'open', ?, NULL, NULL)""",
+                (
+                    anomaly_id,
+                    page["source_id"],
+                    page_id,
+                    "Researcher requested another full-page structural correction.",
+                    utc_now(),
+                ),
+            )
+            append_audit(
+                connection,
+                "page_revision_requested",
+                "page",
+                page_id,
+                {"anomaly_id": anomaly_id},
+            )
+        else:
+            anomaly_id = str(anomaly["anomaly_id"])
+    return submit_page_repair(project_root, anomaly_id, corrected_page, reviewer, reason)
 
 
 def verify_page(project_root: Path, page_id: str, reviewer: str, reason: str) -> dict[str, Any]:
@@ -760,6 +946,34 @@ def page_image_path(project_root: Path, page_id: str) -> Path:
     return candidate
 
 
+def ocr_page_image_path(project_root: Path, page_id: str, render_scale: float = 4.0) -> Path:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            """SELECT p.source_id, p.physical_page, sv.project_path
+               FROM pages p JOIN source_versions sv ON sv.source_id = p.source_id
+               WHERE p.page_id = ? ORDER BY sv.created_at DESC LIMIT 1""",
+            (page_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown page: {page_id}")
+    source_path = (project_root.resolve() / Path(str(row["project_path"]))).resolve()
+    if project_root.resolve() not in source_path.parents or not source_path.is_file():
+        raise FileNotFoundError(f"source PDF is missing: {source_path}")
+    image_path = (
+        project_root / "sources" / str(row["source_id"]) / "derived" / "ocr-pages"
+        / f"page-{int(row['physical_page']):04d}@{render_scale:g}x.png"
+    )
+    if image_path.is_file():
+        return image_path
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    with pymupdf.open(source_path) as document:
+        pixmap = document[int(row["physical_page"]) - 1].get_pixmap(
+            matrix=pymupdf.Matrix(render_scale, render_scale), alpha=False
+        )
+        pixmap.save(image_path)
+    return image_path
+
+
 def create_ocr_proposal(
     project_root: Path,
     page_id: str,
@@ -767,21 +981,67 @@ def create_ocr_proposal(
 ) -> dict[str, Any]:
     settings = settings or OcrSettings.from_environment()
     with connect(project_root) as connection:
+        page = connection.execute(
+            """SELECT page_id, source_id, page_type, verification_state, machine_payload_json
+               FROM pages WHERE page_id = ?""",
+            (page_id,),
+        ).fetchone()
+        if page is None:
+            raise KeyError(f"unknown page: {page_id}")
+        if page["page_type"] == "docx_locator":
+            raise ValueError("OCR proposals require an original PDF page")
+        if page["verification_state"] in {"human_verified", "human_repaired"}:
+            raise ValueError("OCR proposals cannot reopen a human-verified page")
         eligible = connection.execute(
-            """SELECT 1 FROM anomalies
-               WHERE scope_type = 'page' AND target_id = ? AND status = 'open' LIMIT 1""",
+            """SELECT anomaly_id FROM anomalies
+               WHERE scope_type = 'page' AND target_id = ? AND status = 'open'
+               ORDER BY created_at, anomaly_id LIMIT 1""",
             (page_id,),
         ).fetchone()
         if eligible is None:
-            raise ValueError("OCR proposals require an open page anomaly")
-    image_path = page_image_path(project_root, page_id)
-    raw_response, normalized_payload = request_page_ocr(image_path, settings)
+            anomaly_id = _stable_id("ANO", page_id, "model-assisted-review")
+            now = utc_now()
+            connection.execute(
+                """INSERT INTO anomalies(
+                       anomaly_id, source_id, scope_type, target_id, severity, category,
+                       message, status, created_at, resolved_at, repair_id
+                   ) VALUES (?, ?, 'page', ?, 'local', 'content', ?, 'open', ?, NULL, NULL)""",
+                (
+                    anomaly_id,
+                    page["source_id"],
+                    page_id,
+                    "Researcher requested model-assisted retranscription of this unverified page.",
+                    now,
+                ),
+            )
+            _recalculate_source_state(connection, page["source_id"])
+            append_audit(
+                connection,
+                "page_review_requested",
+                "page",
+                page_id,
+                {"anomaly_id": anomaly_id, "reason": "model_assisted_retranscription"},
+            )
+    machine_payload = json.loads(page["machine_payload_json"])
+    candidate_payload = {
+        "printed_page": machine_payload.get("printed_page"),
+        "blocks": [
+            {"order": index, "type": block.get("type", "paragraph"), "text": block.get("text", "")}
+            for index, block in enumerate(machine_payload.get("blocks", []), start=1)
+            if str(block.get("text", "")).strip()
+        ],
+    }
+    prompt = page_ocr_prompt(candidate_payload)
+    image_path = ocr_page_image_path(project_root, page_id)
+    raw_response, normalized_payload = request_page_ocr(image_path, settings, candidate_payload)
     return record_ocr_proposal(
         project_root,
         page_id,
         settings,
         raw_response,
         normalized_payload,
+        image_path,
+        prompt,
     )
 
 
@@ -791,11 +1051,13 @@ def record_ocr_proposal(
     settings: OcrSettings,
     raw_response: dict[str, Any],
     normalized_payload: dict[str, Any],
+    proposal_image_path: Path | None = None,
+    proposal_prompt: str = PAGE_OCR_PROMPT,
 ) -> dict[str, Any]:
     normalized_payload = normalize_ocr_content(
         json.dumps(normalized_payload, ensure_ascii=False)
     )
-    image_path = page_image_path(project_root, page_id)
+    image_path = proposal_image_path or page_image_path(project_root, page_id)
     proposal_id = f"OCR_{uuid.uuid4().hex}"
     with connect(project_root) as connection:
         page = connection.execute(
@@ -830,7 +1092,7 @@ def record_ocr_proposal(
                 settings.provider,
                 settings.model,
                 PROMPT_VERSION,
-                _json_hash(PAGE_OCR_PROMPT),
+                _json_hash(proposal_prompt),
                 page["source_sha256"],
                 _file_hash(image_path),
                 json.dumps(raw_response, ensure_ascii=False, sort_keys=True),

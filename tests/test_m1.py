@@ -11,12 +11,14 @@ from research_workbench.db import connect
 from research_workbench.service import (
     correct_block,
     correct_printed_page,
+    correct_relation,
     import_structure,
     initialize_project,
     list_anomalies,
     list_blocks,
     project_status,
     register_source,
+    source_view,
     submit_block_repair,
     submit_page_repair,
     verify_block,
@@ -124,8 +126,96 @@ class M1KernelTests(unittest.TestCase):
                 "SELECT human_value, verification_state FROM page_relations WHERE relation_id = ?",
                 (relation_id,),
             ).fetchone()
-        self.assertEqual(json.loads(relation["human_value"]), True)
+            self.assertEqual(json.loads(relation["human_value"]), True)
+            self.assertEqual(relation["verification_state"], "human_repaired")
+
+    def test_page_repair_remaps_semantically_same_relation_endpoint(self) -> None:
+        self.import_default()
+        view = source_view(self.project, self.source["source_id"])
+        relation = view["relations"][0]
+        correct_relation(
+            self.project,
+            relation["relation_id"],
+            relation["from_block_id"],
+            relation["to_block_id"],
+            True,
+            "human-reviewer",
+            "Checked both original pages.",
+        )
+        page_anomaly = next(
+            row for row in list_anomalies(self.project)
+            if row["scope_type"] == "page" and row["target_id"].endswith(":P1")
+        )
+        submit_page_repair(
+            self.project,
+            page_anomaly["anomaly_id"],
+            {
+                "blocks": [
+                    {"order": 1, "type": "paragraph", "text": "The expedition left the station in spring."},
+                    {"order": 2, "type": "footnote", "text": "A newly separated page note."},
+                    {"order": 3, "type": "paragraph", "text": "The sentence continues toward the page boundary"},
+                ]
+            },
+            "human-reviewer",
+            "Separated the bottom note while preserving the final paragraph.",
+        )
+        repaired = source_view(self.project, self.source["source_id"])
+        relation = repaired["relations"][0]
+        blocks = {block["block_id"]: block for page in repaired["pages"] for block in page["blocks"]}
+        self.assertEqual(blocks[relation["from_block_id"]]["block_type"], "paragraph")
+        self.assertEqual(
+            blocks[relation["from_block_id"]]["effective_text"],
+            "The sentence continues toward the page boundary",
+        )
+        self.assertEqual(relation["effective_value"], {"continues": True})
         self.assertEqual(relation["verification_state"], "human_repaired")
+        self.assertFalse(any(
+            item["status"] == "open" and item["scope_type"] == "relation"
+            for item in repaired["anomalies"]
+        ))
+
+    def test_page_repair_reopens_relation_when_endpoint_meaning_changes(self) -> None:
+        self.import_default()
+        view = source_view(self.project, self.source["source_id"])
+        relation = view["relations"][0]
+        correct_relation(
+            self.project,
+            relation["relation_id"],
+            relation["from_block_id"],
+            relation["to_block_id"],
+            True,
+            "human-reviewer",
+            "Checked both original pages.",
+        )
+        page_anomaly = next(
+            row for row in list_anomalies(self.project)
+            if row["scope_type"] == "page" and row["target_id"].endswith(":P1")
+        )
+        submit_page_repair(
+            self.project,
+            page_anomaly["anomaly_id"],
+            {
+                "blocks": [
+                    {"order": 1, "type": "paragraph", "text": "The expedition left the station in spring."},
+                    {"order": 2, "type": "footnote", "text": "A newly separated page note."},
+                    {"order": 3, "type": "paragraph", "text": "A different final paragraph."},
+                ]
+            },
+            "human-reviewer",
+            "Rebuilt the page and changed its final paragraph.",
+        )
+        repaired = source_view(self.project, self.source["source_id"])
+        relation = repaired["relations"][0]
+        blocks = {block["block_id"]: block for page in repaired["pages"] for block in page["blocks"]}
+        self.assertEqual(blocks[relation["from_block_id"]]["effective_text"], "A different final paragraph.")
+        self.assertIsNone(relation["human_value"])
+        self.assertIsNone(relation["effective_value"]["continues"])
+        self.assertEqual(relation["verification_state"], "needs_review")
+        self.assertTrue(any(
+            item["status"] == "open" and item["scope_type"] == "relation"
+            and item["target_id"] == relation["relation_id"]
+            for item in repaired["anomalies"]
+        ))
 
     def test_systemic_anomaly_blocks_the_whole_source(self) -> None:
         second_source_file = self.root / "systemic.pdf"

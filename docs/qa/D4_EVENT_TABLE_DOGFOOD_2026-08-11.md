@@ -680,3 +680,260 @@ Run `RUN_09fb814f2d0b40b1a7c6060e204dac9d` exercised the repaired runtime throug
 returned a readable A/B/C source assessment without exposing `TOOL_RESULT` or JSON. Its recorded bounded-history
 snapshot excludes malformed message `MSG_ff493f5dca4e422c9deac4b224f10688`, confirming that an already stored bad
 transcript no longer contaminates a later guided run.
+
+### ISSUE-023: Configured visual repair model has no actionable proposal control
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | functional / source repair |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - static state captured in `screenshots/piassetsky-p109-before.png` |
+
+**Description**
+
+On Piassetsky physical page 109 the repair panel reports `needs_review · partial`, identifies the configured visual
+helper as `ollama · qwen3-vl:4b-instruct-q4_K_M`, and says that the page has no model proposal. However, the visible
+panel provides no “生成当前页建议” control. DOM inspection confirms that the sole `#ocrPropose` button is rendered
+with the `hidden` attribute, so a normal researcher cannot ask the configured visual helper to propose a repair for
+the page.
+
+**Repro Steps**
+
+1. Open the Piassetsky volume II facsimile from Project Sources.
+2. Jump to physical page 109, whose source state is `needs_review · partial`.
+3. Inspect the “模型修复建议” panel: the visual profile and empty-state text are visible, but the proposal action is
+   absent. See `screenshots/piassetsky-p109-before.png`.
+
+### ISSUE-024: A collapsed visual OCR response cannot preserve paragraph structure
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | functional / source repair |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - static proposal captured in `screenshots/piassetsky-p109-collapsed-proposal.png` |
+
+**Description**
+
+The real `qwen3-vl:4b-instruct-q4_K_M` call for Piassetsky physical page 109 returned the printed page number and four
+visible paragraphs inside one OCR block, separated by blank lines. The proposal editor can correct text inside a
+block but cannot split that block. Accepting the proposal unchanged would therefore collapse paragraph and cross-page
+structure even though the model response contains enough separators to preserve it.
+
+The normalizer now splits a sole OCR block on explicit blank-line paragraph boundaries. If the first separated line
+is a standalone decimal page number and no printed page was otherwise supplied, it is moved into the proposal's
+printed-page candidate. Both recoveries remain warnings in the pending proposal and still require human review.
+
+**Repro Steps**
+
+1. On physical page 109, request a proposal from the configured visual helper.
+2. Wait for the pending proposal to appear.
+3. Observe that the pre-fix proposal contains one editable block beginning with `651` and four paragraphs separated
+   by blank lines. See `screenshots/piassetsky-p109-collapsed-proposal.png`.
+
+### ISSUE-025: Source-repair controls overlap in the normal desktop viewport
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | visual / functional |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - static overlap captured in `screenshots/source-repair-controls-overlap.png` |
+
+**Description**
+
+At the normal 1258-pixel test viewport, the repair panel's intrinsic form width exceeds its grid column and its fixed
+row layout is shorter than the required controls. The “保存页码关系” button therefore extends across the visual-model
+row and covers “生成当前页建议”; the browser correctly refuses a normal click because it would land on the page-number
+button. The repair panel now uses one vertical scroll surface, zero-minimum grid columns for its review form, and
+natural-height sections, so controls remain in document order without overlapping.
+
+**Repro Steps**
+
+1. Open an unverified PDF page with a configured visual helper at the default desktop viewport.
+2. Attempt to click “生成当前页建议”.
+3. Observe that the page-number save control covers the visual-model action. See
+   `screenshots/source-repair-controls-overlap.png`.
+
+### ISSUE-026: Human reviewer cannot restore a block omitted by visual OCR
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | functional / source repair |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - pending proposal captured in `screenshots/piassetsky-p111-missing-date-block.png` |
+
+**Description**
+
+The real visual-model proposal for Piassetsky physical page 111 omitted the independently printed date heading
+`21 МАЯ.`. The reviewer could edit the three proposed blocks but could neither insert the missing heading nor remove
+an unusable block. Accepting the proposal would therefore erase a visible temporal boundary from the page structure.
+
+The pending-proposal editor now lets the reviewer add or delete blocks before acceptance. Final block order is
+recomputed from the reviewed page sequence, so model-provided order values cannot leave gaps after a deletion.
+
+**Repro Steps**
+
+1. Open physical page 111 and request a proposal from the configured visual helper.
+2. Compare the three proposed blocks with the original page, where `21 МАЯ.` appears between the first and second
+   prose blocks.
+3. Before the fix, observe that no control can add the missing heading. See
+   `screenshots/piassetsky-p111-missing-date-block.png`.
+
+**Live regression verification**
+
+The still-pending real proposal survived the server restart and exposed the new add/delete controls. Through the
+workbench UI, the reviewer retained the first proposed slot for the page-opening continuation, changed the second
+slot to the missing `21 МАЯ.` heading, used the third slot for the morning-departure paragraph, and added a fourth
+slot for the landscape paragraph. The reviewed page was accepted as printed page 653, and relation
+P110 B2 -> P111 B1 was then confirmed as a continuation. The accepted four-block result is captured in
+`screenshots/piassetsky-p111-repaired-4blocks.png`.
+
+### ISSUE-027: Saving a printed-page mapping discards pending human OCR edits
+
+| Field | Value |
+|---|---|
+| Severity | critical |
+| Category | functional / source repair / edit preservation |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - preserved by the accepted P112 proposal and audit trail |
+
+**Description**
+
+While reviewing Piassetsky physical page 112, the reviewer replaced a collapsed, incomplete visual-model response
+with three source-checked blocks and then saved the printed-page mapping. That action reloaded the source
+asynchronously and silently restored the original pending proposal. The following acceptance therefore committed the
+old model text instead of the reviewed text.
+
+Saving a printed-page mapping now updates the current page label without reloading the source or replacing unsaved
+proposal edits. A previously human-repaired page can also be revised again as a full page: blocks may be added or
+removed, and the new correction creates a fresh audit-backed repair instead of treating the first human decision as
+irreversible.
+
+### ISSUE-028: GLM-4.6V-Flash page transcription times out in implicit thinking mode
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | model adapter / visual OCR |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A - the failed P115 request left no proposal by design |
+
+**Description**
+
+The configured `glm-4.6v-flash` profile passed the provider connection test but its first real page request ended with
+`The read operation timed out`. The official model documentation exposes an explicit thinking-mode switch; the
+generic adapter had omitted it, allowing a transcription-only request to spend time in the model's reasoning phase.
+
+The adapter now sends `thinking: {type: disabled}` only for GLM-4.6V-family requests and reports provider timeouts
+with the configured duration. Other OpenAI-compatible visual profiles keep the existing payload.
+
+**Live provider verification**
+
+A replacement key passed the authenticated `/models` probe. A single, non-concurrent retry against Piassetsky
+physical page 115 still returned HTTP 429. A bounded diagnostic call exposed provider code `1305` and the message
+that the model was currently overloaded. This distinguishes provider capacity from an invalid key, local
+concurrency or a page-validation failure. Visual requests are now serialized process-wide at one concurrent call,
+and the UI reports only the provider's bounded `code` and `message` fields.
+
+### ISSUE-029: Planning mode selection is not retained across a browser refresh
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | conversation / researcher intent |
+| URL | `http://127.0.0.1:8766/` |
+
+**Description**
+
+The independent-versus-guided planning selector previously lived only in transient page state. A browser refresh
+returned it to independent planning, making it easy to hide the approved shared design unintentionally before a
+follow-up run. The selection is now retained in browser-session storage and remains explicit in every run snapshot;
+the researcher's hidden baseline is still never injected into independent mode.
+
+### ISSUE-030: A failed batch proposal could be retried despite a one-call instruction
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | agent harness / mutation boundary |
+| URL | `http://127.0.0.1:8766/` |
+
+**Description**
+
+During the real 22 May event run, the first `research_event.propose_batch` action failed validation because its
+`original_text` field lacked a complete anchor. The previous guard counted only completed calls, so the model could
+submit the mutating batch tool again even though the researcher had required one call and no retry on failure.
+
+The runtime now treats the first batch-tool action as the sole attempt regardless of success. A later model action
+for the same tool is blocked before a second tool-call record or mutation is created, and the run records
+`tool_retry_blocked`. A failed first attempt may be summarized to the researcher, but cannot be silently corrected by
+performing the mutation again in the same run.
+
+### ISSUE-031: Low-resolution page images make old-script OCR structurally unreliable
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | model adapter / source repair |
+| URL | `http://127.0.0.1:8766/` |
+
+**Description**
+
+The first visual-model trials used the ordinary two-times page render. On the 1880 Russian facsimile this encouraged
+modernized spelling, missing date headings and unstable punctuation even when the printed page remained readable to a
+human reviewer. Model-assistance requests now use a four-times derived render while the original PDF remains the
+source authority. The high-resolution image is retained inside the source's derived folder with its own digest; it is
+still only a proposal input and never becomes citable evidence.
+
+### ISSUE-032: Candidate-aware OCR can preserve useful structure and copy old OCR errors
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | model quality / human review boundary |
+| URL | `http://127.0.0.1:8766/` |
+
+**Description**
+
+The `page-ocr-v2` prompt gives the visual model the existing page text as an explicitly untrusted candidate. This
+substantially improved paragraph recovery and old-Russian spelling preservation, but the live `glm-4.6v` proposal for
+physical page 118 also copied candidate errors such as `іпелъ`, `с.идѣть`, `значить` and the scientific name
+`Genicus tancolo`. It also left `23 МАЯ.` inside prose and retained layout-only line-end hyphens.
+
+The result confirms the intended boundary: candidate text may help alignment, but the rendered original page is the
+authority and the proposal remains unusable until a reviewer edits and accepts it. Through the real workbench UI the
+reviewer rebuilt page 118 as four prose/heading blocks plus the footnote
+`Зеленый дятелъ (Gecinus tancolo Gould).`, saved printed page 660 and then accepted the proposal.
+The accepted page and its two corrected cross-page relations are captured in
+`screenshots/piassetsky-p118-glm46v-repaired.png`.
+
+### ISSUE-033: Full-page repair can silently move a confirmed cross-page relation onto a footnote
+
+| Field | Value |
+|---|---|
+| Severity | critical |
+| Category | source repair / page relation provenance |
+| URL | `http://127.0.0.1:8766/` |
+
+**Description**
+
+Accepting the rebuilt physical page 118 changed its block count and order. Because full-page repair reused block IDs
+by order, the existing P118-to-P119 relation retained `P0118_B005`, although that ID now represented the footnote
+rather than the final prose paragraph. The UI therefore displayed a valid-looking, previously confirmed relation from
+the bird-name footnote into the next page's prose.
+
+Full-page repair now snapshots every affected endpoint before replacing blocks and compares it with the reviewed
+blocks afterwards. A semantically matching endpoint may move to its new block ID without losing the human decision;
+minor text correction does not invalidate it. If no sufficiently similar endpoint survives, the relation is reset to
+`needs_review`, its prior human value is cleared, and a new two-page location anomaly is opened. It can no longer
+silently retain human approval for different content.
+
+**Live regression context**
+
+The already-accepted P118 relation was corrected through the workbench to P118 block 4 -> P119 block 1 and confirmed
+as a continuation. The preceding boundaries P115 block 2 -> P116 block 1, P116 block 4 -> P117 block 1 and P117 block
+2 -> P118 block 1 were also checked against adjacent original pages. Printed-page mappings 657-660 are now visible
+for physical pages 115-118, and the saved P116/P118 proposal edits survived the separate page-number save action.

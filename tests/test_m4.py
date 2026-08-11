@@ -245,9 +245,48 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             call for call in run["tool_calls"]
             if call["tool_name"] == "research_event.propose_batch"
         ]
-        self.assertEqual([call["status"] for call in event_calls], ["COMPLETED", "FAILED"])
-        self.assertIn("already completed once", event_calls[1]["error"])
+        self.assertEqual([call["status"] for call in event_calls], ["COMPLETED"])
+        self.assertIn("tool_retry_blocked", [event["event_type"] for event in run["events"]])
         create_candidates.assert_called_once()
+
+    def test_event_batch_validation_failure_cannot_be_retried_in_same_run(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": {}},
+            },
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": [{"case_id": "CASE_1"}]},
+            },
+            {"type": "final", "content": "首次提交校验失败；遵守一次尝试约束，没有重试。"},
+        ])
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=lambda *args: next(actions)),
+                patch("research_workbench.agent_runtime.create_event_candidates") as create_candidates,
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "调用 research_event.propose_batch 一次；失败也不要重试。",
+                )
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        event_calls = [
+            call for call in run["tool_calls"]
+            if call["tool_name"] == "research_event.propose_batch"
+        ]
+        self.assertEqual([call["status"] for call in event_calls], ["FAILED"])
+        self.assertIn("tool_retry_blocked", [event["event_type"] for event in run["events"]])
+        create_candidates.assert_not_called()
 
     def test_explicit_required_tool_prevents_a_premature_final_answer(self) -> None:
         environment = {
@@ -455,6 +494,13 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             guided["model_snapshot"]["history_message_ids"],
             [item["message_id"] for item in histories[1]],
         )
+
+    def test_planning_mode_selection_survives_browser_refresh(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("sessionStorage.getItem('hrwPlanningMode')", script)
+        self.assertIn("sessionStorage.setItem('hrwPlanningMode', state.planningMode)", script)
 
     def test_source_list_exposes_optional_research_context(self) -> None:
         source_id = list_sources(self.project)[0]["source_id"]

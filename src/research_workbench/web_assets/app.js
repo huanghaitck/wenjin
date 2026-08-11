@@ -5,7 +5,7 @@ const state = {
   manuscriptId: '', sectionId: '', authoringMode: 'dialogue', proposalId: '',
   document: null, documentManuscriptId: '', selection: null, browserSession: null,
   modelSettings: null, sessionToken: '', lastDocxExport: '', nativeBridge: '',
-  planningMode: 'independent_planning',
+  planningMode: sessionStorage.getItem('hrwPlanningMode') || 'independent_planning',
 };
 const $ = (id) => document.getElementById(id);
 
@@ -1069,7 +1069,10 @@ function blockCard(block, pageAnomaly) {
   const label = document.createElement('span'); label.textContent = `块 ${block.block_order} · 区域 ${region}`;
   const type = document.createElement('select'); type.className = 'block-type';
   for (const value of ['paragraph', 'heading', 'footnote', 'header', 'footer', 'page_number']) type.append(new Option(value, value));
-  type.value = block.block_type; meta.append(label, type);
+  type.value = block.block_type;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '从本页删除此块';
+  remove.onclick = () => card.remove();
+  meta.append(label, type, remove);
   const textarea = document.createElement('textarea'); textarea.value = block.effective_text; textarea.dataset.blockId = block.block_id;
   card.append(meta, textarea);
   if (anomaly && !pageAnomaly) {
@@ -1112,16 +1115,27 @@ function renderBlocks() {
   const pageIssue = pageAnomaly(page);
   const blocks = page.blocks.length ? page.blocks : [{block_id:'', block_order:1, block_type:'paragraph', effective_text:'', source_region:null}];
   for (const block of blocks) container.append(blockCard(block, pageIssue));
-  $('pageRepair').hidden = !pageIssue;
+  const locator = page.page_type === 'docx_locator';
+  const addBlock = document.createElement('button'); addBlock.type = 'button'; addBlock.textContent = '在本页新增一块';
+  addBlock.onclick = () => container.append(blockCard({
+    block_id: '',
+    block_order: container.querySelectorAll('.block-card').length + 1,
+    block_type: 'paragraph',
+    effective_text: '',
+    source_region: null,
+  }, pageIssue));
+  if (!locator) container.append(addBlock);
+  $('pageRepair').hidden = locator;
+  $('pageRepair').textContent = pageIssue ? '提交整页修正' : '保存整页结构修正';
   $('pageRepair').onclick = async () => {
     try {
       const cards = [...container.querySelectorAll('.block-card')];
       const repaired = cards.map((card, index) => ({
-        order: Number(card.dataset.order || index + 1),
+        order: index + 1,
         type: card.querySelector('.block-type').value,
         text: card.querySelector('textarea').value,
       }));
-      await request('/api/repair/page', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({anomaly_id:pageIssue.anomaly_id, blocks:repaired, ...reviewerPayload()}) });
+      await request('/api/page/revise', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({page_id:page.page_id, blocks:repaired, ...reviewerPayload()}) });
       await loadSource(state.view.source.source_id, true); notice('整页修正已提交，并保留原机器结果和修正记录。');
     } catch (error) { notice(error.message, true); }
   };
@@ -1147,7 +1161,10 @@ function proposalBlock(block) {
   const label = document.createElement('span'); label.textContent = `建议块 ${block.order}`;
   const type = document.createElement('select'); type.className = 'block-type';
   for (const value of ['paragraph', 'heading', 'footnote', 'header', 'footer', 'page_number']) type.append(new Option(value, value));
-  type.value = block.type; meta.append(label, type);
+  type.value = block.type;
+  const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '删除此块';
+  remove.onclick = () => card.remove();
+  meta.append(label, type, remove);
   const textarea = document.createElement('textarea'); textarea.value = block.text;
   card.append(meta, textarea); return card;
 }
@@ -1158,7 +1175,7 @@ function renderOcrProposal() {
   const button = $('ocrPropose');
   const capability = state.capabilities?.vision_ocr;
   if (capability?.available) {
-    $('ocrCapability').textContent = `${capability.provider} · ${capability.model} · 输出只作为待审建议`;
+    $('ocrCapability').textContent = `${capability.provider} · ${capability.model} · 单并发 · 输出只作为待审建议`;
   } else {
     const missing = capability?.missing?.join('、') || '尚未配置';
     $('ocrCapability').textContent = `视觉模型不可用：${missing}`;
@@ -1166,8 +1183,9 @@ function renderOcrProposal() {
   if (!page) { button.hidden = true; return; }
   const proposals = (state.view?.ocr_proposals || []).filter((item) => item.page_id === page.page_id);
   const pending = proposals.find((item) => item.status === 'pending');
-  const anomaly = pageAnomaly(page);
-  button.hidden = !capability?.available || !anomaly || Boolean(pending);
+  const verified = ['human_verified', 'human_repaired'].includes(page.verification_state);
+  const locator = page.page_type === 'docx_locator';
+  button.hidden = !capability?.available || verified || locator || Boolean(pending);
   button.onclick = async () => {
     button.disabled = true;
     try {
@@ -1190,6 +1208,14 @@ function renderOcrProposal() {
   const blocks = document.createElement('div'); blocks.className = 'proposal-blocks';
   for (const block of pending.normalized_payload.blocks) blocks.append(proposalBlock(block));
   card.append(blocks);
+  const addBlock = document.createElement('button'); addBlock.type = 'button'; addBlock.textContent = '新增一块';
+  addBlock.onclick = () => blocks.append(proposalBlock({
+    order: blocks.querySelectorAll('.proposal-block').length + 1,
+    type: 'paragraph',
+    text: '',
+    region: null,
+  }));
+  card.append(addBlock);
   const warnings = pending.normalized_payload.warnings || [];
   if (warnings.length) card.append(Object.assign(document.createElement('small'), {textContent:`模型警告：${warnings.join('；')}`}));
   const actions = document.createElement('div'); actions.className = 'proposal-actions';
@@ -1197,7 +1223,7 @@ function renderOcrProposal() {
   accept.onclick = async () => {
     try {
       const edited = [...blocks.querySelectorAll('.proposal-block')].map((item, index) => ({
-        order: Number(item.dataset.order || index + 1),
+        order: index + 1,
         type: item.querySelector('.block-type').value,
         text: item.querySelector('textarea').value,
         region: JSON.parse(item.dataset.region),
@@ -1305,7 +1331,8 @@ $('savePrintedPage').onclick = async () => {
     await request('/api/page/printed-page', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
       page_id:page.page_id, printed_page:$('printedPage').value, ...reviewerPayload(),
     })});
-    await loadSource(state.view.source.source_id, true);
+    page.printed_page = $('printedPage').value.trim();
+    $('pageLabel').textContent = `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}`;
     notice('物理页与印刷页的人工对应关系已保存。');
   } catch (error) { notice(error.message, true); }
 };
@@ -1554,6 +1581,7 @@ $('modelProfile').onchange = async (event) => {
 };
 $('planningMode').onchange = (event) => {
   state.planningMode = event.target.value;
+  sessionStorage.setItem('hrwPlanningMode', state.planningMode);
   notice(state.planningMode === 'independent_planning'
     ? '独立构思：本次运行不会把研究者意图基线、共同研究设计或旧线程对话发给模型。'
     : '按计划执行：本次运行会加载共同批准计划和最近的有界线程对话；对话不是来源证据。');

@@ -77,6 +77,7 @@ from .service import (
     project_status,
     reject_ocr_proposal,
     register_source,
+    revise_page,
     source_view,
     submit_block_repair,
     submit_page_repair,
@@ -338,6 +339,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["from_block_id"]),
                     str(payload["to_block_id"]),
                     bool(payload["continues"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                )
+            elif parsed.path == "/api/page/revise":
+                result = revise_page(
+                    self.server.project_root,
+                    str(payload["page_id"]),
+                    {"blocks": payload["blocks"]},
                     str(payload["reviewer"]),
                     str(payload["reason"]),
                 )

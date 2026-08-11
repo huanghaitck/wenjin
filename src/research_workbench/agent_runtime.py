@@ -575,19 +575,17 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                     "error": message + ". Synthesize the requested conclusions in readable prose now.",
                 })
                 continue
-            required_tool_completed = required_tool and any(
+            required_tool_attempted = required_tool and any(
                 item.get("tool") == required_tool
-                and item.get("error") is None
-                and item.get("result") is not None
                 for item in observations
             )
-            if required_tool and not required_tool_completed:
+            if required_tool and not required_tool_attempted:
                 if missing_tool_retries >= 2:
-                    raise RuntimeError(f"required tool did not complete in this run: {required_tool}")
+                    raise RuntimeError(f"required tool was not attempted in this run: {required_tool}")
                 missing_tool_retries += 1
                 message = (
-                    f"The researcher explicitly required one successful {required_tool} call in this run, "
-                    "but none has completed. Continue using tools now; do not describe a future step as the final answer."
+                    f"The researcher explicitly required one {required_tool} attempt in this run, "
+                    "but none has occurred. Continue using tools now; do not describe a future step as the final answer."
                 )
                 with connect(project_root) as connection:
                     _append_run_event(connection, run_id, "required_tool_missing", {
@@ -610,6 +608,22 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         arguments = action.get("arguments", {})
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
+        if tool_name == "research_event.propose_batch" and any(
+            item.get("tool") == tool_name for item in observations
+        ):
+            message = (
+                "research_event.propose_batch was already attempted once in this run; "
+                "return a final response instead of retrying or proposing duplicate rows"
+            )
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "tool_retry_blocked", {"tool": tool_name})
+            observations.append({
+                "tool": "run.completion_contract",
+                "arguments": {"blocked_tool": tool_name},
+                "result": None,
+                "error": message,
+            })
+            continue
         try:
             result = _execute_tool(project_root, run_id, tool_name, arguments)
         except (KeyError, ValueError) as error:
@@ -899,14 +913,13 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             with connect(project_root) as connection:
                 prior = connection.execute(
                     """SELECT tool_call_id FROM tool_calls
-                       WHERE run_id = ? AND tool_name = ? AND status = 'COMPLETED'
-                         AND tool_call_id <> ?
+                       WHERE run_id = ? AND tool_name = ? AND tool_call_id <> ?
                        LIMIT 1""",
                     (run_id, tool_name, call_id),
                 ).fetchone()
             if prior:
                 raise ValueError(
-                    "research_event.propose_batch already completed once in this run; "
+                    "research_event.propose_batch was already attempted once in this run; "
                     "return a final response instead of proposing duplicate rows"
                 )
             events = arguments.get("events", [])
