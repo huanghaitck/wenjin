@@ -689,6 +689,18 @@ def _parse_action(content: str) -> dict[str, Any]:
         text = re.sub(r"\s*```$", "", text)
     if bracketed := re.fullmatch(r"<\s*(\{.*\})\s*>", text, flags=re.DOTALL):
         text = bracketed.group(1).strip()
+    elif text.startswith("<{") and text.endswith("}"):
+        # DeepSeek occasionally emits an otherwise complete action with only
+        # the opening angle bracket. Accept it only when it wraps the whole
+        # response; prose containing an example remains a safe final answer.
+        candidate = text[1:].strip()
+        try:
+            parsed, end = json.JSONDecoder(strict=False).raw_decode(candidate)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if not candidate[end:].strip() and isinstance(parsed, dict):
+                text = candidate
     while wrapped := re.fullmatch(
         r"<(json_logic|tool_call)>\s*(.*?)\s*</\1>", text, flags=re.DOTALL
     ):

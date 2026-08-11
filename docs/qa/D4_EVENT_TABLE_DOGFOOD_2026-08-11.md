@@ -5,7 +5,7 @@
 | Date | 2026-08-11 |
 | App URL | `http://127.0.0.1:8766/` |
 | Session | `hrw` |
-| Scope | Richthofen physical pages 250–258, cross-page relation, block verification and model correction |
+| Scope | Richthofen physical pages 250–260, cross-page relation, block verification and model correction |
 
 ## Summary
 
@@ -13,9 +13,9 @@
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 14 |
+| Medium | 15 |
 | Low | 0 |
-| **Total** | **14** |
+| **Total** | **15** |
 
 The first nine findings were fixed in bounded Git branches and verified by the earlier 99-test suite.
 The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` event
@@ -25,7 +25,9 @@ were verified; it remains below evidence freeze. ISSUE-010 remains under investi
 partial row. ISSUE-011 and ISSUE-012 have bounded fixes and regression coverage. The current
 environment check and full 100-test suite passed before their commit. ISSUE-013 is handled by an
 exact human repair plus a shorter verbatim span; ISSUE-014 has a bounded one-retry fix. The current
-environment check and full 101-test suite pass.
+environment check and prior 101-test suite passed. ISSUE-015 records a provider wrapper that made a
+page-read request look like a completed answer; the parser now accepts that exact whole-response
+shape without extracting tool examples from prose. The current full 102-test suite passes.
 
 ## Issues
 
@@ -447,3 +449,30 @@ harness does not hide a persistent provider problem or retry indefinitely.
 
 Evidence screenshot:
 `C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-014-empty-model-content-fails-run.png`
+
+### ISSUE-015: An unclosed angle wrapper turns a page-read action into a completed answer
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | reliability / agent protocol |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — the durable run and assistant message preserve the response |
+
+**Description**
+
+While continuing the 31 January event, DeepSeek returned an otherwise valid `source.page` action
+whose whole response began with `<` but omitted the closing `>`. The parser treated the string as a
+plain final answer, so run `RUN_cb8d3a2406ae461482b0bf834544364d` appeared `COMPLETED` after reading
+only page 259 and created no event row. This is a silent workflow stop rather than a safe explicit
+failure.
+
+The parser now accepts this exact whole-response shape only when removing the single leading angle
+bracket yields one complete JSON object. The same text embedded in prose remains a final answer, so
+the compatibility rule does not search arbitrary prose for executable actions.
+
+**Repro Steps**
+
+1. Ask the guided agent to read pages 259–260 and propose the 31 January event.
+2. After page 259, receive `<{"type":"tool_call",..."physical_page":260}}` without a closing `>`.
+3. Observe the run complete with the wrapped tool request stored as assistant text and no draft row.

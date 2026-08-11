@@ -408,6 +408,16 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         prose = '模型示例：<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
 
+    def test_parser_accepts_observed_unclosed_angle_action_only_as_the_whole_response(self) -> None:
+        action = _parse_action(
+            '<{"type":"tool_call","tool":"source.page",'
+            '"arguments":{"source_id":"SRC_1","physical_page":260}}'
+        )
+        self.assertEqual(action["tool"], "source.page")
+        self.assertEqual(action["arguments"]["physical_page"], 260)
+        prose = '模型示例：<{"type":"tool_call","tool":"source.page","arguments":{}}'
+        self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
+
     def test_parser_accepts_one_complete_trailing_tool_action_after_a_short_preface(self) -> None:
         action = _parse_action(
             '继续读取物理页253以完成跨页终点判断。\n\n'
