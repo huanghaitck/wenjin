@@ -9,6 +9,15 @@ research_design_workflow:
   project_database_schema: 11
   researcher_baseline_ui_name: 研究者意图基线
   researcher_intent_definition: restored_human_direction_not_psychological_profile_or_source_evidence
+  researcher_intent_role: versioned_externalized_human_direction_for_agent_deviation_checking
+  researcher_intent_fields:
+    - formal_research_goal
+    - five_year_core_window
+    - comparison_units
+    - material_hierarchy
+    - stop_conditions
+  researcher_corrections_create_new_version: true
+  prior_versions_remain_auditable: true
   researcher_intent_epistemic_markers:
     - explicit_human_statement
     - recovered_context
@@ -36,7 +45,10 @@ research_event_workflow:
   page_and_block_human_verification_before_approval: required
   original_text_must_match_verified_anchor_blocks: true
   exact_original_text_copy_from_anchors: implemented_and_real_gui_tested
+  refresh_draft_original_from_current_anchors: explicit_form_fill_only_no_silent_save
   model_may_omit_original_text_when_original_text_anchors_are_present: true
+  source_relative_block_ids: accepted_when_source_id_is_explicit
+  arbitrary_per_event_block_cap: removed
   approved_event_is_frozen_evidence: false
   qinling_rejected_overanchored_event_id: EVT_5bcbd5859d50437c97186524139c198b
   qinling_approved_conservative_event_id: EVT_33ffcc0fe0f64f43b142d623182dbfed
@@ -46,7 +58,15 @@ research_event_workflow:
   real_agent_second_failure: normalized_soft_hyphen_claimed_as_verbatim
   human_correction_path: copy_exact_text_from_original_page_then_decide
   anchor_copy_human_check: physical_page_250_printed_page_231_block_B003_only
-  full_test_suite: 91_passed
+  qinling_approved_24_25_january_event_id: EVT_c05991d5c1714c728c54f0ae607fc95c
+  qinling_approved_24_25_january_event_pages: [251, 252, 253]
+  qinling_approved_24_25_january_event_blocks: 13
+  qinling_approved_24_25_january_event_still_not_frozen: true
+  recoverable_tool_input_errors: model_may_correct_and_retry_in_same_run
+  recoverable_model_action_format_errors: one_shorter_json_retry_in_same_run
+  observed_deepseek_action_wrappers: supported_with_strict_whole_action_boundary
+  real_dogfood_issues_fixed: 8
+  full_test_suite: 98_passed
 
 conversation_context:
   status: implemented_and_real_gui_tested

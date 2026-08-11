@@ -52,7 +52,7 @@ from .library_store import resolve_library_root
 from .project_library import add_library_file_to_project
 from .research import connector_capabilities, list_retrievals, retrieval_record, search
 from .research_design import create_design_draft, decide_design, design_state
-from .research_events import decide_event, event_state
+from .research_events import decide_event, event_anchor_text, event_state
 from .scholarship import (
     approve_freeze,
     create_browser_session,
@@ -185,6 +185,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/research-events":
                 self._json(event_state(self.server.project_root))
+                return
+            if parsed.path == "/api/research-event/anchor-text":
+                event_id = parse_qs(parsed.query).get("id", [""])[0]
+                self._json(event_anchor_text(self.server.project_root, event_id))
                 return
             if parsed.path == "/api/manuscript/document":
                 manuscript_id = parse_qs(parsed.query).get("id", [""])[0]

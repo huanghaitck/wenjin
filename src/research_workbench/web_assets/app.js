@@ -313,7 +313,13 @@ function renderThread() {
   $('threadTitle').textContent = state.thread?.thread?.title || '新建一个研究线程';
   const run = latestRun();
   const historyCount=run?.model_snapshot?.history_message_ids?.length||0;
-  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '独立构思（不带旧对话）' : `按计划执行 · 沿用${historyCount}条历史${run.model_snapshot.history_truncated?'（已裁剪）':''}`}` : '对话与运行状态会保存在本地项目中';
+  const toolFailureCount = run?.tool_calls?.filter((call) => call.status === 'FAILED').length || 0;
+  const outcome = run?.status === 'FAILED' && run.error
+    ? ` · 原因：${run.error}`
+    : run?.status === 'COMPLETED' && toolFailureCount
+      ? ` · 本轮记录 ${toolFailureCount} 次工具错误`
+      : '';
+  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '独立构思（不带旧对话）' : `按计划执行 · 沿用${historyCount}条历史${run.model_snapshot.history_truncated?'（已裁剪）':''}`}${outcome}` : '对话与运行状态会保存在本地项目中';
   const messages = $('messages'); messages.replaceChildren();
   for (const message of (state.thread?.messages || [])) {
     const card = document.createElement('article'); card.className = `message ${message.role}`;
@@ -434,6 +440,7 @@ function renderResearchEvents(container) {
     node.append(Object.assign(document.createElement('small'),{textContent:`来源 ${item.source_id} · 版本 ${item.source_version_id} · Blocks ${item.block_ids.join('、')} · ${item.qualification}`}));
     node.append(actionButton('打开原页并人工核对',async()=>{await loadSource(item.source_id);const pageId=item.page_ids?.[0];const index=state.view.pages.findIndex((page)=>page.page_id===pageId);if(index>=0)state.pageIndex=index;setMode('source');render();notice('请对照原图核验并确认候选引用的文本块；返回逐事件表后再批准。');}));
     if(item.status==='draft'){
+      node.append(actionButton('按当前已核锚块刷新原文',async()=>{const current=await request(`/api/research-event/anchor-text?id=${encodeURIComponent(item.event_id)}`);quote.value=current.original_text;notice(current.changed?'已把当前锚块文本回填到审批表单；尚未保存或批准。':'锚块文本与候选原文一致。');}));
       const decide=async(approved)=>{const reviewer=window.prompt('决定人','Professor');if(!reviewer)return;const reason=window.prompt(approved?'批准依据':'拒绝依据',approved?'已核原页与事件编码':'候选不符合比较口径');if(!reason)return;const edits=Object.fromEntries(Object.entries(editors).map(([key,input])=>[key,input.value]));await request('/api/research-event/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event_id:item.event_id,approved,reviewer,reason,edits})});await refreshResearch(approved?'事件行已人工批准；仍须另建主张和冻结证据。':'事件候选已拒绝，记录保留。');state.contextMode='events';renderContext();};
       node.append(actionButton('核页后批准',()=>decide(true),true),actionButton('拒绝候选',()=>decide(false)));
     } else if(item.decision_reason){node.append(Object.assign(document.createElement('small'),{textContent:`人工决定：${item.decided_by}｜${item.decision_reason}`}));}

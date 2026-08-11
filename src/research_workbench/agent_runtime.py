@@ -56,6 +56,8 @@ Follow an explicit user tool scope. Do not call unrelated state tools merely bec
 Retrieval results are leads, not evidence. Only approved evidence freezes may support drafting.
 Prior thread messages preserve the research discussion but are not source evidence. Reinspect source pages
 when a prior message mentions a fact that must enter an event, claim, quotation or draft.
+If a tool reports a correctable locator or argument error, use the error to correct the call within the
+explicit user scope. Do not repeat the same failed call, guess source content, or abandon the whole task.
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
@@ -87,6 +89,10 @@ class ModelProfile:
     status: str
     api_key: str = ""
     timeout_seconds: float = 90.0
+
+
+class ModelActionFormatError(ValueError):
+    """The provider answered, but its action could not be parsed safely."""
 
 
 def _json(value: Any) -> str:
@@ -509,9 +515,21 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     observations: list[dict[str, Any]] = []
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
-        action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
-            profile, objective, observations, remaining, design_context, history
-        )
+        try:
+            action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
+                profile, objective, observations, remaining, design_context, history
+            )
+        except ModelActionFormatError as error:
+            message = f"invalid model action: {error}"
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "model_action_invalid", {"error": message})
+            observations.append({
+                "tool": "model.response",
+                "arguments": {},
+                "result": None,
+                "error": message + ". Return one shorter valid JSON object and retry the same action.",
+            })
+            continue
         action_type = action.get("type")
         if action_type == "final":
             _complete_run(project_root, run_id, str(action.get("content", "")))
@@ -524,7 +542,16 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         arguments = action.get("arguments", {})
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        result = _execute_tool(project_root, run_id, tool_name, arguments)
+        try:
+            result = _execute_tool(project_root, run_id, tool_name, arguments)
+        except (KeyError, ValueError) as error:
+            observations.append({
+                "tool": tool_name,
+                "arguments": arguments,
+                "result": None,
+                "error": str(error),
+            })
+            continue
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
@@ -628,7 +655,10 @@ def _model_action(
         raise ValueError(f"unsupported agent provider: {profile.provider}")
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("agent provider returned empty content")
-    return _parse_action(content)
+    try:
+        return _parse_action(content)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ModelActionFormatError(str(error)) from error
 
 
 def _parse_action(content: str) -> dict[str, Any]:
@@ -636,9 +666,20 @@ def _parse_action(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    if not text.startswith(("{", "[")):
-        return {"type": "final", "content": text}
+    while wrapped := re.fullmatch(
+        r"<(json_logic|tool_call)>\s*(.*?)\s*</\1>", text, flags=re.DOTALL
+    ):
+        text = wrapped.group(2).strip()
     decoder = json.JSONDecoder(strict=False)
+    if not text.startswith(("{", "[")):
+        candidate_start = text.rfind("\n{")
+        if candidate_start >= 0:
+            candidate = text[candidate_start + 1:].strip()
+            if '"type"' in candidate and '"tool_call"' in candidate:
+                action, end = decoder.raw_decode(candidate)
+                if not candidate[end:].strip() and isinstance(action, dict) and action.get("type") == "tool_call":
+                    return action
+        return {"type": "final", "content": text}
     action, end = decoder.raw_decode(text)
     remainder = text[end:].strip()
     while remainder:

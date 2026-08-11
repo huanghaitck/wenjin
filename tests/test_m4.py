@@ -11,6 +11,7 @@ from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 from research_workbench.agent_runtime import (
+    ModelActionFormatError,
     ModelProfile,
     _model_action,
     _parse_action,
@@ -151,6 +152,67 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         recovered = thread_view(self.project, self.thread["thread_id"])["runs"][0]
         self.assertEqual(recovered["status"], "FAILED")
         self.assertIn("application restart", recovered["error"])
+
+    def test_model_can_recover_from_a_bad_page_locator(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        valid_page_id = f"{source_id}:P1"
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {"type": "tool_call", "tool": "source.page", "arguments": {"page_id": "P0249"}},
+            {"type": "tool_call", "tool": "source.page", "arguments": {"page_id": valid_page_id}},
+            {"type": "final", "content": "已根据工具错误改用项目中的精确页标识。"},
+        ])
+        observations: list[list[dict[str, object]]] = []
+
+        def next_action(*args: object) -> dict[str, object]:
+            observations.append(list(args[2]))
+            return next(actions)
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime._model_action", side_effect=next_action):
+                result = send_message(self.project, self.thread["thread_id"], "读取第一页")
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual([call["status"] for call in run["tool_calls"]], ["FAILED", "COMPLETED"])
+        self.assertIn("unknown page", observations[1][0]["error"])
+        self.assertIn("tool_failed", [event["event_type"] for event in run["events"]])
+        self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
+
+    def test_model_can_retry_a_malformed_action_without_restarting_the_run(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions: list[object] = [
+            ModelActionFormatError("Expecting ',' delimiter"),
+            {"type": "final", "content": "已用较短的合法动作完成重试。"},
+        ]
+        observations: list[list[dict[str, object]]] = []
+
+        def next_action(*args: object) -> dict[str, object]:
+            observations.append(list(args[2]))
+            action = actions.pop(0)
+            if isinstance(action, Exception):
+                raise action
+            return action
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime._model_action", side_effect=next_action):
+                result = send_message(self.project, self.thread["thread_id"], "完成一个长动作")
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertIn("invalid model action", observations[1][0]["error"])
+        self.assertIn("model_action_invalid", [event["event_type"] for event in run["events"]])
+        self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
 
     def test_independent_planning_hides_baseline_and_guided_mode_injects_only_shared_design(self) -> None:
         baseline = create_design_draft(
@@ -295,6 +357,27 @@ class M4AgentWorkspaceTests(unittest.TestCase):
     def test_parser_treats_plain_provider_text_as_safe_final_answer(self) -> None:
         action = _parse_action("候选页已定位；请人工核对原页。")
         self.assertEqual(action, {"type": "final", "content": "候选页已定位；请人工核对原页。"})
+
+    def test_parser_accepts_observed_deepseek_tool_wrappers_only_when_they_wrap_the_whole_action(self) -> None:
+        action = _parse_action(
+            '<json_logic><tool_call>{"type":"tool_call","tool":"source.page",'
+            '"arguments":{"source_id":"SRC_1","physical_page":251}}</tool_call></json_logic>'
+        )
+        self.assertEqual(action["tool"], "source.page")
+        self.assertEqual(action["arguments"]["physical_page"], 251)
+        prose = '示例：<tool_call>{"type":"tool_call","tool":"source.page","arguments":{}}</tool_call>'
+        self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
+
+    def test_parser_accepts_one_complete_trailing_tool_action_after_a_short_preface(self) -> None:
+        action = _parse_action(
+            '继续读取物理页253以完成跨页终点判断。\n\n'
+            '{"type":"tool_call","tool":"source.page",'
+            '"arguments":{"source_id":"SRC_1","physical_page":253}}'
+        )
+        self.assertEqual(action["tool"], "source.page")
+        self.assertEqual(action["arguments"]["physical_page"], 253)
+        prose = '研究说明中的对象不是动作：\n{"type":"final","content":"示例"}'
+        self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
 
     def test_parser_accepts_provider_json_with_literal_newline_in_content(self) -> None:
         action = _parse_action('{"type":"final","content":"第一条\n第二条"}')

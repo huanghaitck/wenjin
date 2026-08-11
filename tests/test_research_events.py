@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,11 +8,13 @@ from pathlib import Path
 from research_workbench.research_events import (
     create_event_candidates,
     decide_event,
+    event_anchor_text,
     event_state,
 )
 from research_workbench.service import (
     import_structure,
     initialize_project,
+    correct_block,
     register_source,
     verify_block,
 )
@@ -139,6 +142,72 @@ class ResearchEventTests(unittest.TestCase):
             candidate["original_text"],
             "The sentence continues toward the page boundary",
         )
+
+    def test_one_historical_event_may_span_more_than_twelve_blocks(self) -> None:
+        root = self.project.parent
+        original = root / "long-event.txt"
+        original.write_text("immutable long event", encoding="utf-8")
+        source = register_source(self.project, original, "Long event source")
+        structure = root / "long-event-structure.json"
+        structure.write_text(json.dumps({
+            "schema_version": 1,
+            "pages": [{
+                "id": "P_LONG", "physical_page": 10, "printed_page": "10", "page_type": "body",
+                "blocks": [
+                    {"id": f"B_LONG_{index:02d}", "order": index, "type": "paragraph",
+                     "text": f"Observation segment {index}.", "region": [10, index * 10, 500, index * 10 + 8]}
+                    for index in range(1, 14)
+                ],
+            }],
+            "relations": [],
+            "anomalies": [],
+        }), encoding="utf-8")
+        import_structure(self.project, source["source_id"], structure)
+        block_ids = [f"{source['source_id']}:B_LONG_{index:02d}" for index in range(1, 14)]
+
+        candidate = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "continuous-two-day-observation",
+                "source_id": source["source_id"],
+                "block_ids": block_ids,
+                "field_anchors": {"original_text": block_ids},
+                "missing_reason": "Other fields are outside this boundary test.",
+            }],
+            "test-model",
+        )[0]
+
+        self.assertEqual(candidate["block_ids"], block_ids)
+        self.assertEqual(len(candidate["field_anchors"]["original_text"]), 13)
+
+    def test_source_relative_block_ids_are_resolved_with_the_explicit_source(self) -> None:
+        candidate = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "source-relative-id",
+                "source_id": self.source["source_id"],
+                "block_ids": ["B2"],
+                "field_anchors": {"original_text": ["B2"]},
+                "missing_reason": "Other fields are outside this identifier test.",
+            }],
+            "test-model",
+        )[0]
+
+        self.assertEqual(candidate["block_ids"], [self.block_id])
+        self.assertEqual(candidate["field_anchors"]["original_text"], [self.block_id])
+
+    def test_current_anchor_text_can_refill_a_draft_after_a_human_repair(self) -> None:
+        candidate = self._create()
+        initial = event_anchor_text(self.project, str(candidate["event_id"]))
+        self.assertFalse(initial["changed"])
+
+        corrected = "The sentence continues across the page boundary"
+        correct_block(self.project, self.block_id, corrected, "Professor", "Checked against the page")
+        refreshed = event_anchor_text(self.project, str(candidate["event_id"]))
+
+        self.assertTrue(refreshed["changed"])
+        self.assertEqual(refreshed["original_text"], corrected)
+        self.assertEqual(refreshed["block_ids"], [self.block_id])
 
 
 if __name__ == "__main__":

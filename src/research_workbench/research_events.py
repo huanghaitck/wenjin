@@ -31,6 +31,13 @@ def _decode(value: str | None, fallback: Any) -> Any:
     return json.loads(value) if value else fallback
 
 
+def _qualified_block_id(source_id: str, value: Any) -> str:
+    block_id = str(value).strip()
+    if not block_id or ":" in block_id:
+        return block_id
+    return f"{source_id}:{block_id}"
+
+
 def _public(row: Any, field_anchors: dict[str, list[str]] | None = None) -> dict[str, Any]:
     item = dict(row)
     for key in ("page_ids", "block_ids", "physical_pages", "printed_pages"):
@@ -71,6 +78,34 @@ def event_state(project_root: Path) -> dict[str, Any]:
     }
 
 
+def event_anchor_text(project_root: Path, event_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT event_id, original_text FROM research_event_rows WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown research event: {event_id}")
+        anchors = _anchor_map(connection, [event_id]).get(event_id, {}).get("original_text", [])
+        if not anchors:
+            raise ValueError("research event has no original_text anchors")
+        placeholders = ",".join("?" for _ in anchors)
+        blocks = connection.execute(
+            """SELECT block_id, COALESCE(human_text, machine_text) AS text FROM blocks
+               WHERE block_id IN (""" + placeholders + ")",
+            anchors,
+        ).fetchall()
+        by_id = {block["block_id"]: block["text"] for block in blocks}
+        if any(block_id not in by_id for block_id in anchors):
+            raise KeyError("research event references an unavailable original_text block")
+        original_text = "\n".join(by_id[block_id] for block_id in anchors)
+    return {
+        "event_id": event_id,
+        "block_ids": anchors,
+        "original_text": original_text,
+        "changed": original_text != row["original_text"],
+    }
+
+
 def create_event_candidates(
     project_root: Path,
     events: list[dict[str, Any]],
@@ -89,12 +124,11 @@ def create_event_candidates(
             values = {key: str(payload.get(key, "")).strip() for key in TEXT_FIELDS}
             source_id = str(payload.get("source_id", "")).strip()
             block_ids = list(dict.fromkeys(
-                str(value).strip() for value in payload.get("block_ids", []) if str(value).strip()
+                _qualified_block_id(source_id, value)
+                for value in payload.get("block_ids", []) if str(value).strip()
             ))
             if not values["case_id"] or not source_id or not block_ids:
                 raise ValueError("case_id, source_id and block_ids are required")
-            if len(block_ids) > 12:
-                raise ValueError("an event row may reference at most 12 blocks")
             placeholders = ",".join("?" for _ in block_ids)
             rows = [dict(row) for row in connection.execute(
                 """SELECT b.block_id, b.block_order, p.page_id, p.physical_page, p.printed_page,
@@ -122,7 +156,9 @@ def create_event_candidates(
                 anchors = supplied_anchors.get(field_name, [])
                 if not isinstance(anchors, list):
                     raise ValueError(f"field anchor for {field_name} must be a block list")
-                normalized = list(dict.fromkeys(str(value).strip() for value in anchors if str(value).strip()))
+                normalized = list(dict.fromkeys(
+                    _qualified_block_id(source_id, value) for value in anchors if str(value).strip()
+                ))
                 if any(block_id not in block_ids for block_id in normalized):
                     raise ValueError(f"field anchor for {field_name} must belong to the event blocks")
                 if normalized:
@@ -240,6 +276,7 @@ def decide_event(
             if normalized_quote not in normalized_source:
                 raise ValueError("event original text must occur in the verified source blocks")
         status = "approved" if approved else "rejected"
+        edited_fields = [key for key in TEXT_FIELDS if values[key] != str(row[key])]
         assignments = ", ".join(f"{key} = ?" for key in TEXT_FIELDS)
         connection.execute(
             f"""UPDATE research_event_rows SET {assignments}, status = ?, decided_by = ?,
@@ -247,7 +284,8 @@ def decide_event(
             (*(values[key] for key in TEXT_FIELDS), status, reviewer, reason, now, event_id),
         )
         append_audit(connection, "research_event_decided", "research_event", event_id,
-                     {"approved": approved, "reviewer": reviewer, "reason": reason})
+                     {"approved": approved, "reviewer": reviewer, "reason": reason,
+                      "edited_fields": edited_fields})
         decided = connection.execute(
             "SELECT * FROM research_event_rows WHERE event_id = ?", (event_id,)
         ).fetchone()
