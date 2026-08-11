@@ -33,7 +33,7 @@ from research_workbench.agent_runtime import (
 )
 from research_workbench.db import database_path
 from research_workbench.research_design import create_design_draft, decide_design
-from research_workbench.service import import_structure, initialize_project, register_source
+from research_workbench.service import import_structure, initialize_project, register_source, verify_block
 from research_workbench.service import list_sources, source_view
 from research_workbench.web import build_server
 
@@ -686,10 +686,14 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(page["page_id"], f"{source_id}:P1")
         self.assertTrue(all("verification_state" in block for block in page["blocks"]))
         self.assertTrue(all("use_state" in block for block in page["blocks"]))
-        self.assertTrue(all(
-            block["usable_for_evidence"] == (block["use_state"] == "research_usable")
-            for block in page["blocks"]
-        ))
+        self.assertFalse(any(block["usable_for_evidence"] for block in page["blocks"]))
+
+        block_id = f"{source_id}:B2"
+        verify_block(self.project, block_id, "Professor", "Checked against the source page")
+        checked = _read_page(self.project, source_id=source_id, physical_page=1)
+        target = next(block for block in checked["blocks"] if block["block_id"] == block_id)
+        self.assertEqual(target["verification_state"], "human_verified")
+        self.assertTrue(target["usable_for_evidence"])
 
     def test_source_search_splits_multilingual_alternatives(self) -> None:
         results = _search_source_blocks(self.project, "station/page boundary")

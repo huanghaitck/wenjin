@@ -63,8 +63,9 @@ Research event proposals are page-linked coding drafts, not frozen evidence. Hum
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 For event counts or coverage audits, call research_event.coverage with the exact intended case_ids instead
 of hand-counting research_event.list. Keep other_approved_cases separate from the selected combined total.
-source.page reports each block's verification_state, use_state and usable_for_evidence flag. A blocked
-block may help locate a repair target, but it must not support an event field, quotation or historical claim.
+source.page reports each block's verification_state, use_state and usable_for_evidence flag. That flag is
+true only after the cited block is human-verified or human-repaired on a human-checked page. Machine-parsed
+or blocked text may help locate a repair target, but it must not support an event field, quotation or claim.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
 Movement mode, genre, participant visibility and outcome destination are comparison fields, not free
 inference slots; leave them blank with a missing code when the cited blocks do not support them.
@@ -1066,6 +1067,9 @@ def _read_page(
     page_id = str(row["page_id"])
     view = source_view(project_root, str(row["source_id"]))
     page = next(item for item in view["pages"] if item["page_id"] == page_id)
+    page_is_checked = page["verification_state"] in {
+        "human_spot_checked", "human_verified", "human_repaired",
+    }
     anomalies = [
         item for item in view["anomalies"]
         if item["status"] == "open" and item["target_id"] in {page_id, *(b["block_id"] for b in page["blocks"])}
@@ -1081,7 +1085,11 @@ def _read_page(
              "text": block["effective_text"],
              "verification_state": block["verification_state"],
              "use_state": block["use_state"],
-             "usable_for_evidence": block["use_state"] == "research_usable"}
+             "usable_for_evidence": (
+                 block["use_state"] == "research_usable"
+                 and block["verification_state"] in {"human_verified", "human_repaired"}
+                 and page_is_checked
+             )}
             for block in page["blocks"]
         ],
         "open_anomalies": anomalies,
