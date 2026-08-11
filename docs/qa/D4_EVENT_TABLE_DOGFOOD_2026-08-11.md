@@ -505,3 +505,30 @@ final answer; no second mutation occurs. Read-only tools remain repeatable.
 1. Ask for exactly one event covering physical pages 260–262.
 2. Let the first `research_event.propose_batch` complete.
 3. Observe a second completed call create a near-duplicate draft in the same run.
+
+### ISSUE-017: A bottom note can be selected as the previous page's continuation endpoint
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | source location / page relation |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — compared against rendered physical pages 235–236 |
+
+**Description**
+
+On David physical page 235, the extractor classified the running signature `VOYAGE EN CRISE / i — J5`
+as a footnote. The automatic relation builder treated every non-header/footer block as body text and
+therefore proposed `P0235_B010 → P0236_B002`, skipping the actual unfinished paragraph in
+`P0235_B009`. The relation was then mistakenly confirmed in the page review UI.
+
+Automatic main-text continuation candidates now use paragraph blocks only. The page review UI also
+exposes both endpoints and the continuation judgment as one auditable manual correction, so an
+already-imported bad relation can be fixed without overwriting repaired source text or editing the
+project database directly.
+
+**Repro Steps**
+
+1. Open David physical page 235 and inspect its relation to page 236.
+2. Observe that the machine relation starts from the bottom signature block rather than the last body paragraph.
+3. Compare the rendered pages and correct the relation to `P0235_B009 → P0236_B002`.

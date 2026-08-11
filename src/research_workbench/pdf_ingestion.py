@@ -128,10 +128,10 @@ def _fragmented_layout(blocks: list[dict[str, Any]]) -> bool:
     return False
 
 
-def _body_blocks(page: dict[str, Any]) -> list[dict[str, Any]]:
+def _continuation_blocks(page: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         block for block in page["blocks"]
-        if block["type"] not in {"header", "footer", "page_number"} and block["text"].strip()
+        if block["type"] == "paragraph" and block["text"].strip()
     ]
 
 
@@ -271,8 +271,8 @@ def ingest_pdf(project_root: Path, source_id: str, render_scale: float = 1.5) ->
         document.close()
 
     for page_index in range(len(pages) - 1):
-        left_body = _body_blocks(pages[page_index])
-        right_body = _body_blocks(pages[page_index + 1])
+        left_body = _continuation_blocks(pages[page_index])
+        right_body = _continuation_blocks(pages[page_index + 1])
         if not left_body or not right_body:
             continue
         left, right = left_body[-1], right_body[0]

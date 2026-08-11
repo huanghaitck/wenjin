@@ -994,6 +994,88 @@ def submit_relation_repair(
         return {"repair_id": repair_id, "scope_type": "relation", "target_id": relation["relation_id"]}
 
 
+def correct_relation(
+    project_root: Path,
+    relation_id: str,
+    from_block_id: str,
+    to_block_id: str,
+    continues: bool,
+    reviewer: str,
+    reason: str,
+) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("relation correction requires reviewer and reason")
+    with connect(project_root) as connection:
+        relation = connection.execute(
+            "SELECT * FROM page_relations WHERE relation_id = ?", (relation_id,)
+        ).fetchone()
+        if relation is None:
+            raise KeyError(f"unknown relation: {relation_id}")
+        blocks = connection.execute(
+            """SELECT b.block_id, b.block_type, p.page_id, p.source_id, p.physical_page
+               FROM blocks b JOIN pages p ON p.page_id = b.page_id
+               WHERE b.block_id IN (?, ?)""",
+            (from_block_id, to_block_id),
+        ).fetchall()
+        by_id = {row["block_id"]: row for row in blocks}
+        if from_block_id not in by_id or to_block_id not in by_id:
+            raise ValueError("relation correction references an unknown block")
+        left, right = by_id[from_block_id], by_id[to_block_id]
+        if left["source_id"] != relation["source_id"] or right["source_id"] != relation["source_id"]:
+            raise ValueError("relation endpoints must belong to the same source")
+        if right["physical_page"] != left["physical_page"] + 1:
+            raise ValueError("relation endpoints must be on adjacent pages in reading order")
+        allowed_types = {"paragraph", "footnote"}
+        if left["block_type"] not in allowed_types or right["block_type"] not in allowed_types:
+            raise ValueError("relation endpoints must be paragraph or footnote blocks")
+        human_value = {"continues": continues}
+        previous_human = json.loads(relation["human_value"]) if relation["human_value"] else None
+        if (relation["from_block_id"], relation["to_block_id"], previous_human) == (
+            from_block_id, to_block_id, human_value,
+        ):
+            raise ValueError("relation correction did not change the relation")
+        repair_id = f"REP_{uuid.uuid4().hex}"
+        target = {"source_id": relation["source_id"], "scope_type": "relation", "target_id": relation_id}
+        before = {
+            "from_block_id": relation["from_block_id"],
+            "to_block_id": relation["to_block_id"],
+            "human_value": previous_human,
+        }
+        corrected = {
+            "from_block_id": from_block_id,
+            "to_block_id": to_block_id,
+            "continues": continues,
+        }
+        _insert_repair(
+            connection, repair_id, target, corrected, [left["page_id"], right["page_id"]],
+            reviewer, reason, _json_hash(before),
+        )
+        connection.execute(
+            """UPDATE page_relations
+               SET from_block_id = ?, to_block_id = ?, human_value = ?, verification_state = 'human_repaired'
+               WHERE relation_id = ?""",
+            (from_block_id, to_block_id, json.dumps(human_value, ensure_ascii=False, sort_keys=True), relation_id),
+        )
+        connection.execute(
+            """UPDATE anomalies SET status = 'resolved', resolved_at = ?, repair_id = ?
+               WHERE source_id = ? AND scope_type = 'relation' AND target_id = ? AND status = 'open'""",
+            (utc_now(), repair_id, relation["source_id"], relation_id),
+        )
+        _recalculate_source_state(connection, relation["source_id"])
+        append_audit(
+            connection, "relation_corrected", "relation", relation_id,
+            {"repair_id": repair_id, "before": before, "after": corrected},
+        )
+    return {
+        "repair_id": repair_id,
+        "relation_id": relation_id,
+        "from_block_id": from_block_id,
+        "to_block_id": to_block_id,
+        "continues": continues,
+    }
+
+
 def _open_anomaly(connection: Any, anomaly_id: str, expected_scope: str) -> Any:
     anomaly = connection.execute("SELECT * FROM anomalies WHERE anomaly_id = ?", (anomaly_id,)).fetchone()
     if anomaly is None:

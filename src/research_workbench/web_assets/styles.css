@@ -217,6 +217,11 @@ label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
 textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color: var(--ink); background: #fffefb; border: 1px solid var(--line); border-radius: 6px; font: 14px/1.7 Georgia, "Noto Serif CJK SC", "Songti SC", serif; }
 .block-actions { display: flex; justify-content: flex-end; margin-top: 6px; }
 .primary { margin: 0 14px 10px; color: white; background: var(--accent); border-color: var(--accent); }
+.relation-section { padding: 12px 14px; border-top: 1px solid var(--line); background: #faf6ef; }
+.relation-section h2 { margin: 0 0 8px; font-size: 13px; }
+.relation-card { margin-bottom: 8px; padding: 8px; background: white; border: 1px solid var(--line); border-radius: 5px; }
+.relation-form { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 7px; align-items: end; margin-top: 7px; }
+.relation-form select { max-width: 100%; }
 .anomaly-section { overflow: auto; padding: 12px 14px; border-top: 1px solid var(--line); background: #f3eee5; }
 .anomaly { margin-bottom: 8px; padding: 8px; background: #fff; border-left: 3px solid var(--danger); border-radius: 5px; font-size: 12px; }
 .anomaly p { margin: 0 0 7px; }
@@ -234,5 +239,6 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
   .browser-workbench { height: auto; grid-template-columns: 1fr; }
   .browser-center, .browser-side { min-height: 560px; }
   .repair-panel { grid-column: 1 / -1; min-height: 620px; }
+  .relation-form { grid-template-columns: 1fr; }
   .topbar { align-items: flex-start; flex-direction: column; }
 }

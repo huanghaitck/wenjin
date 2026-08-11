@@ -11,6 +11,7 @@ import pymupdf as fitz
 
 from research_workbench.pdf_ingestion import ingest_pdf
 from research_workbench.service import (
+    correct_relation,
     initialize_project,
     list_anomalies,
     list_blocks,
@@ -41,6 +42,17 @@ def make_image_only_pdf(path: Path) -> None:
     document = fitz.open()
     page = document.new_page(width=300, height=400)
     page.draw_rect(fitz.Rect(40, 50, 260, 350), color=(0, 0, 0), fill=(0.92, 0.9, 0.84))
+    document.save(path)
+    document.close()
+
+
+def make_pdf_with_bottom_note(path: Path) -> None:
+    document = fitz.open()
+    first = document.new_page(width=612, height=792)
+    first.insert_textbox((72, 500, 540, 570), "The main account continues across the page toward", fontsize=12)
+    first.insert_textbox((72, 610, 540, 650), "VOYAGE EN CRISE - J5", fontsize=8)
+    second = document.new_page(width=612, height=792)
+    second.insert_textbox((72, 120, 540, 200), "the next settlement and records its local name.", fontsize=12)
     document.save(path)
     document.close()
 
@@ -102,6 +114,41 @@ class M2PdfIntakeTests(unittest.TestCase):
         self.assertEqual(project_status(self.project)["sources"][0]["use_state"], "research_usable")
         relation = source_view(self.project, source["source_id"])["relations"][0]
         self.assertEqual(relation["effective_value"], {"continues": True})
+
+    def test_cross_page_candidate_uses_paragraph_instead_of_bottom_note(self) -> None:
+        source_file = self.root / "bottom-note.pdf"
+        make_pdf_with_bottom_note(source_file)
+        source = register_source(self.project, source_file, "Bottom note source")
+        ingest_pdf(self.project, source["source_id"])
+        view = source_view(self.project, source["source_id"])
+        relation = view["relations"][0]
+        blocks = {block["block_id"]: block for page in view["pages"] for block in page["blocks"]}
+        self.assertEqual(blocks[relation["from_block_id"]]["block_type"], "paragraph")
+        self.assertIn("main account continues", blocks[relation["from_block_id"]]["effective_text"])
+
+    def test_human_can_correct_existing_relation_endpoints(self) -> None:
+        source_file = self.root / "relation-correction.pdf"
+        make_pdf_with_bottom_note(source_file)
+        source = register_source(self.project, source_file, "Relation correction source")
+        ingest_pdf(self.project, source["source_id"])
+        view = source_view(self.project, source["source_id"])
+        relation = view["relations"][0]
+        first_page = view["pages"][0]
+        paragraph = relation["from_block_id"]
+        bottom_note = next(block["block_id"] for block in first_page["blocks"] if block["block_type"] == "footnote")
+        correct_relation(
+            self.project, relation["relation_id"], bottom_note, relation["to_block_id"], True,
+            "human-reviewer", "Recorded a mistaken endpoint for the correction regression test.",
+        )
+        result = correct_relation(
+            self.project, relation["relation_id"], paragraph, relation["to_block_id"], True,
+            "human-reviewer", "Corrected both endpoints against adjacent rendered pages.",
+        )
+        self.assertEqual(result["from_block_id"], paragraph)
+        corrected = source_view(self.project, source["source_id"])["relations"][0]
+        self.assertEqual(corrected["from_block_id"], paragraph)
+        self.assertEqual(corrected["effective_value"], {"continues": True})
+        self.assertEqual(corrected["verification_state"], "human_repaired")
 
     def test_clean_page_boundary_does_not_create_relation_anomaly(self) -> None:
         source = self.register_text_pdf(unfinished_boundary=False)

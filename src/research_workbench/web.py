@@ -70,6 +70,7 @@ from .service import (
     accept_ocr_proposal,
     correct_block,
     correct_printed_page,
+    correct_relation,
     create_ocr_proposal,
     list_sources,
     page_image_path,
@@ -326,6 +327,16 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = submit_relation_repair(
                     self.server.project_root,
                     str(payload["anomaly_id"]),
+                    bool(payload["continues"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
+                )
+            elif parsed.path == "/api/relation/correct":
+                result = correct_relation(
+                    self.server.project_root,
+                    str(payload["relation_id"]),
+                    str(payload["from_block_id"]),
+                    str(payload["to_block_id"]),
                     bool(payload["continues"]),
                     str(payload["reviewer"]),
                     str(payload["reason"]),

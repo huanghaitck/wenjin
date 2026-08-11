@@ -1245,6 +1245,51 @@ function renderAnomalies() {
   }
 }
 
+function renderRelations() {
+  const container = $('relations'); container.replaceChildren();
+  const page = currentPage();
+  if (!page) return;
+  const blockIds = new Set(page.blocks.map((block) => block.block_id));
+  const relations = (state.view?.relations || []).filter(
+    (relation) => blockIds.has(relation.from_block_id) || blockIds.has(relation.to_block_id),
+  );
+  if (!relations.length) {
+    container.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'当前页没有跨页关系。'}));
+    return;
+  }
+  const allPages = state.view.pages || [];
+  const pageForBlock = (blockId) => allPages.find((item) => item.blocks.some((block) => block.block_id === blockId));
+  for (const relation of relations) {
+    const leftPage = pageForBlock(relation.from_block_id);
+    const rightPage = pageForBlock(relation.to_block_id);
+    const card = document.createElement('article'); card.className = 'relation-card';
+    const value = relation.effective_value?.continues;
+    card.append(Object.assign(document.createElement('small'), {
+      textContent:`${relation.relation_id} · ${value === true ? '已确认续接' : value === false ? '已确认不续接' : '待确认'}`,
+    }));
+    const form = document.createElement('div'); form.className = 'relation-form';
+    const from = document.createElement('select');
+    const to = document.createElement('select');
+    for (const block of leftPage?.blocks || []) from.append(new Option(`第${leftPage.physical_page}页 B${block.block_order} · ${block.block_type}`, block.block_id));
+    for (const block of rightPage?.blocks || []) to.append(new Option(`第${rightPage.physical_page}页 B${block.block_order} · ${block.block_type}`, block.block_id));
+    from.value = relation.from_block_id; to.value = relation.to_block_id;
+    const continues = document.createElement('select');
+    continues.append(new Option('确认续接', 'true'), new Option('确认不续接', 'false'));
+    continues.value = value === false ? 'false' : 'true';
+    const save = document.createElement('button'); save.textContent = '保存关系更正';
+    save.onclick = async () => {
+      try {
+        await request('/api/relation/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+          relation_id:relation.relation_id, from_block_id:from.value, to_block_id:to.value,
+          continues:continues.value === 'true', ...reviewerPayload(),
+        })});
+        await loadSource(state.view.source.source_id, true); notice('跨页关系端点与人工判断已保存，原机器关系仍保留在修复记录中。');
+      } catch (error) { notice(error.message, true); }
+    };
+    form.append(from, to, continues, save); card.append(form); container.append(card);
+  }
+}
+
 $('jumpToPage').onclick = () => {
   const physicalPage = Number($('pageJump').value);
   const index = (state.view?.pages || []).findIndex((page) => page.physical_page === physicalPage);
@@ -1322,7 +1367,7 @@ function renderBrowserControls() {
 }
 
 function render() {
-  renderRail(); renderOcrProposal(); renderBlocks(); renderAnomalies();
+  renderRail(); renderOcrProposal(); renderBlocks(); renderRelations(); renderAnomalies();
   const page = currentPage(); const source = state.view?.source;
   $('sourceTitle').textContent = source?.title || '尚未导入文献';
   $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : '等待材料';
