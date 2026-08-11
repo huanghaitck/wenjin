@@ -672,3 +672,11 @@ transcripts are also excluded from bounded thread history so one bad completion 
 2. Let the provider return the accumulated internal transcript as plain final text beginning with `TOOL_RESULT`.
 3. Before the fix the run becomes `COMPLETED` and displays the transcript; after the fix it records
    `model_action_invalid` and continues until the model returns readable research prose or exhausts the bounded run.
+
+**Live regression verification**
+
+Run `RUN_09fb814f2d0b40b1a7c6060e204dac9d` exercised the repaired runtime through the real GUI with
+`deepseek-v4-flash`. The model called `source.page` exactly once for physical page 106, called no write tool, and
+returned a readable A/B/C source assessment without exposing `TOOL_RESULT` or JSON. Its recorded bounded-history
+snapshot excludes malformed message `MSG_ff493f5dca4e422c9deac4b224f10688`, confirming that an already stored bad
+transcript no longer contaminates a later guided run.
