@@ -425,7 +425,7 @@ function renderResearchEvents(container) {
   container.append(card('逐事件比较表',
     `待核 ${stateValue.counts.draft||0} · 已批准 ${stateValue.counts.approved||0} · 已拒绝 ${stateValue.counts.rejected||0}。批准事件仍不是冻结证据。`));
   if(!stateValue.events.length){container.append(card('尚无事件候选','在研究对话中让 Agent 定位来源页并提交 research_event.propose_batch。'));return;}
-  const labels={case_id:'比较个案',event_date:'日期',start_place:'起点',end_place:'终点',route:'路线/通道',movement_time:'移动时间',distance_original:'原载距离',distance_normalized:'换算',movement_mode:'移动方式',investigation_object:'调查对象',recording_technique:'记录技术',genre:'体裁',chinese_participants:'中国参与者',participant_visibility:'参与者可见度',institutional_task:'机构任务',outcome_destination:'成果去向',translation:'译文',missing_reason:'缺失原因',notes:'备注'};
+  const labels={case_id:'比较个案',event_date:'日期',start_place:'起点',end_place:'行程终点',route:'路线/通道',movement_time:'移动时间',distance_original:'原载距离',distance_normalized:'换算',movement_mode:'移动方式',investigation_object:'调查对象',recording_technique:'记录技术',genre:'体裁',chinese_participants:'中国参与者',participant_visibility:'参与者可见度',institutional_task:'机构任务',outcome_destination:'成果/知识产出去向（非行程终点）',translation:'译文',missing_reason:'缺失原因',notes:'备注'};
   const sourceFields=new Set(['event_date','start_place','end_place','route','movement_time','distance_original','movement_mode','investigation_object','recording_technique','genre','chinese_participants','participant_visibility','institutional_task','outcome_destination','translation','original_text']);
   for(const item of stateValue.events){
     const node=card(`${item.case_id} · ${item.event_date||'日期待核'}`,`${item.status} · 物理页 ${(item.physical_pages||[]).join('–')||'待核'} · ${item.event_id}`);

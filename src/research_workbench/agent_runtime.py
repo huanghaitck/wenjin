@@ -73,6 +73,9 @@ effective_value and verification_state; do not call a human-confirmed continuati
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
 Movement mode, genre, participant visibility and outcome destination are comparison fields, not free
 inference slots; leave them blank with a missing code when the cited blocks do not support them.
+end_place is the journey endpoint. outcome_destination is where a research or knowledge product goes,
+such as a publication, report, map, collection, specimen repository or institution; never put lodging,
+a stopover or a route endpoint in outcome_destination.
 NR, UNC and PND are missing-data codes, not source-field values. Leave the affected source-derived
 field blank and put the code plus explanation in missing_reason; never invent an anchor for absence.
 Do not cite one set of blocks while taking dates, places, participants or tasks from unanchored page context.

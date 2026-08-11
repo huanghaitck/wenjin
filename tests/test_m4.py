@@ -642,6 +642,9 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn('"tool":"research_event.coverage"', SYSTEM_PROMPT)
         self.assertIn("exact intended case_ids", SYSTEM_PROMPT)
         self.assertIn('statuses=["approved"] and detail="summary"', SYSTEM_PROMPT)
+        self.assertIn("end_place is the journey endpoint", SYSTEM_PROMPT)
+        self.assertIn("outcome_destination is where a research or knowledge product goes", SYSTEM_PROMPT)
+        self.assertIn("never put lodging", SYSTEM_PROMPT)
         action = _parse_action(
             '<{"type":"tool_call","tool":"research_event.coverage",'
             '"arguments":{"case_ids":["DAVID","PIAS","RICH"]}}>'

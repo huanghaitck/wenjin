@@ -347,7 +347,8 @@ class ResearchEventTests(unittest.TestCase):
             ("movement_mode", "移动方式"),
             ("genre", "体裁"),
             ("participant_visibility", "参与者可见度"),
-            ("outcome_destination", "成果去向"),
+            ("end_place", "行程终点"),
+            ("outcome_destination", "成果/知识产出去向（非行程终点）"),
         ):
             with self.subTest(field=field):
                 self.assertIn(f"{field}:'{label}'", script)
