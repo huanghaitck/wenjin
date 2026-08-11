@@ -388,6 +388,60 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("required_tool_missing", [event["event_type"] for event in run["events"]])
         create_candidates.assert_called_once()
 
+    def test_claimed_event_submission_requires_an_actual_tool_receipt(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {"type": "final", "content": "现提交5条待审候选。"},
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": [{"case_id": "CASE_1"}]},
+            },
+            {"type": "final", "content": "已依据工具回执提交5条待审候选。"},
+        ])
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=lambda *args: next(actions)),
+                patch(
+                    "research_workbench.agent_runtime.create_event_candidates",
+                    return_value=[{"event_id": "EVT_1"}],
+                ) as create_candidates,
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "先核对来源，最多一次 research_event.propose_batch，按证据边界提案。",
+                )
+
+        run = result["runs"][0]
+        self.assertIn("required_tool_missing", [event["event_type"] for event in run["events"]])
+        create_candidates.assert_called_once()
+
+    def test_negative_event_submission_statement_does_not_force_a_write(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch(
+                "research_workbench.agent_runtime._model_action",
+                return_value={"type": "final", "content": "核验完成，未提交任何事件。"},
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "检查是否适合 research_event.propose_batch，不合适就停止。",
+                )
+
+        run = result["runs"][0]
+        self.assertNotIn("required_tool_missing", [event["event_type"] for event in run["events"]])
+        self.assertFalse(run["tool_calls"])
+
     def test_internal_tool_transcript_is_rejected_before_natural_completion(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",

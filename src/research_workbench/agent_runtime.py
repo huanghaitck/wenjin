@@ -595,25 +595,31 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                     "error": message + ". Synthesize the requested conclusions in readable prose now.",
                 })
                 continue
-            required_tool_attempted = required_tool and any(
-                item.get("tool") == required_tool
+            completion_tool = required_tool or _claimed_unexecuted_write_tool(
+                objective, final_content, observations
+            )
+            required_tool_attempted = completion_tool and any(
+                item.get("tool") == completion_tool
                 for item in observations
             )
-            if required_tool and not required_tool_attempted:
+            if completion_tool and not required_tool_attempted:
                 if missing_tool_retries >= 2:
-                    raise RuntimeError(f"required tool was not attempted in this run: {required_tool}")
+                    raise RuntimeError(f"required tool was not attempted in this run: {completion_tool}")
                 missing_tool_retries += 1
                 message = (
-                    f"The researcher explicitly required one {required_tool} attempt in this run, "
+                    f"The researcher explicitly required one {completion_tool} attempt in this run, "
                     "but none has occurred. Continue using tools now; do not describe a future step as the final answer."
+                    if required_tool else
+                    f"One {completion_tool} attempt is required before this run can claim the write occurred, "
+                    "but none has occurred. Continue using tools now; do not describe an unexecuted write as completed."
                 )
                 with connect(project_root) as connection:
                     _append_run_event(connection, run_id, "required_tool_missing", {
-                        "tool": required_tool, "attempt": missing_tool_retries,
+                        "tool": completion_tool, "attempt": missing_tool_retries,
                     })
                 observations.append({
                     "tool": "run.completion_contract",
-                    "arguments": {"required_tool": required_tool},
+                    "arguments": {"required_tool": completion_tool},
                     "result": None,
                     "error": message,
                 })
@@ -669,6 +675,18 @@ def _explicit_required_tool(objective: str) -> str:
         match = re.search(pattern, objective, flags=re.IGNORECASE)
         if match:
             return match.group(1)
+    return ""
+
+
+def _claimed_unexecuted_write_tool(
+    objective: str, final_content: str, observations: list[dict[str, Any]],
+) -> str:
+    if "research_event.propose_batch" not in objective:
+        return ""
+    if any(item.get("tool") == "research_event.propose_batch" for item in observations):
+        return ""
+    if re.search(r"(?:现|已|已经|完成)(?:提交|创建|新增)|提交了\s*\d+\s*条", final_content):
+        return "research_event.propose_batch"
     return ""
 
 
