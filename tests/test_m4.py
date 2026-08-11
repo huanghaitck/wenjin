@@ -641,6 +641,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
     def test_agent_prompt_routes_coverage_audits_to_deterministic_tool(self) -> None:
         self.assertIn('"tool":"research_event.coverage"', SYSTEM_PROMPT)
         self.assertIn("exact intended case_ids", SYSTEM_PROMPT)
+        self.assertIn('statuses=["approved"] and detail="summary"', SYSTEM_PROMPT)
         action = _parse_action(
             '<{"type":"tool_call","tool":"research_event.coverage",'
             '"arguments":{"case_ids":["DAVID","PIAS","RICH"]}}>'

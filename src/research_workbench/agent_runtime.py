@@ -47,7 +47,7 @@ Available actions:
 {"type":"tool_call","tool":"authoring.state","arguments":{}}
 {"type":"tool_call","tool":"research_design.current","arguments":{}}
 {"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
-{"type":"tool_call","tool":"research_event.list","arguments":{}}
+{"type":"tool_call","tool":"research_event.list","arguments":{"case_ids":["exact-case-id"],"statuses":["approved"],"detail":"summary"}}
 {"type":"tool_call","tool":"research_event.coverage","arguments":{"case_ids":["exact-case-id"]}}
 {"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"movement_mode":["block-id"],"genre":["block-id"],"participant_visibility":["block-id"],"outcome_destination":["block-id"],"original_text":["block-id"]},"route":"...","movement_mode":"...","investigation_object":"...","recording_technique":"...","genre":"...","chinese_participants":"...","participant_visibility":"...","institutional_task":"...","outcome_destination":"..."}]}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
@@ -63,6 +63,8 @@ Research event proposals are page-linked coding drafts, not frozen evidence. Hum
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 For event counts or coverage audits, call research_event.coverage with the exact intended case_ids instead
 of hand-counting research_event.list. Keep other_approved_cases separate from the selected combined total.
+For a comparison matrix, follow coverage with research_event.list using the same exact case_ids,
+statuses=["approved"] and detail="summary". Request full event text only when the user needs quotations.
 source.page reports each block's verification_state, use_state and usable_for_evidence flag. That flag is
 true only after the cited block is human-verified or human-repaired on a human-checked page. Machine-parsed
 or blocked text may help locate a repair target, but it must not support an event field, quotation or claim.
@@ -922,7 +924,18 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 current["design_id"] if current else "", run_id, snapshot,
             )
         elif tool_name == "research_event.list":
-            result = event_state(project_root)
+            case_ids = arguments.get("case_ids")
+            statuses = arguments.get("statuses")
+            if case_ids is not None and not isinstance(case_ids, list):
+                raise ValueError("research_event.list case_ids must be a list")
+            if statuses is not None and not isinstance(statuses, list):
+                raise ValueError("research_event.list statuses must be a list")
+            result = event_state(
+                project_root,
+                case_ids,
+                statuses,
+                str(arguments.get("detail", "full")),
+            )
         elif tool_name == "research_event.coverage":
             case_ids = arguments.get("case_ids")
             if case_ids is not None and not isinstance(case_ids, list):

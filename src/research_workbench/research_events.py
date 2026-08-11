@@ -84,18 +84,48 @@ def _anchor_map(connection: Any, event_ids: list[str]) -> dict[str, dict[str, li
     return result
 
 
-def event_state(project_root: Path) -> dict[str, Any]:
+def event_state(
+    project_root: Path,
+    case_ids: list[str] | None = None,
+    statuses: list[str] | None = None,
+    detail: str = "full",
+) -> dict[str, Any]:
+    if detail not in {"full", "summary"}:
+        raise ValueError("research event detail must be full or summary")
+    selected_case_ids = {
+        str(case_id).strip() for case_id in (case_ids or []) if str(case_id).strip()
+    }
+    selected_statuses = {
+        str(status).strip() for status in (statuses or []) if str(status).strip()
+    }
+    unknown_statuses = selected_statuses - {"draft", "approved", "rejected"}
+    if unknown_statuses:
+        raise ValueError(f"unknown research event status: {', '.join(sorted(unknown_statuses))}")
     with connect(project_root) as connection:
         rows = connection.execute(
             "SELECT * FROM research_event_rows ORDER BY created_at DESC, event_id DESC"
         ).fetchall()
         anchors = _anchor_map(connection, [row["event_id"] for row in rows])
     events = [_public(row, anchors.get(row["event_id"], {})) for row in rows]
+    if selected_case_ids:
+        events = [item for item in events if item["case_id"] in selected_case_ids]
+    if selected_statuses:
+        events = [item for item in events if item["status"] in selected_statuses]
+    if detail == "summary":
+        for item in events:
+            item.pop("original_text", None)
+            item.pop("translation", None)
+            item.pop("model_snapshot", None)
     return {
         "events": events,
         "counts": {
             status: sum(item["status"] == status for item in events)
             for status in ("draft", "approved", "rejected")
+        },
+        "filters": {
+            "case_ids": sorted(selected_case_ids),
+            "statuses": sorted(selected_statuses),
+            "detail": detail,
         },
     }
 

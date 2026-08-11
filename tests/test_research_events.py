@@ -180,6 +180,40 @@ class ResearchEventTests(unittest.TestCase):
             [{"case_id": "Misclassified-case", "approved_events": 1}],
         )
 
+    def test_event_state_can_return_a_filtered_summary_without_long_text(self) -> None:
+        selected = self._create()
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        decide_event(
+            self.project, str(selected["event_id"]), True,
+            "Professor", "Approved selected comparison event",
+        )
+        create_event_candidates(
+            self.project,
+            [{
+                "case_id": "Other-case",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {"original_text": [self.block_id]},
+            }],
+            "test-model",
+        )
+
+        state = event_state(
+            self.project,
+            case_ids=["Richthofen-1871"],
+            statuses=["approved"],
+            detail="summary",
+        )
+
+        self.assertEqual(state["counts"], {"draft": 0, "approved": 1, "rejected": 0})
+        self.assertEqual(state["filters"]["detail"], "summary")
+        self.assertEqual(len(state["events"]), 1)
+        self.assertEqual(state["events"][0]["route"], "Qinling route")
+        self.assertEqual(state["events"][0]["field_anchors"]["route"], [self.block_id])
+        self.assertNotIn("original_text", state["events"][0])
+        self.assertNotIn("translation", state["events"][0])
+        self.assertNotIn("model_snapshot", state["events"][0])
+
     def test_every_source_derived_field_requires_its_own_anchors(self) -> None:
         with self.assertRaisesRegex(ValueError, "event_date requires explicit block anchors"):
             create_event_candidates(
