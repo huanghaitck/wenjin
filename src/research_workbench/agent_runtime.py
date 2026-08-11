@@ -20,7 +20,7 @@ from .db import connect, utc_now
 from .authoring import authoring_state
 from .research import list_retrievals
 from .research_design import create_design_draft, current_shared_design
-from .research_events import create_event_candidates, event_state
+from .research_events import create_event_candidates, event_coverage, event_state
 from .scholarship import research_state
 from .service import list_sources, project_status, source_view
 
@@ -48,6 +48,7 @@ Available actions:
 {"type":"tool_call","tool":"research_design.current","arguments":{}}
 {"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
 {"type":"tool_call","tool":"research_event.list","arguments":{}}
+{"type":"tool_call","tool":"research_event.coverage","arguments":{"case_ids":["exact-case-id"]}}
 {"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"movement_mode":["block-id"],"genre":["block-id"],"participant_visibility":["block-id"],"outcome_destination":["block-id"],"original_text":["block-id"]},"route":"...","movement_mode":"...","investigation_object":"...","recording_technique":"...","genre":"...","chinese_participants":"...","participant_visibility":"...","institutional_task":"...","outcome_destination":"..."}]}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
@@ -60,6 +61,8 @@ If a tool reports a correctable locator or argument error, use the error to corr
 explicit user scope. Do not repeat the same failed call, guess source content, or abandon the whole task.
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
+For event counts or coverage audits, call research_event.coverage with the exact intended case_ids instead
+of hand-counting research_event.list. Keep other_approved_cases separate from the selected combined total.
 source.page reports each block's verification_state, use_state and usable_for_evidence flag. A blocked
 block may help locate a repair target, but it must not support an event field, quotation or historical claim.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
@@ -850,7 +853,7 @@ def _post_json_blocking(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.propose_batch", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -917,6 +920,11 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             )
         elif tool_name == "research_event.list":
             result = event_state(project_root)
+        elif tool_name == "research_event.coverage":
+            case_ids = arguments.get("case_ids")
+            if case_ids is not None and not isinstance(case_ids, list):
+                raise ValueError("research_event.coverage case_ids must be a list")
+            result = event_coverage(project_root, case_ids)
         elif tool_name == "research_event.propose_batch":
             with connect(project_root) as connection:
                 prior = connection.execute(

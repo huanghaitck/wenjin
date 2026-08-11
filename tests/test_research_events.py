@@ -10,6 +10,7 @@ from research_workbench.research_events import (
     create_event_candidates,
     decide_event,
     event_anchor_text,
+    event_coverage,
     event_state,
 )
 from research_workbench.service import (
@@ -144,6 +145,40 @@ class ResearchEventTests(unittest.TestCase):
         state = event_state(self.project)
         self.assertEqual(state["counts"]["rejected"], 1)
         self.assertEqual(state["events"][0]["decision_reason"], "不符合比较口径")
+
+    def test_coverage_uses_an_exact_case_allowlist_and_separates_other_cases(self) -> None:
+        selected = self._create()
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        decide_event(
+            self.project, str(selected["event_id"]), True,
+            "Professor", "Approved selected comparison event",
+        )
+        other = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "Misclassified-case",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {"original_text": [self.block_id]},
+                "missing_reason": "Comparison fields not coded.",
+            }],
+            "test-model",
+        )[0]
+        decide_event(
+            self.project, str(other["event_id"]), True,
+            "Professor", "Approved but outside the selected comparison cases",
+        )
+
+        coverage = event_coverage(self.project, ["Richthofen-1871"])
+
+        self.assertEqual(coverage["selected_approved_total"], 1)
+        self.assertEqual(coverage["combined"]["fields"]["route"]["anchored"], 1)
+        self.assertEqual(coverage["combined"]["fields"]["route"]["percent"], 100.0)
+        self.assertEqual(coverage["combined"]["movement_cost_any"]["anchored"], 0)
+        self.assertEqual(
+            coverage["other_approved_cases"],
+            [{"case_id": "Misclassified-case", "approved_events": 1}],
+        )
 
     def test_every_source_derived_field_requires_its_own_anchors(self) -> None:
         with self.assertRaisesRegex(ValueError, "event_date requires explicit block anchors"):

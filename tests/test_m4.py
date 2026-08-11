@@ -14,6 +14,7 @@ from research_workbench.agent_runtime import (
     EmptyModelContentError,
     ModelActionFormatError,
     ModelProfile,
+    SYSTEM_PROMPT,
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
@@ -636,6 +637,16 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(action["tool"], "research_event.list")
         prose = '模型示例：<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
+
+    def test_agent_prompt_routes_coverage_audits_to_deterministic_tool(self) -> None:
+        self.assertIn('"tool":"research_event.coverage"', SYSTEM_PROMPT)
+        self.assertIn("exact intended case_ids", SYSTEM_PROMPT)
+        action = _parse_action(
+            '<{"type":"tool_call","tool":"research_event.coverage",'
+            '"arguments":{"case_ids":["DAVID","PIAS","RICH"]}}>'
+        )
+        self.assertEqual(action["tool"], "research_event.coverage")
+        self.assertEqual(action["arguments"]["case_ids"], ["DAVID", "PIAS", "RICH"])
 
     def test_parser_accepts_observed_unclosed_angle_action_only_as_the_whole_response(self) -> None:
         action = _parse_action(

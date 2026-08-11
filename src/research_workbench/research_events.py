@@ -25,6 +25,12 @@ SOURCE_ANCHORED_FIELDS = {
     "participant_visibility", "outcome_destination", "original_text", "translation",
 }
 
+COVERAGE_FIELDS = (
+    "route", "movement_time", "distance_original", "investigation_object",
+    "recording_technique", "chinese_participants", "institutional_task",
+    "movement_mode", "genre", "participant_visibility", "outcome_destination",
+)
+
 MISSING_CODE = re.compile(r"^(NR|UNC|PND)(?:$|[\s:：\-(（—])", re.IGNORECASE)
 
 
@@ -91,6 +97,72 @@ def event_state(project_root: Path) -> dict[str, Any]:
             status: sum(item["status"] == status for item in events)
             for status in ("draft", "approved", "rejected")
         },
+    }
+
+
+def event_coverage(project_root: Path, case_ids: list[str] | None = None) -> dict[str, Any]:
+    state = event_state(project_root)
+    approved = [item for item in state["events"] if item["status"] == "approved"]
+    selected_case_ids = list(dict.fromkeys(
+        str(case_id).strip() for case_id in (case_ids or []) if str(case_id).strip()
+    ))
+    if not selected_case_ids:
+        selected_case_ids = sorted({str(item["case_id"]) for item in approved})
+
+    def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
+        total = len(events)
+        fields: dict[str, Any] = {}
+        for field_name in COVERAGE_FIELDS:
+            nonempty = sum(bool(str(item[field_name]).strip()) for item in events)
+            anchored = sum(
+                bool(str(item[field_name]).strip())
+                and bool(item["field_anchors"].get(field_name))
+                for item in events
+            )
+            fields[field_name] = {
+                "anchored": anchored,
+                "nonempty": nonempty,
+                "unanchored_nonempty": nonempty - anchored,
+                "total": total,
+                "percent": round(anchored * 100 / total, 1) if total else None,
+            }
+        movement_cost = sum(
+            any(
+                bool(str(item[field_name]).strip())
+                and bool(item["field_anchors"].get(field_name))
+                for field_name in ("movement_time", "distance_original")
+            )
+            for item in events
+        )
+        return {
+            "approved_events": total,
+            "fields": fields,
+            "movement_cost_any": {
+                "anchored": movement_cost,
+                "total": total,
+                "percent": round(movement_cost * 100 / total, 1) if total else None,
+            },
+        }
+
+    selected = [item for item in approved if item["case_id"] in selected_case_ids]
+    other_counts: dict[str, int] = {}
+    for item in approved:
+        if item["case_id"] not in selected_case_ids:
+            other_counts[item["case_id"]] = other_counts.get(item["case_id"], 0) + 1
+    return {
+        "selected_case_ids": selected_case_ids,
+        "selected_approved_total": len(selected),
+        "cases": {
+            case_id: summarize([item for item in selected if item["case_id"] == case_id])
+            for case_id in selected_case_ids
+        },
+        "combined": summarize(selected),
+        "other_approved_cases": [
+            {"case_id": case_id, "approved_events": count}
+            for case_id, count in sorted(other_counts.items())
+        ],
+        "global_counts": state["counts"],
+        "coverage_rule": "non-empty source-derived field with at least one explicit field anchor",
     }
 
 
