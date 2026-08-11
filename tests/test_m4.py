@@ -651,6 +651,18 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         )
         self.assertEqual(action["arguments"]["case_ids"], ["DAVID"])
 
+    def test_parser_accepts_dsml_name_attribute_observed_from_deepseek(self) -> None:
+        action = _parse_action(
+            '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="source.page">'
+            '<｜｜DSML｜｜parameter argument="physical_page" string="true">230</｜｜DSML｜｜parameter>'
+            '<｜｜DSML｜｜parameter name="source_id" string="true">SRC_1</｜｜DSML｜｜parameter>'
+            '</｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        )
+        self.assertEqual(action, {
+            "type": "tool_call", "tool": "source.page",
+            "arguments": {"physical_page": "230", "source_id": "SRC_1"},
+        })
+
     def test_parser_accepts_observed_angle_bracketed_action_only_as_the_whole_response(self) -> None:
         action = _parse_action(
             '<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'

@@ -848,7 +848,7 @@ def _parse_dsml_action(text: str) -> dict[str, Any] | None:
         if body[end:parameter.start()].strip():
             return None
         attributes = dict(re.findall(r'([a-z_][a-z0-9_-]*)="([^"]*)"', parameter.group(1), re.IGNORECASE))
-        name = attributes.get("argument", "")
+        name = attributes.get("argument") or attributes.get("name", "")
         if not name or name in arguments:
             return None
         value_text = unescape(parameter.group(2).strip())
