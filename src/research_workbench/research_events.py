@@ -256,6 +256,11 @@ def decide_event(
             for key in TEXT_FIELDS
         }
         field_anchors = _anchor_map(connection, [event_id]).get(event_id, {})
+        page_snapshot = {
+            "page_ids_json": row["page_ids_json"],
+            "physical_pages_json": row["physical_pages_json"],
+            "printed_pages_json": row["printed_pages_json"],
+        }
         if approved:
             if not values["case_id"] or not values["original_text"]:
                 raise ValueError("approved events require case_id and original_text")
@@ -288,6 +293,19 @@ def decide_event(
             for block in blocks:
                 if block["page_verification_state"] not in {"human_spot_checked", "human_verified", "human_repaired"}:
                     raise ValueError("event pages require human verification before approval")
+            current_pages = connection.execute(
+                """SELECT DISTINCT p.page_id, p.physical_page, p.printed_page
+                   FROM pages p JOIN blocks b ON b.page_id = p.page_id
+                   WHERE b.block_id IN (""" + placeholders + ") ORDER BY p.physical_page",
+                block_ids,
+            ).fetchall()
+            page_snapshot = {
+                "page_ids_json": _json([page["page_id"] for page in current_pages]),
+                "physical_pages_json": _json([page["physical_page"] for page in current_pages]),
+                "printed_pages_json": _json(list(dict.fromkeys(
+                    str(page["printed_page"]) for page in current_pages if page["printed_page"]
+                ))),
+            }
             for field_name in SOURCE_ANCHORED_FIELDS:
                 if values[field_name] and not field_anchors.get(field_name):
                     raise ValueError(f"source-derived event field {field_name} requires explicit block anchors")
@@ -302,13 +320,17 @@ def decide_event(
         edited_fields = [key for key in TEXT_FIELDS if values[key] != str(row[key])]
         assignments = ", ".join(f"{key} = ?" for key in TEXT_FIELDS)
         connection.execute(
-            f"""UPDATE research_event_rows SET {assignments}, status = ?, decided_by = ?,
+            f"""UPDATE research_event_rows SET {assignments}, page_ids_json = ?,
+                       physical_pages_json = ?, printed_pages_json = ?, status = ?, decided_by = ?,
                        decision_reason = ?, decided_at = ? WHERE event_id = ? AND status = 'draft'""",
-            (*(values[key] for key in TEXT_FIELDS), status, reviewer, reason, now, event_id),
+            (*(values[key] for key in TEXT_FIELDS), page_snapshot["page_ids_json"],
+             page_snapshot["physical_pages_json"], page_snapshot["printed_pages_json"],
+             status, reviewer, reason, now, event_id),
         )
         append_audit(connection, "research_event_decided", "research_event", event_id,
                      {"approved": approved, "reviewer": reviewer, "reason": reason,
-                      "edited_fields": edited_fields})
+                      "edited_fields": edited_fields,
+                      "page_snapshot_refreshed": approved})
         decided = connection.execute(
             "SELECT * FROM research_event_rows WHERE event_id = ?", (event_id,)
         ).fetchone()

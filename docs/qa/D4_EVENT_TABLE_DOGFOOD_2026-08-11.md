@@ -532,3 +532,29 @@ project database directly.
 1. Open David physical page 235 and inspect its relation to page 236.
 2. Observe that the machine relation starts from the bottom signature block rather than the last body paragraph.
 3. Compare the rendered pages and correct the relation to `P0235_B009 → P0236_B002`.
+
+### ISSUE-018: A draft event keeps stale printed-page metadata after human page repair
+
+| Field | Value |
+|---|---|
+| Severity | high |
+| Category | evidence snapshot / approval |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — visible in the draft event metadata and project database |
+
+**Description**
+
+The David 13 January candidate was created before physical page 235 had its printed page reconstructed.
+After the reviewer set it to printed page 225, the draft still listed only printed page 226. Approving
+the row would therefore have preserved stale page metadata even though the linked page had already
+been human-corrected.
+
+Approval now refreshes page IDs, physical pages and printed pages from the exact currently verified
+blocks immediately before the event row is approved. Rejected candidates retain their original draft
+snapshot. The approval audit records that this refresh occurred.
+
+**Repro Steps**
+
+1. Create an event spanning physical pages 235–236 while page 235 has no printed page label.
+2. Reconstruct page 235 as printed page 225 in the source review UI.
+3. Approve the event and observe that the approved row now records printed pages 225–226.

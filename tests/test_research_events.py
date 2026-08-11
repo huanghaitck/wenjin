@@ -12,6 +12,7 @@ from research_workbench.research_events import (
     event_state,
 )
 from research_workbench.service import (
+    correct_printed_page,
     import_structure,
     initialize_project,
     correct_block,
@@ -88,6 +89,22 @@ class ResearchEventTests(unittest.TestCase):
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["qualification"], "PAGE_LINKED_EVENT_NOT_FROZEN")
         self.assertEqual(approved["notes"], "人工确认后保留")
+
+    def test_approval_refreshes_printed_page_snapshot_after_page_repair(self) -> None:
+        candidate = self._create()
+        page_id = f"{self.source['source_id']}:P1"
+        correct_printed_page(
+            self.project, page_id, "225", "Professor", "Corrected against the printed page footer",
+        )
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+
+        approved = decide_event(
+            self.project, str(candidate["event_id"]), True,
+            "Professor", "Approved after the page metadata correction",
+        )
+
+        self.assertEqual(candidate["printed_pages"], ["1"])
+        self.assertEqual(approved["printed_pages"], ["225"])
 
     def test_quote_must_match_verified_blocks(self) -> None:
         candidate = self._create()
