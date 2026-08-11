@@ -66,6 +66,8 @@ of hand-counting research_event.list. Keep other_approved_cases separate from th
 source.page reports each block's verification_state, use_state and usable_for_evidence flag. That flag is
 true only after the cited block is human-verified or human-repaired on a human-checked page. Machine-parsed
 or blocked text may help locate a repair target, but it must not support an event field, quotation or claim.
+source.page also reports adjacent_relations for every continuation touching the page. Use each relation's
+effective_value and verification_state; do not call a human-confirmed continuation unresolved.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
 Movement mode, genre, participant visibility and outcome destination are comparison fields, not free
 inference slots; leave them blank with a missing code when the cited blocks do not support them.
@@ -1067,6 +1069,7 @@ def _read_page(
     page_id = str(row["page_id"])
     view = source_view(project_root, str(row["source_id"]))
     page = next(item for item in view["pages"] if item["page_id"] == page_id)
+    page_block_ids = {block["block_id"] for block in page["blocks"]}
     page_is_checked = page["verification_state"] in {
         "human_spot_checked", "human_verified", "human_repaired",
     }
@@ -1091,6 +1094,19 @@ def _read_page(
                  and page_is_checked
              )}
             for block in page["blocks"]
+        ],
+        "adjacent_relations": [
+            {
+                "relation_id": relation["relation_id"],
+                "from_block_id": relation["from_block_id"],
+                "to_block_id": relation["to_block_id"],
+                "relation_type": relation["relation_type"],
+                "effective_value": relation["effective_value"],
+                "verification_state": relation["verification_state"],
+            }
+            for relation in view["relations"]
+            if relation["from_block_id"] in page_block_ids
+            or relation["to_block_id"] in page_block_ids
         ],
         "open_anomalies": anomalies,
     }
