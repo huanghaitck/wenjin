@@ -7,6 +7,7 @@ from pathlib import Path
 
 from research_workbench.db import connect
 from research_workbench.research_events import (
+    _qualified_block_id,
     create_event_candidates,
     decide_event,
     event_anchor_text,
@@ -40,6 +41,15 @@ class ResearchEventTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_local_human_repair_block_id_is_qualified_by_source(self) -> None:
+        source_id = self.source["source_id"]
+        self.assertEqual(
+            _qualified_block_id(source_id, "P0231:H005"),
+            f"{source_id}:P0231:H005",
+        )
+        full_id = f"{source_id}:P0231:H005"
+        self.assertEqual(_qualified_block_id(source_id, full_id), full_id)
 
     def _create(self) -> dict[str, object]:
         return create_event_candidates(

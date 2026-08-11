@@ -44,7 +44,9 @@ def _decode(value: str | None, fallback: Any) -> Any:
 
 def _qualified_block_id(source_id: str, value: Any) -> str:
     block_id = str(value).strip()
-    if not block_id or ":" in block_id:
+    if not block_id or block_id.startswith(f"{source_id}:"):
+        return block_id
+    if block_id.startswith("SRC_") and ":" in block_id:
         return block_id
     return f"{source_id}:{block_id}"
 
