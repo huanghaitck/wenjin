@@ -5,7 +5,7 @@
 | Date | 2026-08-11 |
 | App URL | `http://127.0.0.1:8766/` |
 | Session | `hrw` |
-| Scope | Richthofen physical pages 250–254, cross-page relation, block verification and model correction |
+| Scope | Richthofen physical pages 250–258, cross-page relation, block verification and model correction |
 
 ## Summary
 
@@ -13,14 +13,17 @@
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 9 |
+| Medium | 12 |
 | Low | 0 |
-| **Total** | **9** |
+| **Total** | **12** |
 
-All nine findings were fixed in bounded Git branches and verified by the full 99-test suite.
+The first nine findings were fixed in bounded Git branches and verified by the earlier 99-test suite.
 The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` event
 `EVT_c05991d5c1714c728c54f0ae607fc95c` plus corrected 26 and 27 January rows. Approval remains
-explicitly below evidence freeze.
+explicitly below evidence freeze. The corrected 28 January row was then approved after all 19 blocks
+were verified; it remains below evidence freeze. ISSUE-010 remains under investigation and created no
+partial row. ISSUE-011 and ISSUE-012 have bounded fixes and regression coverage. The current
+environment check and full 100-test suite pass before commit.
 
 ## Issues
 
@@ -282,3 +285,102 @@ errors, refreshed the anchored text and approved both rows.
 
 Evidence screenshot:
 `C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\missing-code-drafts-rejected-and-corrected.png`
+
+### ISSUE-010: A multi-page reading run loses its proposed output at the provider deadline
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | reliability / ux |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — the failed run and completed page calls are durably recorded |
+
+**Description**
+
+The guided execution asked DeepSeek to read only the 28 and 29 January segments and submit exactly
+two event drafts. The model successfully called `source.page` for physical pages 254 through 258,
+but its next provider step exceeded the fixed 180-second deadline. The run was marked `FAILED` and
+created no draft. The page reads remain in the audit trail, but the interface offers no checkpointed
+continuation from those completed tool results, so the researcher must reduce the task and ask the
+model to read overlapping pages again.
+
+This is not an evidence-integrity failure: no partial row was approved or frozen. It is a research
+task granularity and recovery problem. The immediate safe workaround is one dated segment per run;
+the product fix should preserve completed tool context and make timeout continuation explicit rather
+than silently increasing the global deadline.
+
+**Repro Steps**
+
+1. In guided execution, ask for two consecutive dated events whose second boundary must be located
+   by reading forward.
+2. Observe five completed `source.page` calls for physical pages 254–258.
+3. After 180 seconds, observe the thread state change to `FAILED` with no event drafts created.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\provider-timeout-after-five-page-reads.png`
+
+### ISSUE-011: A whole-action `<{...}>` wrapper is displayed instead of executing the tool
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | functional / ux |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — the literal assistant messages and completed runs are durable |
+
+**Description**
+
+During correction of the rejected 28 January row, DeepSeek returned the valid
+`research_event.list` action as `<{"type":"tool_call",...}>`. The parser already handled named XML
+wrappers and a short prose preface, but not this single unnamed angle wrapper. It stored the literal
+text as the assistant answer and marked the run completed without calling the tool.
+
+The parser now unwraps this form only when one angle-bracket pair encloses one complete JSON object
+and consumes the entire provider response. An embedded example such as `示例：<{...}>` remains prose,
+so ordinary discussion cannot become an unintended tool call.
+
+**Repro Steps**
+
+1. Ask DeepSeek to read `research_event.list` while correcting a rejected event.
+2. Observe the assistant response `<{"type":"tool_call","tool":"research_event.list",...}>`.
+3. Observe the run marked `COMPLETED` with no `research_event.list` tool entry.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\wrong-thread-reset-and-angle-wrapper.png`
+
+The screenshot also records that the correction was sent while a different thread was visibly
+selected. A separate automatic thread-reset defect was investigated but not reproduced: explicitly
+selecting the batch thread remained stable across later checks. This is treated as a tester routing
+mistake aided by a global event panel, not counted as another product issue.
+
+### ISSUE-012: Opening an event source leaves the page-number control on a different page
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | ux / evidence review |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — the conflicting page indicators are visible in one screen |
+
+**Description**
+
+Opening the four-page 28 January event correctly displayed its first anchor page, physical page 254
+/ printed page 235. The physical-page input still showed `257`, the final page previously reviewed.
+The page rail and text belonged to page 254, so a researcher could record a correction against the
+wrong page number even though the underlying source block ID remained correct.
+
+The source renderer now writes the current page's physical number into the jump control every time
+the page changes. The approval error also names every still-unverified block ID; in this run it
+identified `P0254_B009`, which was checked against the image before the 19-block event was approved.
+
+**Repro Steps**
+
+1. Review physical page 257, then return to the event table.
+2. Open the 28 January event whose first anchored page is 254.
+3. Observe printed page `235` and page-254 text while the physical-page input still shows `257`.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-012-event-open-page-number-desync.png`
+
+Fixed-state screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\issue-012-fixed-page-number-synced.png`

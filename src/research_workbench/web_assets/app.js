@@ -366,8 +366,8 @@ function renderResearchDesign(container) {
   const summary = document.createElement('section'); summary.className = 'context-form';
   summary.append(
     card('研究者意图基线（不向独立构思 Agent 提供）', baseline
-      ? `${baseline.title} · ${baseline.design_id}。这是研究者对方向、比较与停止边界的当前理解，不是来源证据。`
-      : '尚未批准。可从旧对话恢复，但须区分原话、复原和推断待确认。'),
+      ? `${baseline.title} · ${baseline.design_id}。这是研究者已外化、可修订的研究认知轨迹，不是心理画像或来源证据。`
+      : '尚未批准。可从旧对话恢复研究方向，但须区分原话、复原和推断待确认。'),
     card('共同批准研究设计（执行时加载）', shared
       ? `${shared.title} · ${shared.design_id}。这是人机讨论后由研究者批准的可执行版本。`
       : '尚未批准。研究者意图不会自动变成共同研究设计。'),
@@ -1329,6 +1329,7 @@ function render() {
   const locator = page?.page_type === 'docx_locator';
   $('pageRailTitle').textContent = locator ? '译稿片段' : '物理页';
   $('pageLabel').textContent = page ? (locator ? `逻辑片段 ${page.physical_page} · locator_only` : `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}`) : '原 PDF 页面始终是校对依据';
+  $('pageJump').value = page?.physical_page || '';
   $('printedPage').value = page?.printed_page || '';
   $('pageImage').hidden = Boolean(locator);
   $('locatorNotice').hidden = !locator;

@@ -70,7 +70,10 @@ class ResearchEventTests(unittest.TestCase):
         self.assertEqual(candidate["status"], "draft")
         self.assertEqual(candidate["qualification"], "PAGE_LINKED_EVENT_NOT_FROZEN")
         self.assertEqual(candidate["field_anchors"]["original_text"], [self.block_id])
-        with self.assertRaisesRegex(ValueError, "human verification"):
+        with self.assertRaisesRegex(
+            ValueError,
+            f"human verification before approval: {self.block_id}",
+        ):
             decide_event(
                 self.project, str(candidate["event_id"]), True,
                 "Professor", "核对原页后决定",

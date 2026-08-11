@@ -668,6 +668,8 @@ def _parse_action(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
+    if bracketed := re.fullmatch(r"<\s*(\{.*\})\s*>", text, flags=re.DOTALL):
+        text = bracketed.group(1).strip()
     while wrapped := re.fullmatch(
         r"<(json_logic|tool_call)>\s*(.*?)\s*</\1>", text, flags=re.DOTALL
     ):

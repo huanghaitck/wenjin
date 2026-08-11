@@ -102,6 +102,10 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         for label in ("研究对话", "研究图书馆", "文章工作台", "项目设置"):
             self.assertIn(label, html)
         self.assertIn("研究者意图基线", html)
+        app = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("研究认知轨迹", app)
+        self.assertIn("不是心理画像或来源证据", app)
+        self.assertIn("$('pageJump').value = page?.physical_page || '';", app)
         self.assertNotIn('id="sourceMode"', html)
         self.assertIn('id="openSourceRepair"', html)
         self.assertIn('id="documentCanvas"', html)

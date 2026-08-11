@@ -276,8 +276,16 @@ def decide_event(
             for block in blocks:
                 if block["block_use_state"] != "research_usable" or block["page_use_state"] != "research_usable":
                     raise ValueError("blocked page content cannot approve a research event")
-                if block["block_verification_state"] not in {"human_verified", "human_repaired"}:
-                    raise ValueError("every event text block requires human verification before approval")
+            unverified_blocks = [
+                block["block_id"] for block in blocks
+                if block["block_verification_state"] not in {"human_verified", "human_repaired"}
+            ]
+            if unverified_blocks:
+                raise ValueError(
+                    "event text blocks require human verification before approval: "
+                    + ", ".join(unverified_blocks)
+                )
+            for block in blocks:
                 if block["page_verification_state"] not in {"human_spot_checked", "human_verified", "human_repaired"}:
                     raise ValueError("event pages require human verification before approval")
             for field_name in SOURCE_ANCHORED_FIELDS:
