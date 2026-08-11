@@ -61,6 +61,10 @@ function reviewerPayload() {
   return { reviewer, reason };
 }
 
+function clearReviewReason() {
+  $('reason').value = '';
+}
+
 async function loadSnapshot(selectId = '') {
   const [snapshot, capabilities, modelSettings, session] = await Promise.all([
     request('/api/snapshot'),
@@ -1038,9 +1042,14 @@ async function pollActiveThread(threadId) {
 }
 
 async function loadSource(sourceId, keepPage = false) {
+  const previousSourceId = state.view?.source?.source_id;
+  const previousPageId = currentPage()?.page_id;
   state.view = await request(`/api/source?id=${encodeURIComponent(sourceId)}`);
   if (!keepPage) state.pageIndex = 0;
   state.pageIndex = Math.min(state.pageIndex, Math.max(0, state.view.pages.length - 1));
+  if (previousSourceId !== state.view.source?.source_id || previousPageId !== currentPage()?.page_id) {
+    clearReviewReason();
+  }
   render();
 }
 
@@ -1068,7 +1077,7 @@ function renderRail() {
       : `第 ${page.physical_page} 页${page.printed_page ? ` · ${page.printed_page}` : ''}`;
     button.classList.toggle('selected', index === state.pageIndex);
     button.classList.toggle('blocked', page.use_state === 'blocked');
-    button.onclick = () => { state.pageIndex = index; render(); };
+    button.onclick = () => { state.pageIndex = index; clearReviewReason(); render(); };
     rail.append(button);
   }
 }
@@ -1335,7 +1344,7 @@ $('jumpToPage').onclick = () => {
   const physicalPage = Number($('pageJump').value);
   const index = (state.view?.pages || []).findIndex((page) => page.physical_page === physicalPage);
   if (index < 0) { notice('没有这个物理页。', true); return; }
-  state.pageIndex = index; render();
+  state.pageIndex = index; clearReviewReason(); render();
   $('pageRail').querySelector('.selected')?.scrollIntoView({block:'nearest'});
 };
 

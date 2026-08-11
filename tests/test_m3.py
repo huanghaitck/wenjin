@@ -291,6 +291,15 @@ class M3OcrProposalTests(unittest.TestCase):
         self.assertNotIn("loadSource", handler)
         self.assertIn("page.printed_page = $('printedPage').value.trim()", handler)
 
+    def test_review_reason_clears_when_source_or_page_changes(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("function clearReviewReason()", script)
+        self.assertIn("previousSourceId !== state.view.source?.source_id", script)
+        self.assertIn("previousPageId !== currentPage()?.page_id", script)
+        self.assertIn("state.pageIndex = index; clearReviewReason(); render();", script)
+
     def test_accepting_one_comparator_supersedes_other_pending_proposals(self) -> None:
         accepted = self.proposal()
         other = self.proposal()
