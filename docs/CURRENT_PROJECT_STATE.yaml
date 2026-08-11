@@ -49,6 +49,8 @@ research_event_workflow:
   model_may_omit_original_text_when_original_text_anchors_are_present: true
   source_relative_block_ids: accepted_when_source_id_is_explicit
   arbitrary_per_event_block_cap: removed
+  missing_codes_are_not_source_field_values: enforced_for_creation_and_approval
+  missing_codes_location: missing_reason_only
   approved_event_is_frozen_evidence: false
   qinling_rejected_overanchored_event_id: EVT_5bcbd5859d50437c97186524139c198b
   qinling_approved_conservative_event_id: EVT_33ffcc0fe0f64f43b142d623182dbfed
@@ -62,11 +64,15 @@ research_event_workflow:
   qinling_approved_24_25_january_event_pages: [251, 252, 253]
   qinling_approved_24_25_january_event_blocks: 13
   qinling_approved_24_25_january_event_still_not_frozen: true
+  qinling_approved_26_january_event_id: EVT_30b5c42f84bc46aa8274f039063da9e3
+  qinling_approved_27_january_event_id: EVT_dc15730bc95242438115db4dcc645ed7
+  qinling_26_27_page_review: physical_pages_253_254_human_checked
+  qinling_missing_code_drafts_rejected: 2
   recoverable_tool_input_errors: model_may_correct_and_retry_in_same_run
   recoverable_model_action_format_errors: one_shorter_json_retry_in_same_run
   observed_deepseek_action_wrappers: supported_with_strict_whole_action_boundary
-  real_dogfood_issues_fixed: 8
-  full_test_suite: 98_passed
+  real_dogfood_issues_fixed: 9
+  full_test_suite: 99_passed
 
 conversation_context:
   status: implemented_and_real_gui_tested

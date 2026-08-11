@@ -61,6 +61,8 @@ explicit user scope. Do not repeat the same failed call, guess source content, o
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
+NR, UNC and PND are missing-data codes, not source-field values. Leave the affected source-derived
+field blank and put the code plus explanation in missing_reason; never invent an anchor for absence.
 Do not cite one set of blocks while taking dates, places, participants or tasks from unanchored page context.
 Normally omit original_text: the workbench copies the exact effective text from its original_text field anchors.
 Supply original_text only when selecting a shorter verbatim substring, and never normalize spelling or typography.

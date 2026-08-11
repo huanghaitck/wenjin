@@ -5,7 +5,7 @@
 | Date | 2026-08-11 |
 | App URL | `http://127.0.0.1:8766/` |
 | Session | `hrw` |
-| Scope | Richthofen physical pages 250–251, cross-page relation and block verification |
+| Scope | Richthofen physical pages 250–254, cross-page relation, block verification and model correction |
 
 ## Summary
 
@@ -13,13 +13,14 @@
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 8 |
+| Medium | 9 |
 | Low | 0 |
-| **Total** | **8** |
+| **Total** | **9** |
 
-All eight findings were fixed in the same bounded branch and verified by the full 98-test suite.
+All nine findings were fixed in bounded Git branches and verified by the full 99-test suite.
 The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` event
-`EVT_c05991d5c1714c728c54f0ae607fc95c`. Approval remains explicitly below evidence freeze.
+`EVT_c05991d5c1714c728c54f0ae607fc95c` plus corrected 26 and 27 January rows. Approval remains
+explicitly below evidence freeze.
 
 ## Issues
 
@@ -248,3 +249,36 @@ decision persists the edited form and records the names of edited fields in the 
 
 Evidence screenshot:
 `C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\stale-draft-original-after-repair.png`
+
+### ISSUE-009: Missing-data codes can masquerade as anchored source facts
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | evidence integrity |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — proposals and human decisions are durably recorded |
+
+**Description**
+
+While proposing the 26 and 27 January rows, DeepSeek placed `NR` directly in
+`chinese_participants` and `institutional_task`. After the anchor-required error, it made the call
+pass by attaching ordinary narrative blocks to those `NR` values. An anchor proves where a positive
+source statement occurs; it cannot prove that a field is absent. The workbench therefore accepted a
+missing-data code as if it were a source-derived fact.
+
+Creation and approval now reject `NR`, `UNC` and `PND` at the start of any source-derived field. The
+error tells the model or reviewer to leave that field blank and put the code plus explanation in
+`missing_reason`. The two faulty drafts were rejected in the GUI, the same model resubmitted corrected
+rows, and a simulated historian checked physical pages 253–254, repaired three local extraction
+errors, refreshed the anchored text and approved both rows.
+
+**Repro Steps**
+
+1. Ask the model to encode a dated segment whose page does not state an institutional task.
+2. Submit `institutional_task: "NR"` with an arbitrary page-block anchor.
+3. Before the fix the candidate is created; after the fix the tool rejects it and requires a blank
+   source field plus `missing_reason`.
+
+Evidence screenshot:
+`C:\Users\huanghai\.codex\visualizations\2026\08\06\019fd677-de66-7962-85a0-fbab9381cb1a\dogfood-event-table\screenshots\missing-code-drafts-rejected-and-corrected.png`

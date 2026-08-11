@@ -22,6 +22,8 @@ SOURCE_ANCHORED_FIELDS = {
     "chinese_participants", "institutional_task", "original_text", "translation",
 }
 
+MISSING_CODE = re.compile(r"^(NR|UNC|PND)(?:$|[\s:：\-(（—])", re.IGNORECASE)
+
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
@@ -36,6 +38,17 @@ def _qualified_block_id(source_id: str, value: Any) -> str:
     if not block_id or ":" in block_id:
         return block_id
     return f"{source_id}:{block_id}"
+
+
+def _validate_missing_codes(values: dict[str, str]) -> None:
+    for field_name in SOURCE_ANCHORED_FIELDS:
+        match = MISSING_CODE.match(values[field_name])
+        if match:
+            code = match.group(1).upper()
+            raise ValueError(
+                f"source-derived event field {field_name} cannot contain missing code {code}; "
+                f"leave {field_name} blank and record {code} in missing_reason"
+            )
 
 
 def _public(row: Any, field_anchors: dict[str, list[str]] | None = None) -> dict[str, Any]:
@@ -122,6 +135,7 @@ def create_event_candidates(
     with connect(project_root) as connection:
         for payload in events:
             values = {key: str(payload.get(key, "")).strip() for key in TEXT_FIELDS}
+            _validate_missing_codes(values)
             source_id = str(payload.get("source_id", "")).strip()
             block_ids = list(dict.fromkeys(
                 _qualified_block_id(source_id, value)
@@ -245,6 +259,7 @@ def decide_event(
         if approved:
             if not values["case_id"] or not values["original_text"]:
                 raise ValueError("approved events require case_id and original_text")
+            _validate_missing_codes(values)
             block_ids = _decode(row["block_ids_json"], [])
             placeholders = ",".join("?" for _ in block_ids)
             blocks = [dict(block) for block in connection.execute(

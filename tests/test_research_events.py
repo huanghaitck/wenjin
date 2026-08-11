@@ -51,7 +51,6 @@ class ResearchEventTests(unittest.TestCase):
                     "route": [self.block_id],
                     "investigation_object": [self.block_id],
                     "recording_technique": [self.block_id],
-                    "chinese_participants": [self.block_id],
                     "institutional_task": [self.block_id],
                     "original_text": [self.block_id],
                 },
@@ -59,8 +58,8 @@ class ResearchEventTests(unittest.TestCase):
                 "route": "Qinling route",
                 "investigation_object": "road",
                 "recording_technique": "diary observation",
-                "chinese_participants": "PND",
                 "institutional_task": "journey record",
+                "missing_reason": "Chinese participants PND in this block scope",
             }],
             "test-model",
             model_snapshot={"model": "test-model"},
@@ -124,6 +123,35 @@ class ResearchEventTests(unittest.TestCase):
                     "field_anchors": {"original_text": [self.block_id]},
                 }],
                 "test-model",
+            )
+
+    def test_missing_codes_cannot_masquerade_as_source_field_values(self) -> None:
+        for value in ("NR", "UNC：尚不能确认", "PND（待核页）"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError, "leave chinese_participants blank.*missing_reason"
+            ):
+                create_event_candidates(
+                    self.project,
+                    [{
+                        "case_id": "Richthofen-1871",
+                        "source_id": self.source["source_id"],
+                        "block_ids": [self.block_id],
+                        "chinese_participants": value,
+                        "field_anchors": {
+                            "chinese_participants": [self.block_id],
+                            "original_text": [self.block_id],
+                        },
+                    }],
+                    "test-model",
+                )
+
+        candidate = self._create()
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        with self.assertRaisesRegex(ValueError, "leave institutional_task blank.*missing_reason"):
+            decide_event(
+                self.project, str(candidate["event_id"]), True,
+                "Professor", "尝试把缺失代码写入来源字段",
+                {"institutional_task": "NR", "missing_reason": ""},
             )
 
     def test_original_text_can_be_copied_exactly_from_its_anchors(self) -> None:
