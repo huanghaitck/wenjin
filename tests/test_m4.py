@@ -629,6 +629,28 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         prose = '示例：<tool_call>{"type":"tool_call","tool":"source.page","arguments":{}}</tool_call>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
 
+    def test_parser_accepts_observed_deepseek_dsml_only_as_the_whole_response(self) -> None:
+        action = _parse_action(
+            '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="source.page">'
+            '<｜｜DSML｜｜parameter argument="source_id" string="true">SRC_1</｜｜DSML｜｜parameter>'
+            '<｜｜DSML｜｜parameter argument="physical_page">232</｜｜DSML｜｜parameter>'
+            '</｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        )
+        self.assertEqual(action, {
+            "type": "tool_call", "tool": "source.page",
+            "arguments": {"source_id": "SRC_1", "physical_page": 232},
+        })
+        prose = '模型示例：<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="source.page"></｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
+
+    def test_parser_decodes_dsml_json_arguments(self) -> None:
+        action = _parse_action(
+            '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="research_event.list">'
+            '<｜｜DSML｜｜parameter argument="case_ids">["DAVID"]</｜｜DSML｜｜parameter>'
+            '</｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        )
+        self.assertEqual(action["arguments"]["case_ids"], ["DAVID"])
+
     def test_parser_accepts_observed_angle_bracketed_action_only_as_the_whole_response(self) -> None:
         action = _parse_action(
             '<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'

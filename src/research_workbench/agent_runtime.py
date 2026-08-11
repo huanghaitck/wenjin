@@ -9,6 +9,7 @@ import ssl
 import threading
 import uuid
 from dataclasses import dataclass
+from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -783,6 +784,8 @@ def _parse_action(content: str) -> dict[str, Any]:
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
+    if dsml_action := _parse_dsml_action(text):
+        return dsml_action
     if bracketed := re.fullmatch(r"<\s*(\{.*\})\s*>", text, flags=re.DOTALL):
         text = bracketed.group(1).strip()
     elif text.startswith("<{") and text.endswith("}"):
@@ -819,6 +822,48 @@ def _parse_action(content: str) -> dict[str, Any]:
     if not isinstance(action, dict):
         raise ValueError("agent response JSON must be an object")
     return action
+
+
+def _parse_dsml_action(text: str) -> dict[str, Any] | None:
+    wrapped = re.fullmatch(
+        r'<\s*｜｜DSML｜｜tool_calls\s*>\s*'
+        r'<\s*｜｜DSML｜｜invoke\s+name="([a-z][a-z0-9_.]+)"\s*>\s*'
+        r'(.*?)\s*'
+        r'</\s*｜｜DSML｜｜invoke\s*>\s*'
+        r'</\s*｜｜DSML｜｜tool_calls\s*>',
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    if wrapped is None:
+        return None
+    tool, body = wrapped.groups()
+    parameter_pattern = re.compile(
+        r'<\s*｜｜DSML｜｜parameter\s+([^>]*)>(.*?)'
+        r'</\s*｜｜DSML｜｜parameter\s*>',
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    arguments: dict[str, Any] = {}
+    end = 0
+    for parameter in parameter_pattern.finditer(body):
+        if body[end:parameter.start()].strip():
+            return None
+        attributes = dict(re.findall(r'([a-z_][a-z0-9_-]*)="([^"]*)"', parameter.group(1), re.IGNORECASE))
+        name = attributes.get("argument", "")
+        if not name or name in arguments:
+            return None
+        value_text = unescape(parameter.group(2).strip())
+        if attributes.get("string", "").lower() == "true":
+            value: Any = value_text
+        else:
+            try:
+                value = json.loads(value_text)
+            except json.JSONDecodeError:
+                value = value_text
+        arguments[name] = value
+        end = parameter.end()
+    if body[end:].strip():
+        return None
+    return {"type": "tool_call", "tool": tool, "arguments": arguments}
 
 
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float) -> dict[str, Any]:
