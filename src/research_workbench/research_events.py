@@ -9,17 +9,20 @@ from typing import Any
 from .db import append_audit, connect, utc_now
 
 
-TEXT_FIELDS = (
+PRE_SOURCE_FIELDS = (
     "case_id", "event_date", "start_place", "end_place", "route", "movement_time",
     "distance_original", "distance_normalized", "investigation_object", "recording_technique",
-    "chinese_participants", "institutional_task", "original_text", "translation",
-    "missing_reason", "notes",
+    "chinese_participants", "institutional_task", "movement_mode", "genre",
+    "participant_visibility", "outcome_destination",
 )
+POST_SOURCE_FIELDS = ("original_text", "translation", "missing_reason", "notes")
+TEXT_FIELDS = PRE_SOURCE_FIELDS + POST_SOURCE_FIELDS
 
 SOURCE_ANCHORED_FIELDS = {
     "event_date", "start_place", "end_place", "route", "movement_time",
     "distance_original", "investigation_object", "recording_technique",
-    "chinese_participants", "institutional_task", "original_text", "translation",
+    "chinese_participants", "institutional_task", "movement_mode", "genre",
+    "participant_visibility", "outcome_destination", "original_text", "translation",
 }
 
 MISSING_CODE = re.compile(r"^(NR|UNC|PND)(?:$|[\s:：\-(（—])", re.IGNORECASE)
@@ -198,20 +201,32 @@ def create_event_candidates(
                 str(row["printed_page"]) for row in ordered if row["printed_page"] not in (None, "")
             ))
             event_id, now = f"EVT_{uuid.uuid4().hex}", utc_now()
+            record = {
+                "event_id": event_id,
+                **values,
+                "source_id": source_id,
+                "source_version_id": version["source_version_id"],
+                "page_ids_json": _json(page_ids),
+                "block_ids_json": _json(block_ids),
+                "physical_pages_json": _json(physical_pages),
+                "printed_pages_json": _json(printed_pages),
+                "qualification": "PAGE_LINKED_EVENT_NOT_FROZEN",
+                "origin": origin,
+                "model_snapshot_json": _json(model_snapshot or {}),
+                "status": "draft",
+                "created_by": created_by,
+                "created_at": now,
+            }
+            columns = (
+                "event_id", *PRE_SOURCE_FIELDS, "source_id", "source_version_id",
+                "page_ids_json", "block_ids_json", "physical_pages_json", "printed_pages_json",
+                *POST_SOURCE_FIELDS, "qualification", "origin", "model_snapshot_json",
+                "status", "created_by", "created_at",
+            )
             connection.execute(
-                """INSERT INTO research_event_rows(
-                       event_id, case_id, event_date, start_place, end_place, route, movement_time,
-                       distance_original, distance_normalized, investigation_object, recording_technique,
-                       chinese_participants, institutional_task, source_id, source_version_id,
-                       page_ids_json, block_ids_json, physical_pages_json, printed_pages_json,
-                       original_text, translation, missing_reason, notes, qualification, origin,
-                       model_snapshot_json, status, created_by, created_at
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             'PAGE_LINKED_EVENT_NOT_FROZEN', ?, ?, 'draft', ?, ?)""",
-                (event_id, *(values[key] for key in TEXT_FIELDS[:12]), source_id,
-                 version["source_version_id"], _json(page_ids), _json(block_ids), _json(physical_pages),
-                 _json(printed_pages), *(values[key] for key in TEXT_FIELDS[12:]), origin,
-                 _json(model_snapshot or {}), created_by, now),
+                f"INSERT INTO research_event_rows({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in columns)})",
+                tuple(record[column] for column in columns),
             )
             append_audit(connection, "research_event_candidate_created", "research_event", event_id,
                          {"case_id": values["case_id"], "source_id": source_id, "block_ids": block_ids,
@@ -237,11 +252,13 @@ def decide_event(
     reviewer: str,
     reason: str,
     edits: dict[str, Any] | None = None,
+    field_anchor_edits: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     reviewer, reason = reviewer.strip(), reason.strip()
     if not reviewer or not reason:
         raise ValueError("event decision requires reviewer and reason")
     edits = edits or {}
+    field_anchor_edits = field_anchor_edits or {}
     now = utc_now()
     with connect(project_root) as connection:
         row = connection.execute(
@@ -249,13 +266,16 @@ def decide_event(
         ).fetchone()
         if row is None:
             raise KeyError(f"unknown research event: {event_id}")
-        if row["status"] != "draft":
-            raise ValueError(f"research event is already {row['status']}")
+        current_status = str(row["status"])
+        revising = current_status == "approved"
+        if current_status not in {"draft", "approved"} or (revising and not approved):
+            raise ValueError(f"research event is already {current_status}")
         values = {
             key: str(edits[key]).strip() if key in edits else str(row[key])
             for key in TEXT_FIELDS
         }
         field_anchors = _anchor_map(connection, [event_id]).get(event_id, {})
+        previous_anchors = {key: list(value) for key, value in field_anchors.items()}
         page_snapshot = {
             "page_ids_json": row["page_ids_json"],
             "physical_pages_json": row["physical_pages_json"],
@@ -266,6 +286,24 @@ def decide_event(
                 raise ValueError("approved events require case_id and original_text")
             _validate_missing_codes(values)
             block_ids = _decode(row["block_ids_json"], [])
+            unknown_anchor_fields = set(field_anchor_edits) - SOURCE_ANCHORED_FIELDS
+            if unknown_anchor_fields:
+                raise ValueError(
+                    f"unsupported event field anchors: {', '.join(sorted(unknown_anchor_fields))}"
+                )
+            for field_name, raw_anchors in field_anchor_edits.items():
+                if not isinstance(raw_anchors, list):
+                    raise ValueError(f"field anchor for {field_name} must be a block list")
+                anchors = list(dict.fromkeys(
+                    _qualified_block_id(row["source_id"], value)
+                    for value in raw_anchors if str(value).strip()
+                ))
+                if any(block_id not in block_ids for block_id in anchors):
+                    raise ValueError(f"field anchor for {field_name} must belong to the event blocks")
+                if anchors:
+                    field_anchors[field_name] = anchors
+                else:
+                    field_anchors.pop(field_name, None)
             placeholders = ",".join("?" for _ in block_ids)
             blocks = [dict(block) for block in connection.execute(
                 """SELECT b.block_id, b.block_order, b.use_state AS block_use_state,
@@ -318,19 +356,52 @@ def decide_event(
                 raise ValueError("event original text must occur in the verified source blocks")
         status = "approved" if approved else "rejected"
         edited_fields = [key for key in TEXT_FIELDS if values[key] != str(row[key])]
+        edited_anchors = [
+            key for key in SOURCE_ANCHORED_FIELDS
+            if previous_anchors.get(key, []) != field_anchors.get(key, [])
+        ]
         assignments = ", ".join(f"{key} = ?" for key in TEXT_FIELDS)
-        connection.execute(
+        updated = connection.execute(
             f"""UPDATE research_event_rows SET {assignments}, page_ids_json = ?,
                        physical_pages_json = ?, printed_pages_json = ?, status = ?, decided_by = ?,
-                       decision_reason = ?, decided_at = ? WHERE event_id = ? AND status = 'draft'""",
+                       decision_reason = ?, decided_at = ? WHERE event_id = ? AND status = ?""",
             (*(values[key] for key in TEXT_FIELDS), page_snapshot["page_ids_json"],
              page_snapshot["physical_pages_json"], page_snapshot["printed_pages_json"],
-             status, reviewer, reason, now, event_id),
+             status, reviewer, reason, now, event_id, current_status),
         )
-        append_audit(connection, "research_event_decided", "research_event", event_id,
-                     {"approved": approved, "reviewer": reviewer, "reason": reason,
-                      "edited_fields": edited_fields,
-                      "page_snapshot_refreshed": approved})
+        if updated.rowcount != 1:
+            raise RuntimeError("research event changed during the decision")
+        for field_name in edited_anchors:
+            connection.execute(
+                "DELETE FROM research_event_field_anchors WHERE event_id = ? AND field_name = ?",
+                (event_id, field_name),
+            )
+            connection.executemany(
+                """INSERT INTO research_event_field_anchors(
+                       event_id, field_name, block_id, anchor_order
+                   ) VALUES (?, ?, ?, ?)""",
+                [
+                    (event_id, field_name, block_id, index)
+                    for index, block_id in enumerate(field_anchors.get(field_name, []))
+                ],
+            )
+        event_type = "research_event_revised" if revising else "research_event_decided"
+        append_audit(
+            connection,
+            event_type,
+            "research_event",
+            event_id,
+            {
+                "approved": approved,
+                "reviewer": reviewer,
+                "reason": reason,
+                "edited_fields": edited_fields,
+                "edited_anchors": edited_anchors,
+                "before": {key: str(row[key]) for key in edited_fields},
+                "after": {key: values[key] for key in edited_fields},
+                "page_snapshot_refreshed": approved,
+            },
+        )
         decided = connection.execute(
             "SELECT * FROM research_event_rows WHERE event_id = ?", (event_id,)
         ).fetchone()

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from research_workbench.db import connect
 from research_workbench.research_events import (
     create_event_candidates,
     decide_event,
@@ -52,14 +53,22 @@ class ResearchEventTests(unittest.TestCase):
                     "route": [self.block_id],
                     "investigation_object": [self.block_id],
                     "recording_technique": [self.block_id],
+                    "movement_mode": [self.block_id],
+                    "genre": [self.block_id],
+                    "participant_visibility": [self.block_id],
                     "institutional_task": [self.block_id],
+                    "outcome_destination": [self.block_id],
                     "original_text": [self.block_id],
                 },
                 "original_text": "The sentence continues toward the page boundary",
                 "route": "Qinling route",
                 "investigation_object": "road",
                 "recording_technique": "diary observation",
+                "movement_mode": "on foot",
+                "genre": "travel diary",
+                "participant_visibility": "unnamed participants described by role",
                 "institutional_task": "journey record",
+                "outcome_destination": "published diary",
                 "missing_reason": "Chinese participants PND in this block scope",
             }],
             "test-model",
@@ -71,6 +80,10 @@ class ResearchEventTests(unittest.TestCase):
         self.assertEqual(candidate["status"], "draft")
         self.assertEqual(candidate["qualification"], "PAGE_LINKED_EVENT_NOT_FROZEN")
         self.assertEqual(candidate["field_anchors"]["original_text"], [self.block_id])
+        self.assertEqual(candidate["movement_mode"], "on foot")
+        self.assertEqual(candidate["genre"], "travel diary")
+        self.assertEqual(candidate["participant_visibility"], "unnamed participants described by role")
+        self.assertEqual(candidate["outcome_destination"], "published diary")
         with self.assertRaisesRegex(
             ValueError,
             f"human verification before approval: {self.block_id}",
@@ -256,6 +269,61 @@ class ResearchEventTests(unittest.TestCase):
         self.assertTrue(refreshed["changed"])
         self.assertEqual(refreshed["original_text"], corrected)
         self.assertEqual(refreshed["block_ids"], [self.block_id])
+
+    def test_event_editor_exposes_all_approved_comparison_fields(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        for field, label in (
+            ("movement_mode", "移动方式"),
+            ("genre", "体裁"),
+            ("participant_visibility", "参与者可见度"),
+            ("outcome_destination", "成果去向"),
+        ):
+            with self.subTest(field=field):
+                self.assertIn(f"{field}:'{label}'", script)
+        self.assertIn("保存人工修订", script)
+
+    def test_approved_event_can_be_revised_with_explicit_new_field_anchors(self) -> None:
+        candidate = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "Richthofen-1871",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {"original_text": [self.block_id]},
+                "missing_reason": "Comparison fields were not yet coded.",
+            }],
+            "test-model",
+        )[0]
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        decide_event(
+            self.project, str(candidate["event_id"]), True,
+            "Professor", "Initial page-linked approval",
+        )
+
+        with self.assertRaisesRegex(ValueError, "movement_mode requires explicit block anchors"):
+            decide_event(
+                self.project, str(candidate["event_id"]), True,
+                "Professor", "Attempted unanchored backfill", {"movement_mode": "on foot"},
+            )
+
+        revised = decide_event(
+            self.project, str(candidate["event_id"]), True,
+            "Professor", "Backfilled against the already verified block",
+            {"movement_mode": "on foot"}, {"movement_mode": [self.block_id]},
+        )
+        self.assertEqual(revised["status"], "approved")
+        self.assertEqual(revised["movement_mode"], "on foot")
+        self.assertEqual(revised["field_anchors"]["movement_mode"], [self.block_id])
+        with connect(self.project) as connection:
+            audit = connection.execute(
+                """SELECT event_type, payload_json FROM audit_events
+                   WHERE entity_id = ? ORDER BY event_id DESC LIMIT 1""",
+                (candidate["event_id"],),
+            ).fetchone()
+        self.assertEqual(audit["event_type"], "research_event_revised")
+        self.assertEqual(json.loads(audit["payload_json"])["edited_fields"], ["movement_mode"])
 
 
 if __name__ == "__main__":

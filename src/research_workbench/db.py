@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -793,6 +793,22 @@ CREATE INDEX IF NOT EXISTS idx_research_event_field_anchors
 ON research_event_field_anchors(event_id, field_name, anchor_order);
 """
 
+EVENT_COMPARISON_COLUMNS = (
+    "movement_mode",
+    "genre",
+    "participant_visibility",
+    "outcome_destination",
+)
+
+
+def _ensure_event_comparison_columns(connection: sqlite3.Connection) -> None:
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(research_event_rows)")}
+    for column in EVENT_COMPARISON_COLUMNS:
+        if column not in existing:
+            connection.execute(
+                f"ALTER TABLE research_event_rows ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            )
+
 
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
@@ -872,6 +888,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (11, utc_now()),
         )
+        version = 11
+    if version < 12:
+        _ensure_event_comparison_columns(connection)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (12, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -901,6 +924,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_9)
     connection.executescript(MIGRATION_10)
     connection.executescript(MIGRATION_11)
+    _ensure_event_comparison_columns(connection)
 
 
 @contextmanager
@@ -935,6 +959,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_9)
         connection.executescript(MIGRATION_10)
         connection.executescript(MIGRATION_11)
+        _ensure_event_comparison_columns(connection)
         now = utc_now()
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",

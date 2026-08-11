@@ -48,7 +48,7 @@ Available actions:
 {"type":"tool_call","tool":"research_design.current","arguments":{}}
 {"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
 {"type":"tool_call","tool":"research_event.list","arguments":{}}
-{"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"original_text":["block-id"]},"route":"...","investigation_object":"...","recording_technique":"...","chinese_participants":"...","institutional_task":"..."}]}}
+{"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"movement_mode":["block-id"],"genre":["block-id"],"participant_visibility":["block-id"],"outcome_destination":["block-id"],"original_text":["block-id"]},"route":"...","movement_mode":"...","investigation_object":"...","recording_technique":"...","genre":"...","chinese_participants":"...","participant_visibility":"...","institutional_task":"...","outcome_destination":"..."}]}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
@@ -61,6 +61,8 @@ explicit user scope. Do not repeat the same failed call, guess source content, o
 Research event proposals are page-linked coding drafts, not frozen evidence. Human approval is required,
 and even approved event rows cannot support drafting until their claims and evidence are separately frozen.
 Every non-empty source-derived event field must name its exact supporting blocks in field_anchors.
+Movement mode, genre, participant visibility and outcome destination are comparison fields, not free
+inference slots; leave them blank with a missing code when the cited blocks do not support them.
 NR, UNC and PND are missing-data codes, not source-field values. Leave the affected source-derived
 field blank and put the code plus explanation in missing_reason; never invent an anchor for absence.
 Do not cite one set of blocks while taking dates, places, participants or tasks from unanchored page context.

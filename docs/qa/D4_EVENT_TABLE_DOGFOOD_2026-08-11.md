@@ -937,3 +937,30 @@ The already-accepted P118 relation was corrected through the workbench to P118 b
 as a continuation. The preceding boundaries P115 block 2 -> P116 block 1, P116 block 4 -> P117 block 1 and P117 block
 2 -> P118 block 1 were also checked against adjacent original pages. Printed-page mappings 657-660 are now visible
 for physical pages 115-118, and the saved P116/P118 proposal edits survived the separate page-number save action.
+
+### ISSUE-034: The approved comparison design contains fields that the event harness cannot store
+
+| Field | Value |
+|---|---|
+| Severity | critical |
+| Category | research harness / comparison schema |
+| URL | `http://127.0.0.1:8769/` |
+
+**Description**
+
+The approved research design requires event-level comparison of movement mode, source genre, participant visibility
+and outcome destination. The live three-case inventory audit could not assess those dimensions because neither the
+event table nor `research_event.propose_batch` exposed them. This was a harness omission rather than a source gap; if
+left unchanged, another 30-50 rows per case would accumulate in a schema that cannot answer the approved question.
+
+Project schema 12 adds `movement_mode`, `genre`, `participant_visibility` and `outcome_destination` to the existing
+event rows. The proposal contract, field-level anchor rules, event editor and task specification expose the same four
+fields. Existing events migrate in place with empty values and remain approved; the application does not invent
+backfill values.
+
+Approved rows can now be revised by a human without replacing their event IDs. Every new non-empty source-derived
+field still requires explicit anchors belonging to the event, the original text and verified-page gates are rerun,
+and the audit trail records changed values and anchors as `research_event_revised`. In the live workbench,
+`EVT_df920c3550044f428d46a53edfa7ce1b` was revised against P0116_B002 to code role-visible but unnamed Chinese
+soldiers and one porter, while movement mode, genre and outcome destination remained PND. The UI displayed schema 12,
+the new comparison fields and the saved revision.

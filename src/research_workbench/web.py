@@ -461,6 +461,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root, str(payload["event_id"]), bool(payload["approved"]),
                     str(payload["reviewer"]), str(payload["reason"]),
                     payload.get("edits") if isinstance(payload.get("edits"), dict) else None,
+                    payload.get("field_anchors") if isinstance(payload.get("field_anchors"), dict) else None,
                 )
             elif parsed.path == "/api/approval/decide":
                 edited = payload.get("edited_request")
