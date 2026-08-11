@@ -215,6 +215,38 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("model_action_invalid", [event["event_type"] for event in run["events"]])
         self.assertNotIn("run_failed", [event["event_type"] for event in run["events"]])
 
+    def test_event_batch_can_mutate_only_once_per_run(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        proposal = {
+            "type": "tool_call", "tool": "research_event.propose_batch",
+            "arguments": {"events": [{"case_id": "CASE_1"}]},
+        }
+        actions = iter([proposal, proposal, {"type": "final", "content": "已提交一次并停止。"}])
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=lambda *args: next(actions)),
+                patch(
+                    "research_workbench.agent_runtime.create_event_candidates",
+                    return_value=[{"event_id": "EVT_1"}],
+                ) as create_candidates,
+            ):
+                result = send_message(self.project, self.thread["thread_id"], "只提交一批事件")
+
+        run = result["runs"][0]
+        event_calls = [
+            call for call in run["tool_calls"]
+            if call["tool_name"] == "research_event.propose_batch"
+        ]
+        self.assertEqual([call["status"] for call in event_calls], ["COMPLETED", "FAILED"])
+        self.assertIn("already completed once", event_calls[1]["error"])
+        create_candidates.assert_called_once()
+
     def test_model_retries_empty_content_once_without_restarting_the_run(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",

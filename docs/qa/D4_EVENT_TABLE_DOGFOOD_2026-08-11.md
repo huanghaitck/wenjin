@@ -13,9 +13,9 @@
 |---|---:|
 | Critical | 0 |
 | High | 0 |
-| Medium | 15 |
+| Medium | 16 |
 | Low | 0 |
-| **Total** | **15** |
+| **Total** | **16** |
 
 The first nine findings were fixed in bounded Git branches and verified by the earlier 99-test suite.
 The real GUI flow then produced and human-approved the 13-block `24-/25. Jan.` event
@@ -27,7 +27,9 @@ environment check and full 100-test suite passed before their commit. ISSUE-013 
 exact human repair plus a shorter verbatim span; ISSUE-014 has a bounded one-retry fix. The current
 environment check and prior 101-test suite passed. ISSUE-015 records a provider wrapper that made a
 page-read request look like a completed answer; the parser now accepts that exact whole-response
-shape without extracting tool examples from prose. The current full 102-test suite passes.
+shape without extracting tool examples from prose. ISSUE-016 adds a one-successful-batch-per-run
+mutation gate after a model submitted duplicate 1 February drafts. The current full 103-test suite
+and frontend syntax check pass.
 
 ## Issues
 
@@ -476,3 +478,30 @@ the compatibility rule does not search arbitrary prose for executable actions.
 1. Ask the guided agent to read pages 259–260 and propose the 31 January event.
 2. After page 259, receive `<{"type":"tool_call",..."physical_page":260}}` without a closing `>`.
 3. Observe the run complete with the wrapped tool request stored as assistant text and no draft row.
+
+### ISSUE-016: One run can submit the same event batch more than once
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | reliability / mutation boundary |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — duplicate completed tool calls are durable in the run ledger |
+
+**Description**
+
+During the 1 February extraction, the model successfully called `research_event.propose_batch`, then
+called the same mutating tool again with a near-duplicate event instead of returning a final answer.
+Both calls completed and created draft rows before the run wandered back to an unrelated page read.
+The user had explicitly requested exactly one row, but the harness enforced only the batch payload,
+not one successful mutation per run.
+
+`research_event.propose_batch` is already a batch operation, so the runtime now permits only its first
+successful call in a run. A later call is recorded as failed with an explicit instruction to return a
+final answer; no second mutation occurs. Read-only tools remain repeatable.
+
+**Repro Steps**
+
+1. Ask for exactly one event covering physical pages 260–262.
+2. Let the first `research_event.propose_batch` complete.
+3. Observe a second completed call create a near-duplicate draft in the same run.

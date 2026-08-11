@@ -833,6 +833,19 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         elif tool_name == "research_event.list":
             result = event_state(project_root)
         elif tool_name == "research_event.propose_batch":
+            with connect(project_root) as connection:
+                prior = connection.execute(
+                    """SELECT tool_call_id FROM tool_calls
+                       WHERE run_id = ? AND tool_name = ? AND status = 'COMPLETED'
+                         AND tool_call_id <> ?
+                       LIMIT 1""",
+                    (run_id, tool_name, call_id),
+                ).fetchone()
+            if prior:
+                raise ValueError(
+                    "research_event.propose_batch already completed once in this run; "
+                    "return a final response instead of proposing duplicate rows"
+                )
             events = arguments.get("events", [])
             if not isinstance(events, list):
                 raise ValueError("research_event.propose_batch requires an events list")
