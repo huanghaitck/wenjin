@@ -247,6 +247,13 @@ class M3OcrProposalTests(unittest.TestCase):
         self.assertIn("addBlock.textContent = '新增一块'", script)
         self.assertIn("order: index + 1", script)
 
+    def test_page_anomaly_keeps_local_block_repair_entry(self) -> None:
+        script = (
+            Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
+        ).read_text(encoding="utf-8")
+        self.assertIn("correct.textContent = pageAnomaly ? '保存这一小段修正' : '保存这段修正'", script)
+        self.assertIn("if (!pageAnomaly) actions.append(button)", script)
+
     def test_human_repaired_page_can_be_structurally_revised_again(self) -> None:
         anomaly = next(
             item for item in source_view(self.project, self.source["source_id"])["anomalies"]

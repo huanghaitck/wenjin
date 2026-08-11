@@ -1088,7 +1088,7 @@ function blockCard(block, pageAnomaly) {
   meta.append(label, type, remove);
   const textarea = document.createElement('textarea'); textarea.value = block.effective_text; textarea.dataset.blockId = block.block_id;
   card.append(meta, textarea);
-  if (anomaly && !pageAnomaly) {
+  if (anomaly) {
     const actions = document.createElement('div'); actions.className = 'block-actions';
     const button = document.createElement('button'); button.textContent = '提交这一小段';
     button.onclick = async () => {
@@ -1098,7 +1098,7 @@ function blockCard(block, pageAnomaly) {
       } catch (error) { notice(error.message, true); }
     };
     actions.append(button); card.append(actions);
-  } else if (!anomaly && !pageAnomaly && block.block_id && currentPage()?.page_type !== 'docx_locator') {
+  } else if (block.block_id && currentPage()?.page_type !== 'docx_locator') {
     const actions = document.createElement('div'); actions.className = 'block-actions';
     const verified = ['human_verified', 'human_repaired'].includes(block.verification_state);
     const button = document.createElement('button');
@@ -1110,14 +1110,16 @@ function blockCard(block, pageAnomaly) {
         await loadSource(state.view.source.source_id, true); notice('这一段已经与原图逐字核验，可加入证据卡。');
       } catch (error) { notice(error.message, true); }
     };
-    const correct = document.createElement('button'); correct.textContent = '保存这段修正';
+    const correct = document.createElement('button');
+    correct.textContent = pageAnomaly ? '保存这一小段修正' : '保存这段修正';
     correct.onclick = async () => {
       try {
         await request('/api/block/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({block_id:block.block_id, text:textarea.value, block_type:type.value, ...reviewerPayload()})});
         await loadSource(state.view.source.source_id, true); notice('这一段的人工修正已保存，机器原文仍保留在版本记录中。');
       } catch (error) { notice(error.message, true); }
     };
-    actions.append(button, correct); card.append(actions);
+    if (!pageAnomaly) actions.append(button);
+    actions.append(correct); card.append(actions);
   }
   return card;
 }
