@@ -663,6 +663,23 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             "arguments": {"physical_page": "230", "source_id": "SRC_1"},
         })
 
+    def test_parser_accepts_dsml_packed_arguments_observed_from_deepseek(self) -> None:
+        action = _parse_action(
+            '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="research_event.list">'
+            '<｜｜DSML｜｜parameter arguments="{}" string="true">{}</｜｜DSML｜｜parameter>'
+            '</｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        )
+        self.assertEqual(action, {
+            "type": "tool_call", "tool": "research_event.list", "arguments": {},
+        })
+
+        malformed = (
+            '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="research_event.list">'
+            '<｜｜DSML｜｜parameter arguments="[]">[]</｜｜DSML｜｜parameter>'
+            '</｜｜DSML｜｜invoke></｜｜DSML｜｜tool_calls>'
+        )
+        self.assertEqual(_parse_action(malformed), {"type": "final", "content": malformed})
+
     def test_parser_accepts_observed_angle_bracketed_action_only_as_the_whole_response(self) -> None:
         action = _parse_action(
             '<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'

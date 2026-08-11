@@ -848,10 +848,22 @@ def _parse_dsml_action(text: str) -> dict[str, Any] | None:
         if body[end:parameter.start()].strip():
             return None
         attributes = dict(re.findall(r'([a-z_][a-z0-9_-]*)="([^"]*)"', parameter.group(1), re.IGNORECASE))
+        value_text = unescape(parameter.group(2).strip())
+        if "arguments" in attributes:
+            if arguments:
+                return None
+            try:
+                packed_arguments = json.loads(value_text or unescape(attributes["arguments"]))
+            except json.JSONDecodeError:
+                return None
+            if not isinstance(packed_arguments, dict):
+                return None
+            arguments.update(packed_arguments)
+            end = parameter.end()
+            continue
         name = attributes.get("argument") or attributes.get("name", "")
         if not name or name in arguments:
             return None
-        value_text = unescape(parameter.group(2).strip())
         if attributes.get("string", "").lower() == "true":
             value: Any = value_text
         else:
