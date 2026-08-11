@@ -558,3 +558,33 @@ snapshot. The approval audit records that this refresh occurred.
 1. Create an event spanning physical pages 235–236 while page 235 has no printed page label.
 2. Reconstruct page 235 as printed page 225 in the source review UI.
 3. Approve the event and observe that the approved row now records printed pages 225–226.
+
+### ISSUE-019: The agent describes the next page read and completes without the required mutation
+
+| Field | Value |
+|---|---|
+| Severity | medium |
+| Category | agent completion / task contract |
+| URL | `http://127.0.0.1:8766/` |
+| Repro Video | N/A — two completed runs preserve the premature final messages |
+
+**Description**
+
+When explicitly instructed to read through the next date boundary and make exactly one successful
+`research_event.propose_batch` call, DeepSeek read pages 236–237 and completed with “continue reading
+page 238.” A corrective run read page 238 and again completed with “continue reading page 239.” The
+model described its next action instead of executing it, while the harness marked both runs complete.
+
+The runtime now recognizes only the narrow, explicit Chinese completion form “恰好/只成功调用一次
+`tool.name`.” If that named tool has not completed in the current run, a final response is rejected and
+the omission is returned to the model as a bounded completion-contract error. Negative instructions
+such as “不要调用” are not inferred as requirements, and ordinary natural-language tasks remain
+unchanged.
+
+**Repro Steps**
+
+1. Ask the guided agent to read from page 236 to the next date boundary and explicitly require one
+   successful `research_event.propose_batch` call.
+2. Let it read one or two pages and return a final sentence promising another page read.
+3. Observe that the unpatched run becomes `COMPLETED` without an event; after the fix, the same final
+   answer triggers `required_tool_missing` and the run continues with its existing page observations.

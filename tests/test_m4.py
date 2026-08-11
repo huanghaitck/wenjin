@@ -247,6 +247,46 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("already completed once", event_calls[1]["error"])
         create_candidates.assert_called_once()
 
+    def test_explicit_required_tool_prevents_a_premature_final_answer(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {"type": "final", "content": "下一步继续读取并提交。"},
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": [{"case_id": "CASE_1"}]},
+            },
+            {"type": "final", "content": "已按完成契约提交一次。"},
+        ])
+        observations: list[list[dict[str, object]]] = []
+
+        def next_action(*args: object) -> dict[str, object]:
+            observations.append(list(args[2]))
+            return next(actions)
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=next_action),
+                patch(
+                    "research_workbench.agent_runtime.create_event_candidates",
+                    return_value=[{"event_id": "EVT_1"}],
+                ) as create_candidates,
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "恰好成功调用一次 research_event.propose_batch，提交后结束。",
+                )
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertIn("required_tool_missing", [event["event_type"] for event in run["events"]])
+        self.assertIn("explicitly required", observations[1][0]["error"])
+        create_candidates.assert_called_once()
+
     def test_model_retries_empty_content_once_without_restarting_the_run(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",

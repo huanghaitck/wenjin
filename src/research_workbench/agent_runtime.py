@@ -520,6 +520,8 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                  design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
     observations: list[dict[str, Any]] = []
     empty_content_retries = 0
+    required_tool = _explicit_required_tool(objective)
+    missing_tool_retries = 0
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
         try:
@@ -553,6 +555,31 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             continue
         action_type = action.get("type")
         if action_type == "final":
+            required_tool_completed = required_tool and any(
+                item.get("tool") == required_tool
+                and item.get("error") is None
+                and item.get("result") is not None
+                for item in observations
+            )
+            if required_tool and not required_tool_completed:
+                if missing_tool_retries >= 2:
+                    raise RuntimeError(f"required tool did not complete in this run: {required_tool}")
+                missing_tool_retries += 1
+                message = (
+                    f"The researcher explicitly required one successful {required_tool} call in this run, "
+                    "but none has completed. Continue using tools now; do not describe a future step as the final answer."
+                )
+                with connect(project_root) as connection:
+                    _append_run_event(connection, run_id, "required_tool_missing", {
+                        "tool": required_tool, "attempt": missing_tool_retries,
+                    })
+                observations.append({
+                    "tool": "run.completion_contract",
+                    "arguments": {"required_tool": required_tool},
+                    "result": None,
+                    "error": message,
+                })
+                continue
             _complete_run(project_root, run_id, str(action.get("content", "")))
             return
         if action_type != "tool_call":
@@ -577,6 +604,15 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
     raise RuntimeError("agent exhausted the tool-call budget without returning a final response")
+
+
+def _explicit_required_tool(objective: str) -> str:
+    match = re.search(
+        r"(?:恰好|只)\s*成功调用一次\s+`?([a-z][a-z0-9_.]+)`?",
+        objective,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
 
 
 def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict[str, Any]:
