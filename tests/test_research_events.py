@@ -283,6 +283,23 @@ class ResearchEventTests(unittest.TestCase):
             "The sentence continues toward the page boundary",
         )
 
+    def test_original_text_defaults_to_the_explicit_event_blocks(self) -> None:
+        candidate = create_event_candidates(
+            self.project,
+            [{
+                "case_id": "Richthofen-1871",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "missing_reason": "Other fields PND in this block scope",
+            }],
+            "test-model",
+        )[0]
+        self.assertEqual(
+            candidate["original_text"],
+            "The sentence continues toward the page boundary",
+        )
+        self.assertEqual(candidate["field_anchors"]["original_text"], [self.block_id])
+
     def test_one_historical_event_may_span_more_than_twelve_blocks(self) -> None:
         root = self.project.parent
         original = root / "long-event.txt"

@@ -288,7 +288,8 @@ def create_event_candidates(
             if original_text_copied:
                 quote_anchors = field_anchors.get("original_text", [])
                 if not quote_anchors:
-                    raise ValueError("original_text or its explicit block anchors are required")
+                    quote_anchors = list(block_ids)
+                    field_anchors["original_text"] = quote_anchors
                 values["original_text"] = "\n".join(by_id[block_id]["text"] for block_id in quote_anchors)
             for field_name in SOURCE_ANCHORED_FIELDS:
                 if values[field_name] and not field_anchors.get(field_name):
