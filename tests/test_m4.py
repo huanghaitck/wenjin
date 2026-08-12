@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import sqlite3
 import tempfile
@@ -8,6 +9,7 @@ import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from research_workbench.agent_runtime import (
@@ -819,6 +821,15 @@ class M4AgentWorkspaceTests(unittest.TestCase):
                     _post_json("https://example.invalid", {}, {}, 0.01)
         finally:
             release.set()
+
+    def test_model_http_error_includes_safe_provider_detail(self) -> None:
+        error = HTTPError(
+            "https://models.invalid/chat/completions", 400, "bad request", {},
+            io.BytesIO(b'{"error":{"code":"invalid_request","message":"model is unavailable"}}'),
+        )
+        with patch("research_workbench.agent_runtime.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "invalid_request.*model is unavailable"):
+                _post_json("https://models.invalid/chat/completions", {}, {}, 1)
 
     def test_parser_uses_first_action_when_provider_batches_json_objects(self) -> None:
         action = _parse_action(

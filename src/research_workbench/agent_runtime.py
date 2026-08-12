@@ -1016,7 +1016,8 @@ def _post_json_blocking(
         with urlopen(request, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as response:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as error:
-        raise RuntimeError(f"agent provider returned HTTP {error.code}") from error
+        detail = _http_error_detail(error)
+        raise RuntimeError(f"agent provider returned HTTP {error.code}{detail}") from error
     except URLError as error:
         raise RuntimeError(f"agent provider could not be reached: {error.reason}") from error
     if not isinstance(result, dict):
@@ -1214,6 +1215,20 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             connection, run_id, "tool_completed", {"tool_call_id": call_id, "tool": tool_name}
         )
     return result
+
+
+def _http_error_detail(error: HTTPError) -> str:
+    try:
+        payload = json.loads(error.read().decode("utf-8", "replace"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    detail = payload.get("error", payload) if isinstance(payload, dict) else {}
+    if not isinstance(detail, dict):
+        return ""
+    code = str(detail.get("code", "")).strip()
+    message = str(detail.get("message", "")).strip()
+    summary = " · ".join(value for value in (code, message) if value)
+    return f": {summary[:300]}" if summary else ""
 
 
 def _planning_context(project_root: Path) -> dict[str, Any]:
