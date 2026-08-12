@@ -380,6 +380,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = create_ocr_proposal(
                     self.server.project_root,
                     str(payload["page_id"]),
+                    reopen_verified=bool(payload.get("reopen_verified", False)),
                 )
             elif parsed.path == "/api/ocr/accept":
                 result = accept_ocr_proposal(

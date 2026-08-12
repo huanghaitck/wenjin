@@ -1489,12 +1489,13 @@ function renderOcrProposal() {
   const pending = proposals.find((item) => item.status === 'pending');
   const verified = ['human_verified', 'human_repaired'].includes(page.verification_state);
   const locator = page.page_type === 'docx_locator';
-  button.hidden = !capability?.available || verified || locator || Boolean(pending);
+  button.hidden = !capability?.available || locator || Boolean(pending);
+  button.textContent = verified ? '重新用视觉模型核对' : '让视觉模型重识别当前页';
   button.onclick = async () => {
     button.disabled = true;
     try {
       notice(`正在让 ${capability.model} 分析当前原页；结果不会自动写入正文……`);
-      await request('/api/ocr/propose', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({page_id:page.page_id})});
+      await request('/api/ocr/propose', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({page_id:page.page_id,reopen_verified:verified})});
       await loadSource(state.view.source.source_id, true); notice('模型建议已保存为待复核记录，请对照左侧原页修改。');
     } catch (error) { notice(error.message, true); }
     finally { button.disabled = false; }

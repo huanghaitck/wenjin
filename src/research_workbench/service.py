@@ -1026,6 +1026,7 @@ def create_ocr_proposal(
     project_root: Path,
     page_id: str,
     settings: OcrSettings | None = None,
+    reopen_verified: bool = False,
 ) -> dict[str, Any]:
     settings = settings or OcrSettings.from_environment()
     with connect(project_root) as connection:
@@ -1038,8 +1039,8 @@ def create_ocr_proposal(
             raise KeyError(f"unknown page: {page_id}")
         if page["page_type"] == "docx_locator":
             raise ValueError("OCR proposals require an original PDF page")
-        if page["verification_state"] in {"human_verified", "human_repaired"}:
-            raise ValueError("OCR proposals cannot reopen a human-verified page")
+        if page["verification_state"] in {"human_verified", "human_repaired"} and not reopen_verified:
+            raise ValueError("OCR proposals cannot reopen a human-verified page without explicit review")
         eligible = connection.execute(
             """SELECT anomaly_id FROM anomalies
                WHERE scope_type = 'page' AND target_id = ? AND status = 'open'
@@ -1058,7 +1059,9 @@ def create_ocr_proposal(
                     anomaly_id,
                     page["source_id"],
                     page_id,
-                    "Researcher requested model-assisted retranscription of this unverified page.",
+                    ("Researcher explicitly reopened a human-verified page for model-assisted comparison."
+                     if reopen_verified else
+                     "Researcher requested model-assisted retranscription of this unverified page."),
                     now,
                 ),
             )
@@ -1068,7 +1071,8 @@ def create_ocr_proposal(
                 "page_review_requested",
                 "page",
                 page_id,
-                {"anomaly_id": anomaly_id, "reason": "model_assisted_retranscription"},
+                {"anomaly_id": anomaly_id, "reason": ("reopen_verified_page" if reopen_verified else
+                                                        "model_assisted_retranscription")},
             )
     machine_payload = json.loads(page["machine_payload_json"])
     candidate_payload = {

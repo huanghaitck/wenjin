@@ -207,6 +207,31 @@ class M3OcrProposalTests(unittest.TestCase):
                 create_ocr_proposal(self.project, self.page["page_id"], self.settings)
         mocked.assert_not_called()
 
+    def test_human_verified_page_can_be_explicitly_reopened_for_visual_comparison(self) -> None:
+        anomaly = next(
+            item for item in source_view(self.project, self.source["source_id"])["anomalies"]
+            if item["scope_type"] == "page"
+        )
+        submit_page_repair(
+            self.project, anomaly["anomaly_id"],
+            {"blocks": [{"order": 1, "type": "paragraph", "text": "Human transcription"}]},
+            "reviewer", "Verified against the page.",
+        )
+        response = ({"id": "mock-response"}, {
+            "printed_page": None,
+            "blocks": [{"order": 1, "type": "paragraph", "text": "Second opinion", "region": None}],
+            "uncertain_characters": [], "warnings": [],
+        })
+        with patch("research_workbench.service.request_page_ocr", return_value=response):
+            proposal = create_ocr_proposal(
+                self.project, self.page["page_id"], self.settings, reopen_verified=True,
+            )
+        self.assertEqual(proposal["status"], "pending")
+        self.assertEqual(
+            source_view(self.project, self.source["source_id"])["pages"][0]["verification_state"],
+            "human_repaired",
+        )
+
     def test_unverified_page_without_anomaly_can_request_model_assisted_review(self) -> None:
         connection = sqlite3.connect(database_path(self.project))
         try:
@@ -246,6 +271,8 @@ class M3OcrProposalTests(unittest.TestCase):
         self.assertIn("remove.textContent = '删除此块'", script)
         self.assertIn("addBlock.textContent = '新增一块'", script)
         self.assertIn("order: index + 1", script)
+        self.assertIn("重新用视觉模型核对", script)
+        self.assertIn("reopen_verified:verified", script)
 
     def test_page_anomaly_keeps_local_block_repair_entry(self) -> None:
         script = (
