@@ -12,7 +12,7 @@ import pymupdf
 from research_workbench.db import connect
 from research_workbench.library import approve_candidates, scan_directory, work_detail
 from research_workbench.project_library import add_library_file_to_project
-from research_workbench.research import search
+from research_workbench.research import route_retrieval_result, search
 from research_workbench.scholarship import (
     approve_freeze,
     create_browser_session,
@@ -81,6 +81,13 @@ class D1EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(result["results"][0]["qualification"], "DISCOVERED")
         self.assertIn("query.bibliographic=imperial+expedition", result["request_url"])
         self.assertEqual(len(result["response_hash"]), 64)
+        routed = route_retrieval_result(
+            self.project, result["results"][0]["result_id"], "fulltext_queue",
+            "题名与研究问题直接相关，待取得原文", "Professor",
+        )
+        self.assertEqual(routed["results"][0]["qualification"], "DISCOVERED")
+        self.assertEqual(routed["results"][0]["route"], "fulltext_queue")
+        self.assertEqual(routed["results"][0]["route_decided_by"], "Professor")
 
     def test_library_version_is_copied_into_project_without_changing_original(self) -> None:
         materials, library = self.root / "materials", self.root / "library"
@@ -216,7 +223,7 @@ class D1EndToEndDemoTests(unittest.TestCase):
         with connect(self.project) as connection:
             version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(version, 18)
+        self.assertEqual(version, 19)
         self.assertTrue({"claims", "evidence_items", "evidence_freezes", "browser_sessions"} <= tables)
 
     def test_loopback_api_exposes_conversation_workspace_and_research_objects(self) -> None:

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -851,6 +851,19 @@ CREATE TABLE IF NOT EXISTS manuscript_submission_profiles (
 );
 """
 
+MIGRATION_19 = """
+CREATE TABLE IF NOT EXISTS retrieval_result_decisions (
+    decision_id TEXT PRIMARY KEY,
+    result_id TEXT NOT NULL REFERENCES retrieval_results(result_id),
+    route TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_retrieval_result_decisions_result
+ON retrieval_result_decisions(result_id, decided_at);
+"""
+
 CITATION_METADATA_COLUMNS = (
     "translator", "journal", "volume", "issue", "page_range",
 )
@@ -1035,6 +1048,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (18, utc_now()),
         )
+        version = 18
+    if version < 19:
+        connection.executescript(MIGRATION_19)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (19, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -1067,6 +1087,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_14)
     connection.executescript(MIGRATION_15)
     connection.executescript(MIGRATION_16)
+    connection.executescript(MIGRATION_19)
     _ensure_citation_metadata_columns(connection)
     _ensure_event_comparison_columns(connection)
 
@@ -1106,6 +1127,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_14)
         connection.executescript(MIGRATION_15)
         connection.executescript(MIGRATION_16)
+        connection.executescript(MIGRATION_19)
         _ensure_citation_metadata_columns(connection)
         _ensure_event_comparison_columns(connection)
         now = utc_now()

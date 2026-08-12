@@ -542,6 +542,7 @@ function renderContext() {
   } else if (state.contextMode === 'events') {
     renderResearchEvents(container);
   } else if (state.contextMode === 'retrieval') {
+    container.append(card('已登录学术数据库', '知网、读秀和学校数据库通过用户可见的浏览器会话工作：程序保存检索式、题录和下载回执；验证码、授权提示与下载确认由研究者处理。'));
     const form = document.createElement('section'); form.className = 'context-form';
     const provider = document.createElement('select'); provider.id = 'researchProvider';
     for (const item of state.capabilities?.research_connectors || []) {
@@ -559,8 +560,22 @@ function renderContext() {
       node.append(actionButton('查看结果', async () => { state.retrievalRecord = await request(`/api/research/record?id=${encodeURIComponent(record.record_id)}`); renderContext(); })); container.append(node);
     }
     for (const item of state.retrievalRecord?.results || []) {
-      const node = card(item.title || '无题名', `${item.authors || '作者待核'} · ${item.publication_year || '年代待核'} · ${item.qualification}`);
+      const routeLabels = {project_candidate:'拟纳入项目', fulltext_queue:'待读全文', metadata_only:'仅题录', duplicate:'重复版本', inaccessible:'无权访问', excluded:'排除'};
+      const routeDetail = item.route ? ` · ${routeLabels[item.route]}（${item.route_reason}）` : ' · 尚未分流';
+      const node = card(item.title || '无题名', `${item.authors || '作者待核'} · ${item.publication_year || '年代待核'} · ${item.qualification}${routeDetail}`);
       if (item.url) { const link = document.createElement('a'); link.href = item.url; link.target = '_blank'; link.textContent = '打开来源页'; node.append(link); }
+      const routing = document.createElement('div'); routing.className = 'context-form';
+      const select = document.createElement('select');
+      for (const [value,label] of Object.entries(routeLabels)) select.append(new Option(label,value));
+      select.value = item.route || 'fulltext_queue';
+      const reason = document.createElement('input'); reason.placeholder = '分流依据（必填）'; reason.value = item.route_reason || '';
+      routing.append(select, reason, actionButton('保存人工分流', async () => {
+        const decidedBy = window.prompt('决定人', item.route_decided_by || 'Professor'); if (!decidedBy) return;
+        if (!reason.value.trim()) throw new Error('请填写分流依据。');
+        state.retrievalRecord = await request('/api/research/result/route', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({result_id:item.result_id, route:select.value, reason:reason.value, decided_by:decidedBy})});
+        renderContext(); notice('检索线索已分流；这不会自动提升其来源资格。');
+      }, true));
+      node.append(routing);
       container.append(node);
     }
   } else if (state.contextMode === 'evidence') {

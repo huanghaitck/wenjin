@@ -13,10 +13,19 @@ from urllib.request import Request, urlopen
 
 import certifi
 
-from .db import connect, utc_now
+from .db import append_audit, connect, utc_now
 
 
 Fetcher = Callable[[str, dict[str, str]], dict[str, Any]]
+
+RETRIEVAL_ROUTES = {
+    "project_candidate": "拟纳入项目",
+    "fulltext_queue": "待读全文",
+    "metadata_only": "仅题录",
+    "duplicate": "重复版本",
+    "inaccessible": "无权访问",
+    "excluded": "排除",
+}
 
 
 def _fetch(url: str, headers: dict[str, str]) -> dict[str, Any]:
@@ -31,6 +40,9 @@ def connector_capabilities() -> list[dict[str, Any]]:
         {"provider": "openalex", "available": bool(os.getenv("OPENALEX_API_KEY")),
          "mode": "public_api", "missing": [] if os.getenv("OPENALEX_API_KEY") else ["OPENALEX_API_KEY"]},
         {"provider": "zotero", "available": probe_zotero()["available"], "mode": "local_read_only"},
+        {"provider": "authenticated_browser", "available": True, "mode": "user_visible_session",
+         "databases": ["CNKI", "读秀", "学校发现系统", "其他已登录数据库"],
+         "boundary": "只操作用户可见会话；验证码、授权和下载确认交还用户"},
     ]
 
 
@@ -146,9 +158,43 @@ def retrieval_record(project_root: Path, record_id: str) -> dict[str, Any]:
         if row is None:
             raise KeyError(f"unknown retrieval record: {record_id}")
         results = [dict(item) for item in connection.execute(
-            "SELECT * FROM retrieval_results WHERE record_id = ? ORDER BY rowid", (record_id,)
+            """SELECT r.*, d.route, d.reason AS route_reason, d.decided_by AS route_decided_by,
+                      d.decided_at AS route_decided_at
+               FROM retrieval_results r
+               LEFT JOIN retrieval_result_decisions d ON d.decision_id = (
+                   SELECT d2.decision_id FROM retrieval_result_decisions d2
+                   WHERE d2.result_id = r.result_id
+                   ORDER BY d2.decided_at DESC, d2.rowid DESC LIMIT 1
+               )
+               WHERE r.record_id = ? ORDER BY r.rowid""", (record_id,)
         )]
     return {**dict(row), "filters": json.loads(row["filters_json"]), "results": results}
+
+
+def route_retrieval_result(project_root: Path, result_id: str, route: str,
+                           reason: str, decided_by: str) -> dict[str, Any]:
+    route, reason, decided_by = route.strip(), reason.strip(), decided_by.strip()
+    if route not in RETRIEVAL_ROUTES:
+        raise ValueError(f"unsupported retrieval route: {route}")
+    if not reason or not decided_by:
+        raise ValueError("routing reason and decision maker are required")
+    decision_id, decided_at = f"RRD_{uuid.uuid4().hex}", utc_now()
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT record_id FROM retrieval_results WHERE result_id = ?", (result_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown retrieval result: {result_id}")
+        connection.execute(
+            """INSERT INTO retrieval_result_decisions(
+                   decision_id, result_id, route, reason, decided_by, decided_at
+               ) VALUES (?, ?, ?, ?, ?, ?)""",
+            (decision_id, result_id, route, reason, decided_by, decided_at),
+        )
+        append_audit(connection, "retrieval_result_routed", "retrieval_result", result_id, {
+            "decision_id": decision_id, "route": route, "reason": reason, "decided_by": decided_by,
+        })
+    return retrieval_record(project_root, str(row["record_id"]))
 
 
 def list_retrievals(project_root: Path) -> list[dict[str, Any]]:
