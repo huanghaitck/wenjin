@@ -295,15 +295,28 @@ def sync_approved_section(project_root: Path, manuscript_id: str, section_id: st
     """Make an approved section version the current structured-document revision."""
     current = ensure_document(project_root, manuscript_id)
     tree = deepcopy(current["document"])
+    with connect(project_root) as connection:
+        latest = connection.execute(
+            "SELECT heading, current_version_id FROM manuscript_sections "
+            "WHERE manuscript_id = ? AND section_id = ?",
+            (manuscript_id, section_id),
+        ).fetchone()
+    if latest is None:
+        raise KeyError(f"unknown manuscript section: {section_id}")
+    if latest["current_version_id"] != section_version_id:
+        raise ValueError("section version is stale; reload the manuscript before synchronizing")
     section = next((item for item in tree["children"] if item.get("section_id") == section_id), None)
     if section is None:
         raise KeyError(f"structured document is missing section: {section_id}")
+    old_heading = str(section.get("heading", ""))
+    section["heading"] = str(latest["heading"])
     old_children = section.get("children", [])
     new_children = _nodes_from_text(content)
     for index, node in enumerate(new_children):
         if index < len(old_children):
             node["node_id"] = old_children[index]["node_id"]
-    if [_node_text(node) for node in old_children] == [_node_text(node) for node in new_children]:
+    same_content = [_node_text(node) for node in old_children] == [_node_text(node) for node in new_children]
+    if same_content and old_heading == str(latest["heading"]):
         return current
     section["children"] = new_children
     revision_id, now = _id("DREV"), utc_now()

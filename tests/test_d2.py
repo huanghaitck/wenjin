@@ -144,6 +144,30 @@ class D2AuthoringReadingTests(unittest.TestCase):
         self.assertIn("w:tblHeader", xml)
         self.assertIn("w:cantSplit", xml)
 
+    def test_manual_sync_rejects_stale_section_version(self) -> None:
+        from research_workbench.document_model import sync_approved_section
+
+        section = self.manuscript["sections"][1]
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "polish", "补入一段",
+            writer=lambda prompt: section["content"] + "\n\n新增一段。",
+        )
+        decision = decide_writing_proposal(
+            self.project, proposal["proposal_id"], True, "Professor", reason="Checked",
+        )
+        detail = document_detail(self.project, self.manuscript["manuscript_id"])
+        synced = next(
+            item for item in detail["document"]["children"]
+            if item["section_id"] == section["section_id"]
+        )
+        self.assertIn("新增一段", synced["children"][-1]["text"])
+        self.assertEqual(decision["document_revision_id"], detail["current_revision_id"])
+        with self.assertRaisesRegex(ValueError, "stale"):
+            sync_approved_section(
+                self.project, self.manuscript["manuscript_id"], section["section_id"],
+                section["content"], section["current_version_id"],
+            )
+
     def test_historical_humanizer_uses_only_approved_high_level_style_profile(self) -> None:
         paragraph = ("1908年，材料称“队伍进入草原”。[^1]这一记载只能说明队伍当日的位置，"
                      "尚不足以据此判断整个考察季节的路线。随后一封书信补充了行动次序，"
