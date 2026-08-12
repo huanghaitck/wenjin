@@ -911,6 +911,20 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         prose = '模型示例：<{"type":"tool_call","tool":"research_event.list","arguments":{}}>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
 
+    def test_parser_normalizes_unambiguous_local_model_aliases(self) -> None:
+        self.assertEqual(
+            _parse_action('{"tool":"source.list","arguments":{}}'),
+            {"type": "tool_call", "tool": "source.list", "arguments": {}},
+        )
+        self.assertEqual(
+            _parse_action('{"action":"final","content":"审稿完成"}'),
+            {"type": "final", "action": "final", "content": "审稿完成"},
+        )
+        self.assertEqual(
+            _parse_action('{"final_answer":"审稿完成"}'),
+            {"type": "final", "content": "审稿完成"},
+        )
+
     def test_agent_prompt_routes_coverage_audits_to_deterministic_tool(self) -> None:
         self.assertIn('"tool":"research_event.coverage"', SYSTEM_PROMPT)
         self.assertIn("exact intended case_ids", SYSTEM_PROMPT)

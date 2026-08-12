@@ -299,10 +299,14 @@ function renderAgentShell() {
     option.disabled = !project.available; projectSelect.append(option);
   }
   const models = $('modelProfile'); models.replaceChildren();
+  let assignedAvailable = false;
   for (const profile of (state.snapshot?.model_profiles || [])) {
     const option = new Option(`${profile.provider} · ${profile.model}`, profile.profile_id);
     option.selected = profile.assigned; option.disabled = profile.status !== 'available'; models.append(option);
+    if (profile.assigned && profile.status === 'available') assignedAvailable = true;
   }
+  $('sendMessage').disabled = !assignedAvailable;
+  $('sendMessage').title = assignedAvailable ? '' : '当前主模型不可用，请先到项目设置保存并测试一个可用模型。';
   const list = $('threadList'); list.replaceChildren();
   const threads = state.snapshot?.threads || [];
   if (!threads.length) list.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'还没有研究线程。'}));

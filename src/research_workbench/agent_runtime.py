@@ -913,6 +913,21 @@ def _parse_action(content: str) -> dict[str, Any]:
         remainder = remainder[end:].strip()
     if not isinstance(action, dict):
         raise ValueError("agent response JSON must be an object")
+    return _normalize_action(action)
+
+
+def _normalize_action(action: dict[str, Any]) -> dict[str, Any]:
+    """Accept unambiguous local-model aliases without weakening the action contract."""
+    if action.get("type") in {"tool_call", "final"}:
+        return action
+    action_type = action.get("action")
+    if action_type in {"tool_call", "final"}:
+        return {**action, "type": action_type}
+    if isinstance(action.get("tool"), str) and isinstance(action.get("arguments", {}), dict):
+        return {**action, "type": "tool_call"}
+    for key in ("final", "final_answer", "response"):
+        if isinstance(action.get(key), str):
+            return {"type": "final", "content": action[key]}
     return action
 
 
