@@ -256,6 +256,26 @@ class D2AuthoringReadingTests(unittest.TestCase):
         )
         self.assertEqual(decision["status"], "approved")
 
+    def test_explicit_character_budget_and_internal_prose_block_approval(self) -> None:
+        section = self.manuscript["sections"][1]
+        short = create_writing_proposal(
+            self.project, section["section_id"], "polish", "严格控制在1000—1200个中文字符",
+            writer=lambda _prompt: "材料先行。" * 20,
+        )
+        self.assertEqual(short["validation"]["character_budget_status"], "OUT_OF_RANGE")
+        with self.assertRaisesRegex(ValueError, "outside the requested character budget"):
+            decide_writing_proposal(
+                self.project, short["proposal_id"], True, "Professor", reason="Checked length",
+            )
+        internal = create_writing_proposal(
+            self.project, section["section_id"], "polish", "保留史学表达",
+            writer=lambda _prompt: "这只是核心个案之一。",
+        )
+        with self.assertRaisesRegex(ValueError, "research-process"):
+            decide_writing_proposal(
+                self.project, internal["proposal_id"], True, "Professor", reason="Checked prose",
+            )
+
     def test_section_draft_lists_shared_evidence_once(self) -> None:
         first = create_claim(self.project, "道路是移动条件。")
         first = create_evidence(

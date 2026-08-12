@@ -391,6 +391,20 @@ def _prose_risk_warnings(content: str) -> list[str]:
     return [name for name, pattern in INTERNAL_PROSE_PATTERNS.items() if pattern.search(content)]
 
 
+def _requested_character_budget(instruction: str) -> tuple[int, int] | None:
+    """Read an explicit Chinese-character budget from the author's instruction."""
+    compact = instruction.replace(",", "").replace("，", "")
+    match = re.search(r"(\d{3,5})\s*[—–~至到-]\s*(\d{3,5})\s*(?:个)?(?:中文)?(?:字|字符)", compact)
+    if match:
+        low, high = int(match.group(1)), int(match.group(2))
+        return (min(low, high), max(low, high))
+    match = re.search(r"(?:约|控制在|严格)?\s*(\d{3,5})\s*(?:个)?(?:中文)?(?:字|字符)", compact)
+    if match:
+        target = int(match.group(1))
+        return (max(1, int(target * 0.8)), int(target * 1.2))
+    return None
+
+
 def _model_capability() -> dict[str, Any]:
     provider = os.getenv("HRW_AGENT_PROVIDER", "").strip().lower()
     model = os.getenv("HRW_AGENT_MODEL", "").strip()
@@ -646,6 +660,13 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     proposed = (writer(prompt) if writer else (_model_write(prompt) if _model_capability()["available"] else fallback)).strip()
     validation = _validate_markers(proposed, markers, evidence_contract)
     validation["prose_risk_warnings"] = _prose_risk_warnings(proposed)
+    budget = _requested_character_budget(instruction)
+    if budget:
+        validation["requested_character_budget"] = {"min": budget[0], "max": budget[1]}
+        validation["actual_character_count"] = len(proposed)
+        validation["character_budget_status"] = (
+            "PASS" if budget[0] <= len(proposed) <= budget[1] else "OUT_OF_RANGE"
+        )
     if operation == "historical_humanize":
         before = [value.strip() for value in re.split(r"\n\s*\n", base_content) if value.strip()]
         after = [value.strip() for value in re.split(r"\n\s*\n", proposed) if value.strip()]
@@ -690,10 +711,30 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
     contract = proposal["model_snapshot"].get("evidence_contract")
     validation = _validate_markers(final_content, proposal["protected_markers"], contract)
     validation["decision_reason"] = reason
+    prose_for_approval = re.sub(r"\[(?:EVID|CITE):[^\]]+\]", "", final_content)
+    validation["prose_risk_warnings"] = _prose_risk_warnings(prose_for_approval)
+    budget = _requested_character_budget(proposal["instruction"])
+    if budget:
+        validation["requested_character_budget"] = {"min": budget[0], "max": budget[1]}
+        validation["actual_character_count"] = len(final_content)
+        validation["character_budget_status"] = (
+            "PASS" if budget[0] <= len(final_content) <= budget[1] else "OUT_OF_RANGE"
+        )
     if approved and not validation["valid"]:
         if validation["missing_markers"]:
             raise ValueError("writing proposal removed protected markers: " + ", ".join(validation["missing_markers"]))
         raise ValueError("writing proposal violates its evidence contract")
+    if approved and validation["prose_risk_warnings"]:
+        raise ValueError(
+            "writing proposal still contains research-process or defensive prose: "
+            + ", ".join(validation["prose_risk_warnings"])
+        )
+    if approved and validation.get("character_budget_status") == "OUT_OF_RANGE":
+        requested = validation["requested_character_budget"]
+        raise ValueError(
+            f"writing proposal is outside the requested character budget "
+            f"({len(final_content)} not in {requested['min']}–{requested['max']})"
+        )
     now = utc_now()
     with connect(project_root) as connection:
         if approved:
