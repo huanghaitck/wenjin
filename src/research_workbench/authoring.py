@@ -405,6 +405,17 @@ def _requested_character_budget(instruction: str) -> tuple[int, int] | None:
     return None
 
 
+def _without_repeated_heading(content: str, heading: str) -> str:
+    """Remove a model-echoed section heading before saving approved body text."""
+    lines = content.lstrip().splitlines()
+    if not lines:
+        return content.strip()
+    first = re.sub(r"^#{1,6}\s*", "", lines[0]).strip()
+    if first == heading.strip():
+        return "\n".join(lines[1:]).lstrip()
+    return content.strip()
+
+
 def _model_capability() -> dict[str, Any]:
     provider = os.getenv("HRW_AGENT_PROVIDER", "").strip().lower()
     model = os.getenv("HRW_AGENT_MODEL", "").strip()
@@ -708,6 +719,12 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
     if proposal["status"] != "pending":
         raise ValueError(f"writing proposal is already {proposal['status']}")
     final_content = (edited_content if edited_content is not None else proposal["proposed_content"]).strip()
+    with connect(project_root) as connection:
+        heading_row = connection.execute(
+            "SELECT heading FROM manuscript_sections WHERE section_id = ?", (proposal["section_id"],)
+        ).fetchone()
+    if heading_row is not None:
+        final_content = _without_repeated_heading(final_content, heading_row["heading"])
     contract = proposal["model_snapshot"].get("evidence_contract")
     validation = _validate_markers(final_content, proposal["protected_markers"], contract)
     validation["decision_reason"] = reason

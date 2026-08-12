@@ -312,6 +312,20 @@ class D2AuthoringReadingTests(unittest.TestCase):
         )
         self.assertEqual(decision["status"], "approved")
 
+    def test_approval_strips_model_echoed_section_heading(self) -> None:
+        section = self.manuscript["sections"][1]
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "polish", "只润色正文",
+            writer=lambda _prompt: f"{section['heading']}\n\n材料先行。",
+        )
+        decision = decide_writing_proposal(
+            self.project, proposal["proposal_id"], True, "Professor", reason="Checked body",
+        )
+        self.assertEqual(decision["status"], "approved")
+        current = manuscript_detail(self.project, self.manuscript["manuscript_id"])
+        revised = next(item for item in current["sections"] if item["section_id"] == section["section_id"])
+        self.assertEqual(revised["content"], "材料先行。")
+
     def test_section_draft_lists_shared_evidence_once(self) -> None:
         first = create_claim(self.project, "道路是移动条件。")
         first = create_evidence(
