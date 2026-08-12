@@ -150,6 +150,8 @@ pre { overflow-x: auto; margin: 6px 0 0; padding: 7px; color: #49443d; backgroun
 .context-card h3 { font-size: 13px; }
 .context-card p, .context-card small { font-size: 10px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
 .context-card .row { display: flex; flex-wrap: wrap; gap: 6px; }
+.context-card.gate-ready { border-left: 4px solid var(--ok); }
+.context-card.gate-blocked { border-left: 4px solid var(--danger); background: #fff6f2; }
 .context-form { display: grid; gap: 7px; margin-bottom: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #f1eadf; }
 .context-form textarea { min-height: 65px; font-size: 12px; }
 .context-form select, .context-form input { width: 100%; }

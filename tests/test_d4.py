@@ -49,9 +49,12 @@ class D4PracticalAuthoringTests(unittest.TestCase):
             self.evidence_id,
         )
 
-    def test_two_versioned_builtin_templates_are_visible(self) -> None:
+    def test_versioned_builtin_templates_are_visible(self) -> None:
         templates = [item for item in ensure_journal_templates(self.project) if item["origin"] == "builtin"]
-        self.assertEqual({item["name"] for item in templates}, {"《历史研究》", "《中国社会科学》"})
+        self.assertEqual(
+            {item["template_id"] for item in templates},
+            {"builtin-history-research", "builtin-tangdu-current", "builtin-chinese-social-sciences-2026"},
+        )
         self.assertTrue(all(item["source_url"] and item["verified_at"] for item in templates))
         history = next(item for item in templates if item["name"] == "《历史研究》")
         self.assertEqual(history["verification_status"], "REFERENCE_NEEDS_PRE_SUBMISSION_RECHECK")

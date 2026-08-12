@@ -41,7 +41,7 @@
     <section class="catalog-panel surface">
       <header class="agent-heading">
         <div><h1>研究图书馆</h1><p id="libraryCounts">作品、文件与精确版本分层保存</p></div>
-        <div class="library-search"><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button></div>
+        <div class="library-search"><select id="libraryShelf"><option value="">全部书架</option></select><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button></div>
       </header>
       <div id="workList" class="work-list"></div>
     </section>
@@ -205,10 +205,15 @@
           <label>作者<input id="citationAuthor"></label>
           <label>题名<input id="citationTitle"></label>
           <label>版本/卷册<input id="citationEdition"></label>
+          <label>译者<input id="citationTranslator"></label>
           <label>出版地<input id="citationPlace"></label>
           <label>出版者<input id="citationPublisher"></label>
           <label>年份<input id="citationYear"></label>
           <label>文献类型码<input id="citationTypeCode" placeholder="如 M、J、A"></label>
+          <label>刊名<input id="citationJournal"></label>
+          <label>卷<input id="citationVolume"></label>
+          <label>期<input id="citationIssue"></label>
+          <label>文献页码范围<input id="citationPageRange"></label>
           <label>核验人<input id="citationVerifiedBy" value="human-reviewer"></label>
           <button id="saveCitationMetadata">保存人工核验元数据</button>
         </div>

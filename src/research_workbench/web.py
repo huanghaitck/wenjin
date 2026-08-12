@@ -33,6 +33,7 @@ from .authoring import (
     import_manuscript,
     manuscript_detail,
     run_manuscript_review,
+    save_submission_profile,
 )
 from .document_model import (
     document_detail, ensure_document, export_document, import_docx, reimport_docx, save_document,
@@ -41,13 +42,13 @@ from .document_model import (
 from .citations import create_note, decide_note, revise_note
 from .pdf_ingestion import ingest_pdf
 from .library import (
-    approve_candidates,
+    LIBRARY_SHELVES, approve_candidates,
     library_file_path,
     library_status,
     link_work_to_project,
     scan_directory,
     scan_session,
-    search_library,
+    search_library, move_work_to_shelf,
     update_work,
     work_detail,
 )
@@ -147,6 +148,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "model_profiles": sync_model_profiles(self.server.project_root),
                     "library": library_status(self.server.project_root, self.server.library_root),
                     "library_works": search_library(self.server.project_root, library_root=self.server.library_root),
+                    "library_shelves": LIBRARY_SHELVES,
                     "workspace": workspace_view(self.server.workspace_root),
                     "retrievals": list_retrievals(self.server.project_root),
                     "research": research_state(self.server.project_root),
@@ -503,6 +505,11 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     [str(item) for item in payload.get("tags", [])],
                     self.server.library_root,
                 )
+            elif parsed.path == "/api/library/work/shelf":
+                result = move_work_to_shelf(
+                    self.server.project_root, str(payload["work_id"]), str(payload["shelf"]),
+                    self.server.library_root,
+                )
             elif parsed.path == "/api/library/link":
                 result = link_work_to_project(
                     self.server.project_root,
@@ -692,6 +699,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = run_manuscript_review(
                     self.server.project_root, str(payload["manuscript_id"]), str(payload["template_id"]),
                     bool(payload.get("use_secondary", False)),
+                )
+            elif parsed.path == "/api/manuscript/submission-profile":
+                result = save_submission_profile(
+                    self.server.project_root, str(payload["manuscript_id"]), payload,
                 )
             elif parsed.path == "/api/memory/decide":
                 if not isinstance(payload.get("approved"), bool):

@@ -16,6 +16,7 @@ import certifi
 
 from .db import append_audit, connect, utc_now
 from .research_design import current_shared_design
+from .readiness import formal_research_readiness
 from .scholarship import freeze_detail, research_state
 from .skill_registry import get_skill
 
@@ -47,6 +48,39 @@ BUILTIN_JOURNAL_TEMPLATES = (
         "requirements": {
             "note_placement": "footnote", "number_restart": "each_page", "marker": "circled_arabic",
             "anchor_position": "after_punctuation", "warning": "公开镜像未证明仍是期刊当前最新版，投稿前必须复核",
+        },
+    },
+    {
+        "template_id": "builtin-tangdu-current",
+        "revision_id": "JTR_tangdu_published_notice_2026",
+        "name": "《唐都学刊》（最新版）",
+        "citation_style": (
+            "参考文献置于文后并按正文首次出现顺序连续编号；正文以上标[序号]具体页码标识，"
+            "同一文献复引沿用同一序号。说明性、解释性文字另用①②③当页脚注"
+        ),
+        "section_rules": [
+            "中文题名（一般不超过20字）", "作者与单位", "中文摘要（约300字）",
+            "关键词（3—8个）", "正文", "参考文献",
+            "英文题名/作者/单位/摘要/关键词", "作者简介/项目来源/联系方式",
+        ],
+        "version_label": "最新刊发投稿须知（GB/T 7714—2025）＋2026年第2期历史论文刊例",
+        "effective_date": "2026",
+        "source_url": "https://xbbjb.xawl.edu.cn/info/1353/5409.htm",
+        "verification_status": "USER_SUPPLIED_PUBLISHED_NOTICE_AND_SAMPLE_CHECKED_2026_08_12",
+        "requirements": {
+            "citation_system": "sequential_reference", "reference_placement": "end",
+            "reference_marker": "square_brackets_with_original_page", "reference_marker_position": "superscript",
+            "same_source_reuses_number": True, "note_role": "explanatory_only",
+            "note_placement": "footnote", "number_restart": "each_page", "marker": "circled_arabic",
+            "anchor_position": "after_punctuation", "paper": "A4", "body_font": "宋体", "body_size_pt": 10.5,
+            "academic_paper_standard": "GB/T 7713.2-2022",
+            "bibliographic_standard": "GB/T 7714-2025",
+            "compliance_scope": "落实期刊明确要求及已核刊例所需子集，不声称覆盖国家标准全部条款",
+            "minimum_length": "约10000字，欢迎10000字以上",
+            "heading_levels": ["一、", "（一）"], "tables_supported": True,
+            "published_sample_url": "https://m.fx361.com/news/2024/0815/25735683.html",
+            "superseded_web_notice": "官网2023-12-27页面仍写GB/T 7714-2015；最新刊发须知已改为GB/T 7714-2025",
+            "warning": "一手史料、直接研究、背景与学术史材料均按实际引用进入文后表；禁止只列三组核心材料",
         },
     },
     {
@@ -769,6 +803,12 @@ def ensure_journal_templates(project_root: Path) -> list[dict[str, Any]]:
                  _json(item["requirements"]), now),
             )
             connection.execute(
+                """UPDATE journal_templates SET name = ?, citation_style = ?, section_rules_json = ?,
+                   format_rules_json = ? WHERE template_id = ? AND origin = 'builtin'""",
+                (item["name"], item["citation_style"], _json(item["section_rules"]),
+                 _json(item["requirements"]), item["template_id"]),
+            )
+            connection.execute(
                 """INSERT OR IGNORE INTO journal_template_revisions(template_revision_id, template_id,
                    version_label, effective_date, source_url, verified_at, requirements_json,
                    verification_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -962,4 +1002,38 @@ def authoring_state(project_root: Path) -> dict[str, Any]:
             "historiography": list_historiography(project_root),
             "journal_templates": ensure_journal_templates(project_root), "writing_model": _model_capability(),
             "style_profiles": list_style_profiles(project_root),
-            "review_models": {"primary": _model_capability(), "secondary": _secondary_review_capability()}}
+            "submission_profiles": submission_profiles(project_root),
+            "review_models": {"primary": _model_capability(), "secondary": _secondary_review_capability()},
+            "formal_research_readiness": formal_research_readiness(project_root)}
+
+
+def submission_profiles(project_root: Path) -> list[dict[str, Any]]:
+    with connect(project_root) as connection:
+        return [
+            {"manuscript_id": row["manuscript_id"], **json.loads(row["profile_json"]),
+             "updated_at": row["updated_at"]}
+            for row in connection.execute(
+                "SELECT manuscript_id, profile_json, updated_at FROM manuscript_submission_profiles"
+            )
+        ]
+
+
+def save_submission_profile(project_root: Path, manuscript_id: str,
+                            payload: dict[str, Any]) -> dict[str, Any]:
+    allowed = (
+        "name", "real_name", "gender", "ethnicity", "native_place", "degree", "discipline",
+        "affiliation", "professional_title", "position", "research_interests", "project_source",
+        "project_number", "phone", "postal_address", "postal_code", "email",
+    )
+    profile = {key: str(payload.get(key, "")).strip() for key in allowed}
+    now = utc_now()
+    with connect(project_root) as connection:
+        if connection.execute("SELECT 1 FROM manuscripts WHERE manuscript_id = ?", (manuscript_id,)).fetchone() is None:
+            raise KeyError(f"unknown manuscript: {manuscript_id}")
+        connection.execute(
+            "INSERT OR REPLACE INTO manuscript_submission_profiles(manuscript_id, profile_json, updated_at) VALUES (?, ?, ?)",
+            (manuscript_id, _json(profile), now),
+        )
+        append_audit(connection, "submission_profile_saved", "manuscript", manuscript_id,
+                     {"fields": [key for key, value in profile.items() if value]})
+    return {"manuscript_id": manuscript_id, **profile, "updated_at": now}

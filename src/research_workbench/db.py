@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 17
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -843,6 +843,27 @@ CREATE TABLE IF NOT EXISTS source_citation_metadata (
 );
 """
 
+MIGRATION_16 = """
+CREATE TABLE IF NOT EXISTS manuscript_submission_profiles (
+    manuscript_id TEXT PRIMARY KEY REFERENCES manuscripts(manuscript_id),
+    profile_json TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+CITATION_METADATA_COLUMNS = (
+    "translator", "journal", "volume", "issue", "page_range",
+)
+
+
+def _ensure_citation_metadata_columns(connection: sqlite3.Connection) -> None:
+    existing = {row[1] for row in connection.execute("PRAGMA table_info(source_citation_metadata)")}
+    for column in CITATION_METADATA_COLUMNS:
+        if column not in existing:
+            connection.execute(
+                f"ALTER TABLE source_citation_metadata ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+            )
+
 EVENT_COMPARISON_COLUMNS = (
     "movement_mode",
     "genre",
@@ -987,6 +1008,20 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (15, utc_now()),
         )
+        version = 15
+    if version < 16:
+        connection.executescript(MIGRATION_16)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (16, utc_now()),
+        )
+        version = 16
+    if version < 17:
+        _ensure_citation_metadata_columns(connection)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (17, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -1018,6 +1053,8 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_11)
     connection.executescript(MIGRATION_14)
     connection.executescript(MIGRATION_15)
+    connection.executescript(MIGRATION_16)
+    _ensure_citation_metadata_columns(connection)
     _ensure_event_comparison_columns(connection)
 
 
@@ -1055,6 +1092,8 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_11)
         connection.executescript(MIGRATION_14)
         connection.executescript(MIGRATION_15)
+        connection.executescript(MIGRATION_16)
+        _ensure_citation_metadata_columns(connection)
         _ensure_event_comparison_columns(connection)
         now = utc_now()
         connection.execute(

@@ -9,8 +9,12 @@ from pathlib import Path
 from docx import Document
 
 from research_workbench.agent_runtime import create_thread, send_message
-from research_workbench.authoring import create_journal_template, import_manuscript, manuscript_detail
+from research_workbench.authoring import (
+    create_journal_template, ensure_journal_templates, import_manuscript, manuscript_detail,
+    save_submission_profile, submission_profiles,
+)
 from research_workbench.db import connect
+from research_workbench.citations import create_note
 from research_workbench.document_model import (
     ensure_document,
     export_document,
@@ -150,6 +154,62 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertEqual(text.count("[1] 张三. 测试书[M]. 西安：测试出版社，1908"), 1)
         self.assertEqual(exported["fidelity"]["citation_status"], "BLOCKED")
         self.assertTrue(any("英文题名" in warning for warning in exported["fidelity"]["warnings"]))
+        word = export_document(self.project, manuscript["manuscript_id"], "docx", "builtin-tangdu-current")
+        import zipfile
+        with zipfile.ZipFile(self.project / word["project_path"]) as package:
+            document_xml = package.read("word/document.xml").decode("utf-8")
+        self.assertIn('w:vertAlign w:val="superscript"', document_xml)
+        self.assertIn("[1]12", document_xml)
+
+    def test_tangdu_template_separates_references_and_explanatory_footnotes(self) -> None:
+        template = next(
+            item for item in ensure_journal_templates(self.project)
+            if item["template_id"] == "builtin-tangdu-current"
+        )
+        self.assertEqual(template["requirements"]["citation_system"], "sequential_reference")
+        self.assertEqual(template["requirements"]["reference_marker_position"], "superscript")
+        self.assertEqual(template["requirements"]["note_role"], "explanatory_only")
+        self.assertIn("2026年第2期历史论文刊例", template["version_label"])
+        self.assertEqual(template["requirements"]["bibliographic_standard"], "GB/T 7714-2025")
+        manuscript = import_manuscript(self.project, "唐都引注", "# 正文\n\n事实段落。")
+        with self.assertRaisesRegex(ValueError, "inline sequential references"):
+            create_note(
+                self.project, manuscript["manuscript_id"], "NOD_missing", 4, "事实段落",
+                template["template_id"], "METADATA_FIRST_PAGE_LATER", {"title": "测试书"},
+            )
+        with self.assertRaisesRegex(ValueError, "explicitly identified explanatory text"):
+            create_note(
+                self.project, manuscript["manuscript_id"], "NOD_missing", 4, "事实段落",
+                template["template_id"], "REFORMAT_EXISTING", {"user_supplied_text": "说明文字。"},
+            )
+
+    def test_tangdu_direct_source_citation_requires_human_verified_original_page(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "学术史引证", "# 正文\n\n已有研究指出这一差异。[CITE:SRC_study@PAGE_study]",
+        )
+        with connect(self.project) as connection:
+            project_id = connection.execute("SELECT project_id FROM projects").fetchone()[0]
+            connection.execute(
+                "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("SRC_study", project_id, "研究论文", "local_file", "study.pdf", "acquired", "ready", "partial", "2026-01-01"),
+            )
+            connection.execute(
+                """INSERT INTO pages(page_id, source_id, physical_page, printed_page, page_type,
+                   verification_state, use_state, machine_payload_json, human_payload_json)
+                   VALUES (?, ?, ?, ?, 'content', 'human_verified', 'research_usable', '{}', '{}')""",
+                ("PAGE_study", "SRC_study", 7, "23"),
+            )
+        save_source_citation_metadata(self.project, "SRC_study", {
+            "author": "李四", "title": "秦岭考察研究", "place": "", "publisher": "",
+            "year": "2024", "type_code": "J", "journal": "唐都学刊", "issue": "2",
+            "page_range": "20-30", "verified_by": "tester",
+        })
+        exported = export_document(
+            self.project, manuscript["manuscript_id"], "markdown", "builtin-tangdu-current",
+        )
+        text = (self.project / exported["project_path"]).read_text(encoding="utf-8")
+        self.assertIn("已有研究指出这一差异。[1]23", text)
+        self.assertIn("[1] 李四. 秦岭考察研究[J]. 唐都学刊，2024(2)：20-30.", text)
 
     def test_ui_has_four_permanent_workspaces_and_nested_repair(self) -> None:
         html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")
@@ -166,8 +226,21 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn('id="openSourceRepair"', html)
         self.assertIn('id="documentCanvas"', html)
         self.assertIn('id="browserWorkbench"', html)
+        self.assertIn("插入正文引证并保存新修订", app)
+        self.assertIn("解释性脚注文字（不得填写书目引证）", app)
+        self.assertIn("保存本稿投稿信息", app)
         self.assertIn("四层分开，不自动沉淀", app)
         self.assertIn("不会自动写入外部长期记忆库", app)
+
+    def test_submission_profile_is_scoped_to_one_manuscript(self) -> None:
+        saved = save_submission_profile(self.project, self.manuscript["manuscript_id"], {
+            "name": "某作者", "affiliation": "某大学", "phone": "由作者填写",
+            "postal_address": "由作者填写", "postal_code": "000000",
+        })
+        self.assertEqual(saved["name"], "某作者")
+        profiles = submission_profiles(self.project)
+        self.assertEqual(profiles[0]["manuscript_id"], self.manuscript["manuscript_id"])
+        self.assertEqual(profiles[0]["affiliation"], "某大学")
 
 
 if __name__ == "__main__":

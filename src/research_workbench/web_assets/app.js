@@ -125,6 +125,9 @@ function renderLibraryShell() {
   $('libraryRoot').textContent = library ? `索引位置：${library.library_root}` : '图书馆尚未初始化';
   const counts = library?.counts || {};
   $('libraryCounts').textContent = `${counts.works || 0} 部作品 · ${counts.library_files || 0} 个文件位置 · ${counts.file_versions || 0} 个精确版本`;
+  const shelfSelect=$('libraryShelf');const selectedShelf=shelfSelect.value;shelfSelect.replaceChildren(new Option('全部书架',''));
+  for(const [value,label] of Object.entries(state.snapshot.library_shelves||{})) shelfSelect.append(new Option(label,value));
+  shelfSelect.value=selectedShelf;
   const skills = $('intakeSkill'); skills.replaceChildren();
   for (const skill of (library?.skills || []).filter((item)=>item.compatible_actions?.includes('library_intake'))) {
     const option = new Option(`${skill.name} · ${skill.execution}`, skill.name);
@@ -180,15 +183,16 @@ function renderScan() {
 
 function renderWorkList() {
   const list = $('workList'); list.replaceChildren();
-  if (!state.libraryWorks.length) {
+  const visible=state.libraryWorks.filter((work)=>!$('libraryShelf').value||work.shelf===$('libraryShelf').value);
+  if (!visible.length) {
     list.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'图书馆还没有已批准材料。盘点不会自动入库。'})); return;
   }
-  for (const work of state.libraryWorks) {
+  for (const work of visible) {
     const button = document.createElement('button'); button.className = 'work-row';
     button.classList.toggle('selected', work.work_id === state.libraryWorkId);
     const title = document.createElement('strong'); title.textContent = work.canonical_title;
     const author = document.createElement('span'); author.textContent = work.author || '作者待核';
-    const meta = document.createElement('small'); meta.textContent = `${work.material_type} · ${work.file_count} 个位置 · ${work.version_count} 个版本`;
+    const meta = document.createElement('small'); meta.textContent = `${work.shelf_label} · ${work.material_type} · ${work.file_count} 个位置 · ${work.version_count} 个版本`;
     const tags = document.createElement('small'); tags.textContent = work.tags.map((item) => item.name).join(' · ');
     button.append(title, author, meta, tags);
     button.onclick = () => loadWork(work.work_id).catch((error) => notice(error.message, true)); list.append(button);
@@ -215,7 +219,12 @@ function renderWorkDetail() {
   }
   const form = document.createElement('section'); form.className = 'bibliography-form';
   const edition = work.editions[0] || {};
+  const shelfLabel=document.createElement('label');shelfLabel.textContent='书架（人工移动，不改变引用资格）';
+  const shelf=document.createElement('select');shelf.id='workShelf';
+  for(const [value,name] of Object.entries(state.snapshot.library_shelves||{})) shelf.append(new Option(name,value));
+  shelf.value=work.shelf||'unclassified';shelfLabel.append(shelf);
   form.append(
+    shelfLabel,
     detailField('作品题名', work.canonical_title, 'canonical_title'),
     detailField('作者 / 责任者', work.author, 'author'),
     detailField('语言', work.language, 'language'),
@@ -224,9 +233,11 @@ function renderWorkDetail() {
     detailField('出版者', edition.publisher, 'publisher'),
     detailField('出版年', edition.publication_year, 'publication_year'),
     detailField('ISBN', edition.isbn, 'isbn'),
-    detailField('用户标签（逗号分隔）', work.tags.filter((item) => item.origin === 'user').map((item) => item.name).join(', '), 'tags'),
+    detailField('用户标签（逗号分隔）', work.tags.filter((item) => item.origin === 'user'&&!item.name.startsWith('shelf:')).map((item) => item.name).join(', '), 'tags'),
   );
   const actions = document.createElement('div'); actions.className = 'detail-actions';
+  const move=document.createElement('button');move.textContent='移动到所选书架';
+  move.onclick=async()=>{try{state.libraryWork=await request('/api/library/work/shelf',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({work_id:work.work_id,shelf:shelf.value})});await refreshLibrary();notice('书架已更新；原文件位置和研究资格均未改变。');}catch(error){notice(error.message,true);}};
   const save = document.createElement('button'); save.className = 'primary-inline'; save.textContent = '保存人工书目';
   save.onclick = async () => {
     try {
@@ -244,7 +255,7 @@ function renderWorkDetail() {
       renderWorkDetail(); notice('作品已关联到当前研究项目，原文件仍保持原位。');
     } catch (error) { notice(error.message, true); }
   };
-  actions.append(save, link); form.append(actions); container.append(form);
+  actions.append(move, save, link); form.append(actions); container.append(form);
 
   for (const file of work.files) {
     const section = document.createElement('section'); section.className = 'file-history';
@@ -364,6 +375,11 @@ function formField(label, id, value = '', area = false) {
   const wrapper = document.createElement('label'); wrapper.textContent = label;
   const input = document.createElement(area ? 'textarea' : 'input'); input.id = id; input.value = value;
   wrapper.append(input); return wrapper;
+}
+
+function journalTemplateLabel(item) {
+  const name=item.origin==='user'&&item.name==='《唐都学刊》'?'《唐都学刊》（旧人工模板）':item.name;
+  return `${name} · ${item.version_label||'人工模板'}`;
 }
 
 function renderResearchDesign(container) {
@@ -861,7 +877,7 @@ function renderAuthoring() {
   if (proposal) state.proposalId = proposal.proposal_id;
   $('sectionProposal').value = proposal?.proposed_content || '';
   const templateSelect=$('exportTemplate'); const previous=templateSelect.value; templateSelect.replaceChildren();
-  for(const template of state.snapshot.authoring?.journal_templates||[]) templateSelect.append(new Option(template.name,template.template_id));
+  for(const template of state.snapshot.authoring?.journal_templates||[]) templateSelect.append(new Option(journalTemplateLabel(template),template.template_id));
   templateSelect.value=previous||'builtin-history-research';
   const text=state.document?.document ? state.document.document.children.flatMap((part)=>part.children||[]).map((node)=>node.type==='table'?(node.rows||[]).flat().join(''):node.text||'').join('') : '';
   const notes=state.document?.notes||[];
@@ -874,6 +890,15 @@ function renderAuthoringControl(section, proposal) {
   const container = $('authoringContent'); container.replaceChildren();
   for (const button of $('authoringTabs').querySelectorAll('button')) button.classList.toggle('selected', button.dataset.authoring === state.authoringMode);
   const authoring = state.snapshot.authoring || {};
+  const readiness=authoring.formal_research_readiness;
+  if(readiness){
+    const gate=card(readiness.status==='READY'?'正式研究门禁已满足':'正式研究门禁未满足',
+      readiness.status==='READY'
+        ? `依据 ${readiness.design_title}，当前可进入正式成稿与投稿导出。`
+        : [...(readiness.blockers||[]),...(readiness.warnings||[])].join('\n'));
+    gate.classList.add(readiness.status==='READY'?'gate-ready':'gate-blocked');
+    container.append(gate);
+  }
   if (state.authoringMode === 'dialogue') {
     const threads = state.snapshot.threads || [];
     const form = document.createElement('section'); form.className = 'context-form';
@@ -901,23 +926,59 @@ function renderAuthoringControl(section, proposal) {
     container.append(card('当前注释位置', selection.nodeId ? `选区：“${selection.text || '光标位置'}”\n段落 ${selection.nodeId} · 字符位置 ${selection.offset}` : '先在正文同一段落中选中文字，再点击“插入注释”。'));
     const form=document.createElement('section'); form.className='context-form';
     const template=document.createElement('select'); template.id='noteTemplate';
-    for(const item of authoring.journal_templates||[]) template.append(new Option(`${item.name} · ${item.version_label||'人工模板'}`,item.template_id));
+    for(const item of authoring.journal_templates||[]) template.append(new Option(journalTemplateLabel(item),item.template_id));
     template.value=$('exportTemplate').value||'builtin-history-research';
+    const selectedTemplate=(authoring.journal_templates||[]).find((item)=>item.template_id===template.value)||{};
+    const sequential=selectedTemplate.requirements?.citation_system==='sequential_reference';
+    template.onchange=()=>{$('exportTemplate').value=template.value;renderAuthoringControl(section,proposal);};
     const templateLabel=document.createElement('label'); templateLabel.textContent='注释模板'; templateLabel.append(template);
+    if(sequential){
+      container.append(card('《唐都学刊》分开处理两类标记','引用文献：正文上标［序号］页码，并自动汇入文后参考文献。\n补充说明：才使用①②③页脚注；不能把书目引证放入脚注。'));
+      const citeForm=document.createElement('section');citeForm.className='context-form';
+      const source=document.createElement('select');source.id='directCitationSource';source.append(new Option('选择已核验书目信息的项目文献',''));
+      for(const item of state.snapshot.sources||[]) if(item.citation_verification_status==='HUMAN_VERIFIED') source.append(new Option(item.title,item.source_id));
+      const sourceLabel=document.createElement('label');sourceLabel.textContent='正文引用来源';sourceLabel.append(source);
+      const page=document.createElement('select');page.id='directCitationPage';page.append(new Option('先选择来源',''));
+      const pageLabel=document.createElement('label');pageLabel.textContent='已经逐页人工核验的原书页';pageLabel.append(page);
+      source.onchange=async()=>{
+        page.replaceChildren(new Option('选择已核验原页',''));
+        if(!source.value)return;
+        const view=await request(`/api/source?id=${encodeURIComponent(source.value)}`);
+        for(const item of view.pages||[]) if(['human_verified','human_repaired'].includes(item.verification_state)&&item.use_state==='research_usable'&&item.printed_page){
+          page.append(new Option(`原书页 ${item.printed_page} · 物理页 ${item.physical_page}`,item.page_id));
+        }
+      };
+      citeForm.append(sourceLabel,pageLabel,actionButton('插入正文引证并保存新修订',async()=>{
+        if(!state.manuscriptId||!selection.nodeId)throw new Error('请先在正文同一段落中选中文字。');
+        if(!source.value||!page.value)throw new Error('请选择已经人工核验书目信息和原书页的来源。');
+        captureDocumentSection();
+        const target=state.document.document.children.flatMap((item)=>item.children||[]).find((item)=>item.node_id===selection.nodeId);
+        if(!target||typeof target.text!=='string')throw new Error('当前选区不支持插入正文引证。');
+        const marker=`[CITE:${source.value}@${page.value}]`;
+        target.text=`${target.text.slice(0,selection.offset)}${marker}${target.text.slice(selection.offset)}`;
+        state.document=await request('/api/manuscript/document/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,document:state.document.document})});
+        state.documentManuscriptId=state.manuscriptId;state.selection={text:'',nodeId:'',offset:0};
+        await refreshAuthoring('正文引证已插入并保存；导出时按首次出现顺序统一编号。');
+      },true));container.append(citeForm);
+    }
     const mode=document.createElement('select'); mode.id='noteMode';
-    mode.append(new Option('核对原页后插入','VERIFY_AND_INSERT'),new Option('元数据已核，页码稍后补','METADATA_FIRST_PAGE_LATER'),new Option('只整理现有注释文字','REFORMAT_EXISTING'));
+    if(sequential) mode.append(new Option('仅插入解释性脚注','REFORMAT_EXISTING'));
+    else mode.append(new Option('核对原页后插入','VERIFY_AND_INSERT'),new Option('元数据已核，页码稍后补','METADATA_FIRST_PAGE_LATER'),new Option('只整理现有注释文字','REFORMAT_EXISTING'));
     const modeLabel=document.createElement('label'); modeLabel.textContent='处理模式'; modeLabel.append(mode);
     const evidence=document.createElement('select'); evidence.id='noteEvidence'; evidence.append(new Option('未选择页块证据',''));
     for(const claim of state.snapshot.research?.claims||[]) for(const item of claim.evidence||[]) evidence.append(new Option(`${item.source_title||item.source_id} · 物理页 ${item.physical_page||'—'} · ${item.quote.slice(0,32)}`,item.evidence_id));
     const evidenceLabel=document.createElement('label'); evidenceLabel.textContent='已冻结到原页的证据'; evidenceLabel.append(evidence);
-    form.append(templateLabel,modeLabel,evidenceLabel,
+    if(sequential) form.append(templateLabel,modeLabel,formField('解释性脚注文字（不得填写书目引证）','noteExisting','',true));
+    else form.append(templateLabel,modeLabel,evidenceLabel,
       formField('来源类型（book/article/archive/classic）','noteSourceType','book'),formField('作者','noteAuthor'),formField('题名','noteTitle'),
       formField('出版地','notePlace'),formField('出版者','notePublisher'),formField('年份','noteYear'),
       formField('原书页码或稳定定位','noteOriginalPage'),formField('数字文件页（仅辅助定位）','noteDigitalPage'),
       formField('已有注释原文（仅“整理现有注释”使用）','noteExisting','',true));
     form.append(actionButton('生成待审注释',async()=>{
       if(!state.manuscriptId||!selection.nodeId) throw new Error('请先在正文同一段落中选中文字。');
-      const citation_data={source_type:$('noteSourceType').value,author:$('noteAuthor').value,title:$('noteTitle').value,place:$('notePlace').value,publisher:$('notePublisher').value,year:$('noteYear').value,original_page:$('noteOriginalPage').value,digital_page:$('noteDigitalPage').value,user_supplied_text:$('noteExisting').value};
+      const citation_data=sequential
+        ? {user_supplied_text:$('noteExisting').value,note_role:'explanatory'}
+        : {source_type:$('noteSourceType').value,author:$('noteAuthor').value,title:$('noteTitle').value,place:$('notePlace').value,publisher:$('notePublisher').value,year:$('noteYear').value,original_page:$('noteOriginalPage').value,digital_page:$('noteDigitalPage').value,user_supplied_text:$('noteExisting').value};
       await request('/api/note/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,anchor_node_id:selection.nodeId,anchor_offset:selection.offset,anchor_text:selection.text,template_id:template.value,mode:mode.value,citation_data,evidence_id:evidence.value})});
       await refreshAuthoring('注释已生成待审版本；批准前不会进入正文或导出文件。');
     },true)); container.append(form);
@@ -1043,7 +1104,7 @@ function renderAuthoringControl(section, proposal) {
     container.append(card('评审独立性边界',`主评审：${models.primary?.available?`${models.primary.provider} / ${models.primary.model}`:'未配置'}。三个角色使用彼此隔离的提示与输出，但同一模型仍可能共享盲点。${models.secondary?.available?`\n交叉评审：${models.secondary.provider} / ${models.secondary.model}`:'\n可在项目设置中另配交叉评审模型。'}`));
     const form=document.createElement('section');form.className='context-form';
     const template=document.createElement('select');template.id='reviewTemplate';
-    for(const item of authoring.journal_templates||[]) template.append(new Option(`${item.name} · ${item.version_label||'人工模板'}`,item.template_id));
+    for(const item of authoring.journal_templates||[]) template.append(new Option(journalTemplateLabel(item),item.template_id));
     template.value=$('exportTemplate').value||'builtin-history-research';
     const templateLabel=document.createElement('label');templateLabel.textContent='本轮投稿模板';templateLabel.append(template);form.append(templateLabel);
     const run=actionButton('运行三角色评审（同一主模型）',async()=>{
@@ -1062,6 +1123,12 @@ function renderAuthoringControl(section, proposal) {
       for(const report of group.reports){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=`${roleLabels[report.reviewer_role]||report.reviewer_role} · ${report.model_snapshot.provider} / ${report.model_snapshot.model}`;const pre=document.createElement('pre');pre.textContent=report.report;details.append(summary,pre);node.append(details);}container.append(node);
     }
   } else if (state.authoringMode === 'journal') {
+    const profile=(authoring.submission_profiles||[]).find((item)=>item.manuscript_id===state.manuscriptId)||{};
+    const profileForm=document.createElement('section');profileForm.className='context-form';
+    profileForm.append(Object.assign(document.createElement('strong'),{textContent:'当前稿件的作者与投稿信息'}));
+    const profileFields=[['姓名','submissionName','name'],['笔名对应真实姓名','submissionRealName','real_name'],['性别','submissionGender','gender'],['民族','submissionEthnicity','ethnicity'],['籍贯','submissionNativePlace','native_place'],['学位及学科','submissionDegree','degree'],['工作单位','submissionAffiliation','affiliation'],['职称','submissionTitle','professional_title'],['职务','submissionPosition','position'],['主要研究方向','submissionInterests','research_interests'],['项目名称','submissionProject','project_source'],['项目编号','submissionProjectNumber','project_number'],['联系电话','submissionPhone','phone'],['详细邮寄地址','submissionAddress','postal_address'],['邮编','submissionPostalCode','postal_code'],['电子邮箱','submissionEmail','email']];
+    for(const [label,id,key] of profileFields) profileForm.append(formField(label,id,profile[key]||'',key==='postal_address'||key==='research_interests'));
+    profileForm.append(actionButton('保存本稿投稿信息',async()=>{const payload={manuscript_id:state.manuscriptId};for(const [,id,key] of profileFields)payload[key]=$(id).value;await request('/api/manuscript/submission-profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});await refreshAuthoring('投稿信息已保存到当前稿件；不会自动复用于其他作者。');},true));container.append(profileForm);
     const form=document.createElement('section');form.className='context-form';form.append(
       formField('模板名称','journalName'),formField('规范版本','journalVersion'),formField('规范发布日期','journalEffective'),
       formField('官方来源网址','journalSource'),formField('本次核验日期','journalVerified'),
@@ -1069,7 +1136,7 @@ function renderAuthoringControl(section, proposal) {
       formField('其他硬性要求（每行一项）','journalRequirements','',true)
     );
     form.append(actionButton('保存带版本的人工模板',async()=>{const notes=$('journalRequirements').value.split(/\n/).map(v=>v.trim()).filter(Boolean);await request('/api/journal/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('journalName').value,version_label:$('journalVersion').value,effective_date:$('journalEffective').value,source_url:$('journalSource').value,verified_at:$('journalVerified').value,verification_status:'OFFICIAL_SOURCE_CHECKED',citation_style:$('journalCitation').value,section_rules:$('journalSections').value.split(/[,，]/).map(v=>v.trim()).filter(Boolean),requirements:{notes}})});await refreshAuthoring('期刊模板及其规范版本已保存；投稿前仍须核对是否有更新。');},true));container.append(form);
-    for(const item of authoring.journal_templates||[]){const node=card(item.name,`${item.version_label||'人工模板'} · ${item.verification_status||'USER_DEFINED'}`);node.append(Object.assign(document.createElement('p'),{textContent:`${item.citation_style}\n${item.section_rules.join(' → ')}\n核验：${item.verified_at||'由用户维护'}`}));if(item.source_url){const link=document.createElement('a');link.href=item.source_url;link.target='_blank';link.rel='noreferrer';link.textContent='查看规则来源';node.append(link);}container.append(node);}
+    for(const item of authoring.journal_templates||[]){const oldTangdu=item.origin==='user'&&item.name==='《唐都学刊》';const shownName=oldTangdu?'《唐都学刊》（旧人工模板）':item.name;const node=card(shownName,`${item.version_label||'人工模板'} · ${item.verification_status||'USER_DEFINED'}`);const requirements=item.requirements||{};node.append(Object.assign(document.createElement('p'),{textContent:`${item.citation_style}\n${item.section_rules.join(' → ')}\n${requirements.academic_paper_standard||''} ${requirements.bibliographic_standard||''}\n${requirements.superseded_web_notice||requirements.compliance_scope||''}\n核验：${item.verified_at||'由用户维护'}`}));if(item.source_url){const link=document.createElement('a');link.href=item.source_url;link.target='_blank';link.rel='noreferrer';link.textContent=oldTangdu?'查看旧版网页来源':'查看规则来源';node.append(link);}container.append(node);}
   }
 }
 
@@ -1570,10 +1637,15 @@ function render() {
   $('citationAuthor').value=citation.author||'';
   $('citationTitle').value=citation.title||source?.title||'';
   $('citationEdition').value=citation.edition||'';
+  $('citationTranslator').value=citation.translator||'';
   $('citationPlace').value=citation.place||'';
   $('citationPublisher').value=citation.publisher||'';
   $('citationYear').value=citation.year||'';
   $('citationTypeCode').value=citation.type_code||'';
+  $('citationJournal').value=citation.journal||'';
+  $('citationVolume').value=citation.volume||'';
+  $('citationIssue').value=citation.issue||'';
+  $('citationPageRange').value=citation.page_range||'';
   $('citationVerifiedBy').value=citation.verified_by||'human-reviewer';
   $('citationMetadataState').textContent=citation.verification_status==='HUMAN_VERIFIED'
     ? `已由 ${citation.verified_by} 核验 · ${new Date(citation.verified_at).toLocaleString()}`
@@ -1596,8 +1668,11 @@ $('saveCitationMetadata').onclick=async()=>{
   try{
     await request('/api/source/citation-metadata',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
       source_id:sourceId,author:$('citationAuthor').value,title:$('citationTitle').value,
-      edition:$('citationEdition').value,place:$('citationPlace').value,publisher:$('citationPublisher').value,
-      year:$('citationYear').value,type_code:$('citationTypeCode').value,verified_by:$('citationVerifiedBy').value,
+      edition:$('citationEdition').value,translator:$('citationTranslator').value,
+      place:$('citationPlace').value,publisher:$('citationPublisher').value,
+      year:$('citationYear').value,type_code:$('citationTypeCode').value,
+      journal:$('citationJournal').value,volume:$('citationVolume').value,issue:$('citationIssue').value,
+      page_range:$('citationPageRange').value,verified_by:$('citationVerifiedBy').value,
     })});
     await loadSource(sourceId,true);notice('引文元数据已人工核验；导出仍会逐条检查原书页码。');
   }catch(error){notice(error.message,true);}
@@ -1782,6 +1857,7 @@ $('searchLibrary').onclick = async () => {
   } catch (error) { notice(error.message, true); }
 };
 $('libraryQuery').onkeydown = (event) => { if (event.key === 'Enter') $('searchLibrary').click(); };
+$('libraryShelf').onchange = () => renderWorkList();
 $('newThread').onclick = async () => {
   const title = window.prompt('这个研究线程讨论什么？', '新的研究讨论');
   if (!title?.trim()) return;

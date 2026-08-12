@@ -22,6 +22,7 @@ from .authoring import ensure_journal_templates
 from .citations import check_note_anchors, list_notes
 from .db import append_audit, connect, utc_now
 from .docx_notes import add_footnote_reference, attach_footnotes
+from .readiness import formal_research_readiness
 
 
 def _id(prefix: str) -> str:
@@ -380,17 +381,48 @@ def _docx_table_rows(table: Table) -> list[list[str]]:
 
 
 EVIDENCE_MARKER_RE = re.compile(r"(?:\[EVID:[A-Za-z0-9_]+\])+")
+DIRECT_CITATION_MARKER_RE = re.compile(r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)\]")
+REFERENCE_MARKER_RE = re.compile(
+    r"(?:\[EVID:[A-Za-z0-9_]+\])+|\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]"
+)
+SEQUENTIAL_CITATION_RE = re.compile(r"(\[\d+\](?:[^\s，。；：\[\]]+))")
+
+
+def _add_text_runs(paragraph: Any, text: str, superscript_citations: bool) -> None:
+    if not superscript_citations:
+        paragraph.add_run(text)
+        return
+    cursor = 0
+    for match in SEQUENTIAL_CITATION_RE.finditer(text):
+        paragraph.add_run(text[cursor:match.start()])
+        run = paragraph.add_run(match.group(0))
+        run.font.superscript = True
+        cursor = match.end()
+    paragraph.add_run(text[cursor:])
 
 
 def _reference_entry(number: int, metadata: dict[str, Any]) -> str:
-    title = metadata.get("title", "")
+    author, title = metadata.get("author", ""), metadata.get("title", "")
+    type_code, year = metadata.get("type_code", ""), metadata.get("year", "")
+    page_range = metadata.get("page_range", "")
+    if type_code == "J":
+        issue = metadata.get("issue", "")
+        volume = str(metadata.get("volume", ""))
+        if volume:
+            year_issue = f"{year},{volume}{f'({issue})' if issue else ''}"
+        else:
+            year_issue = f"{year}{f'({issue})' if issue else ''}"
+        journal_tail = "，".join(filter(None, (metadata.get("journal", ""), year_issue)))
+        return f"[{number}] {author}. {title}[J]. {journal_tail}{('：' + page_range) if page_range else ''}."
+    responsibility = f"，{metadata['translator']}译" if metadata.get("translator") else ""
     edition = f"，{metadata['edition']}" if metadata.get("edition") else ""
     publication = "：".join(value for value in (metadata.get("place", ""), metadata.get("publisher", "")) if value)
-    tail = "，".join(value for value in (publication, metadata.get("year", "")) if value)
-    return f"[{number}] {metadata.get('author', '')}. {title}{edition}[{metadata.get('type_code', '')}].{(' ' + tail) if tail else ''}".strip()
+    tail = "，".join(value for value in (publication, year) if value)
+    return f"[{number}] {author}. {title}{responsibility}{edition}[{type_code}]. {tail}{('：' + page_range) if page_range else ''}.".strip()
 
 
-def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> tuple[dict[str, Any], list[str], str]:
+def _prepare_sequential_references(project_root: Path, tree: dict[str, Any],
+                                   manuscript_id: str = "") -> tuple[dict[str, Any], list[str], str]:
     prepared = deepcopy(tree)
     evidence: dict[str, dict[str, Any]] = {}
     with connect(project_root) as connection:
@@ -405,14 +437,44 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> 
             row["source_id"]: dict(row)
             for row in connection.execute("SELECT * FROM source_citation_metadata")
         }
-        page_printed = {
-            row["page_id"]: str(row["printed_page"] or "").strip()
-            for row in connection.execute("SELECT page_id, printed_page FROM pages")
+        pages = {
+            (row["source_id"], row["page_id"]): dict(row)
+            for row in connection.execute(
+                "SELECT source_id, page_id, physical_page, printed_page, verification_state, use_state FROM pages"
+            )
         }
+        page_printed = {page_id: str(row["printed_page"] or "").strip()
+                        for (_, page_id), row in pages.items()}
+        profile_row = connection.execute(
+            "SELECT profile_json FROM manuscript_submission_profiles WHERE manuscript_id = ?",
+            (manuscript_id,),
+        ).fetchone() if manuscript_id else None
+        submission_profile = json.loads(profile_row["profile_json"]) if profile_row else {}
     warnings: list[str] = []
     source_numbers: dict[str, int] = {}
 
     def marker(match: re.Match[str]) -> str:
+        direct = DIRECT_CITATION_MARKER_RE.fullmatch(match.group(0))
+        if direct:
+            source_id, page_id = direct.groups()
+            page = pages.get((source_id, page_id))
+            if page is None:
+                warnings.append(f"来源引证 {source_id} 的原页 {page_id} 不存在")
+                return match.group(0)
+            if page["use_state"] != "research_usable" or page["verification_state"] not in {
+                "human_verified", "human_repaired",
+            }:
+                warnings.append(f"来源引证 {source_id} 的原页 {page_id} 尚未完成逐页人工核验")
+                return match.group(0)
+            printed_page = str(page["printed_page"] or "").strip()
+            if not printed_page:
+                warnings.append(
+                    f"来源引证 {source_id} 的物理页 {page['physical_page']} 尚未确认原书页码"
+                )
+                return match.group(0)
+            if source_id not in source_numbers:
+                source_numbers[source_id] = len(source_numbers) + 1
+            return f"[{source_numbers[source_id]}]{printed_page}"
         grouped: dict[str, list[dict[str, Any]]] = {}
         for evidence_id in re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", match.group(0)):
             item = evidence.get(evidence_id)
@@ -424,7 +486,7 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> 
         for source_id, items in grouped.items():
             if source_id not in source_numbers:
                 source_numbers[source_id] = len(source_numbers) + 1
-            pages = list(dict.fromkeys(
+            printed_pages = list(dict.fromkeys(
                 str(page)
                 for item in items
                 for page in (
@@ -433,24 +495,24 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> 
                 )
                 if str(page).strip()
             ))
-            if not pages:
+            if not printed_pages:
                 digital = list(dict.fromkeys(
                     str(page) for item in items for page in item.get("physical_pages", []) if str(page).strip()
                 ))
                 warnings.append(f"来源 {source_id} 缺少原书页码；数字页 {','.join(digital) or '未知'} 仅供回查")
                 page_text = "原书页待核"
             else:
-                page_text = "、".join(pages)
+                page_text = "、".join(printed_pages)
             rendered.append(f"[{source_numbers[source_id]}]{page_text}")
         return "；".join(rendered) if rendered else match.group(0)
 
     for section in prepared.get("children", []):
         for node in section.get("children", []):
             if node.get("type") == "table":
-                node["rows"] = [[EVIDENCE_MARKER_RE.sub(marker, str(cell)) for cell in row]
+                node["rows"] = [[REFERENCE_MARKER_RE.sub(marker, str(cell)) for cell in row]
                                 for row in node.get("rows", [])]
             else:
-                node["text"] = EVIDENCE_MARKER_RE.sub(marker, str(node.get("text", "")))
+                node["text"] = REFERENCE_MARKER_RE.sub(marker, str(node.get("text", "")))
 
     references: list[str] = []
     for source_id, number in sorted(source_numbers.items(), key=lambda item: item[1]):
@@ -461,6 +523,8 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> 
         required = ["author", "title", "year", "type_code"]
         if item.get("type_code") == "M":
             required.extend(["place", "publisher"])
+        elif item.get("type_code") == "J":
+            required.append("journal")
         missing = [field for field in required if not str(item.get(field, "")).strip()]
         if missing:
             warnings.append(f"来源 {source_id} 缺少引文元数据：{','.join(missing)}")
@@ -478,10 +542,56 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any]) -> 
                          len(prepared["children"]))
         prepared["children"].insert(insertion, reference_section)
     headings = [str(section.get("heading", "")) for section in prepared.get("children", [])]
+    if len(str(prepared.get("title", ""))) > 20:
+        warnings.append("《唐都学刊》题名一般不超过20个汉字；当前题名需人工复核")
+    if len(_plain_text(prepared).replace(" ", "").replace("\n", "")) < 10000:
+        warnings.append("《唐都学刊》来稿约10000字并欢迎万字以上；当前正文不足10000字符")
+    if not any("摘要" in heading for heading in headings):
+        warnings.append("缺少约300字中文摘要")
+    if not any("关键词" in heading for heading in headings):
+        warnings.append("缺少3—8个中文关键词")
     if not any("英文" in heading or "English" in heading for heading in headings):
         warnings.append("《唐都学刊》要求参考文献后附英文题名、作者、单位、摘要和关键词")
     if not any("作者" in heading or "联系方式" in heading for heading in headings):
-        warnings.append("作者简介、项目来源、联系方式、地址和邮编需由作者本人填写")
+        warnings.append("正文结构中未见作者简介或投稿信息段；可在期刊模板页填写独立投稿信息")
+    missing_profile = [label for key, label in (
+        ("name", "姓名"), ("affiliation", "工作单位"), ("phone", "联系电话"),
+        ("postal_address", "详细邮寄地址"), ("postal_code", "邮编"),
+    ) if not submission_profile.get(key)]
+    if missing_profile:
+        warnings.append("当前稿件投稿信息缺少：" + "、".join(missing_profile))
+    elif not any("投稿信息" in heading for heading in headings):
+        profile_lines = [
+            "；".join(filter(None, (
+                f"姓名：{submission_profile.get('name', '')}",
+                f"真实姓名：{submission_profile.get('real_name', '')}" if submission_profile.get("real_name") else "",
+                f"性别：{submission_profile.get('gender', '')}" if submission_profile.get("gender") else "",
+                f"民族：{submission_profile.get('ethnicity', '')}" if submission_profile.get("ethnicity") else "",
+                f"籍贯：{submission_profile.get('native_place', '')}" if submission_profile.get("native_place") else "",
+            ))),
+            "；".join(filter(None, (
+                f"工作单位：{submission_profile.get('affiliation', '')}",
+                f"学位及学科：{submission_profile.get('degree', '')}" if submission_profile.get("degree") else "",
+                f"职称：{submission_profile.get('professional_title', '')}" if submission_profile.get("professional_title") else "",
+                f"职务：{submission_profile.get('position', '')}" if submission_profile.get("position") else "",
+            ))),
+            f"主要研究方向：{submission_profile.get('research_interests', '')}" if submission_profile.get("research_interests") else "",
+            "；".join(filter(None, (
+                f"项目来源：{submission_profile.get('project_source', '')}" if submission_profile.get("project_source") else "",
+                f"项目编号：{submission_profile.get('project_number', '')}" if submission_profile.get("project_number") else "",
+            ))),
+            "；".join(filter(None, (
+                f"联系电话：{submission_profile['phone']}",
+                f"详细邮寄地址：{submission_profile['postal_address']}",
+                f"邮编：{submission_profile['postal_code']}",
+                f"电子邮箱：{submission_profile.get('email', '')}" if submission_profile.get("email") else "",
+            ))),
+        ]
+        prepared["children"].append({
+            "type": "section", "node_id": _id("NOD"), "section_id": "", "heading": "作者投稿信息",
+            "children": [{"type": "paragraph", "node_id": _id("NOD"), "text": line}
+                         for line in profile_lines if line],
+        })
     exported_text = _plain_text(prepared)
     if "待作者填写" in exported_text or "to be supplied by the researcher" in exported_text:
         warnings.append("英文作者单位及作者投稿信息仍为人工占位，提交前必须由作者填写")
@@ -498,7 +608,12 @@ def preview_document_export(project_root: Path, manuscript_id: str, template_id:
     warnings: list[str] = []
     citation_status = "NOT_APPLICABLE"
     if "参考文献置于文后" in str(template.get("citation_style", "")):
-        export_tree, warnings, citation_status = _prepare_sequential_references(project_root, export_tree)
+        export_tree, warnings, citation_status = _prepare_sequential_references(
+            project_root, export_tree, manuscript_id,
+        )
+    readiness = formal_research_readiness(project_root)
+    if readiness["status"] != "READY":
+        warnings.extend(f"正式研究门禁：{item}" for item in readiness["blockers"])
     notes = list_notes(project_root, manuscript_id, approved_only=True)
     return {
         "manuscript_id": manuscript_id,
@@ -509,6 +624,8 @@ def preview_document_export(project_root: Path, manuscript_id: str, template_id:
         "notes": notes,
         "warnings": warnings,
         "citation_status": citation_status,
+        "formal_research_status": readiness["status"],
+        "research_readiness": readiness,
     }
 
 
@@ -632,6 +749,7 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         path = export_root / f"{manuscript_id}-{detail['current_revision_id']}.docx"
         document = Document()
         requirements = template.get("requirements", {})
+        superscript_citations = requirements.get("reference_marker_position") == "superscript"
         section_properties = document.sections[0]
         section_properties.page_width, section_properties.page_height = Cm(21), Cm(29.7)
         normal = document.styles["Normal"]
@@ -672,10 +790,10 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
                 cursor = 0
                 for number, note in sorted(by_node.get(str(node.get("node_id")), []), key=lambda item: int(item[1]["anchor_offset"])):
                     offset = min(max(cursor, int(note["anchor_offset"])), len(text))
-                    paragraph.add_run(text[cursor:offset])
+                    _add_text_runs(paragraph, text[cursor:offset], superscript_citations)
                     add_footnote_reference(paragraph, number)
                     cursor = offset
-                paragraph.add_run(text[cursor:])
+                _add_text_runs(paragraph, text[cursor:], superscript_citations)
         document.save(path)
         attach_footnotes(path, [note["rendered_text"] for note in ordered_notes],
                          requirements.get("number_restart") == "each_page")
@@ -689,6 +807,7 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         "template_id": template_id, "template_revision_id": template.get("template_revision_id"),
         "template_verification_status": template.get("verification_status"),
         "citation_status": citation_status,
+        "formal_research_status": preview["formal_research_status"],
     }
     receipt = _record_receipt(project_root, manuscript_id, detail["current_revision_id"],
                               "export", format_name, path.relative_to(project_root).as_posix(), fidelity)

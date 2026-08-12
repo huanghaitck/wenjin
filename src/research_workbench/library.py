@@ -15,11 +15,17 @@ from .skill_registry import discover_skills, get_skill
 
 
 SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt", ".docx"}
-CANDIDATE_SUFFIXES = SUPPORTED_SUFFIXES | {".doc", ".docx", ".epub", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+CANDIDATE_SUFFIXES = SUPPORTED_SUFFIXES | {".doc", ".docx", ".epub", ".caj", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 HISTORY_TERMS = (
     "历史", "史料", "档案", "地方志", "编年", "朝代", "帝国", "革命", "战争", "考察",
     "history", "historical", "archive", "chronicle", "century", "empire", "revolution", "war",
 )
+LIBRARY_SHELVES = {
+    "primary_sources": "原始史料", "academic_articles": "学术论文",
+    "monographs": "学术专著", "personal_manuscripts": "个人论文与稿件",
+    "reference_works": "工具书与目录", "unclassified": "待分类",
+}
+SUGGESTED_SHELVES = {"archival_source": "primary_sources", "article": "academic_articles"}
 
 
 def _file_hash(path: Path) -> str:
@@ -80,7 +86,7 @@ def _pdf_bibliography(
 
 def _triage_state(sample: str, supported: bool, text_layer: str, page_count: int | None) -> tuple[str, str]:
     if not supported:
-        return "unsupported", "当前 Demo 仅解析 PDF、Markdown 和 TXT；文件仍保留在盘点清单中。"
+        return "unsupported", "当前版本暂不解析此格式；文件仍保留在盘点清单中。CAJ 应保留原件并另生成带转换回执的 PDF/逐页 Markdown。"
     if page_count and text_layer == "absent":
         return "needs_visual_triage", "前十页没有可用文本层，需要原页或视觉模型进一步判断。"
     normalized = sample.lower()
@@ -423,6 +429,8 @@ def approve_candidates(
                 if action == "register_new":
                     _add_tag(connection, work_id, f"material:{candidate['suggested_material_type']}", "system")
                     _add_tag(connection, work_id, f"triage:{candidate['triage_state']}", "system")
+                    shelf = SUGGESTED_SHELVES.get(candidate["suggested_material_type"], "unclassified")
+                    _add_tag(connection, work_id, f"shelf:{shelf}", "system")
             connection.execute(
                 "UPDATE scan_candidates SET status = 'approved' WHERE candidate_id = ?",
                 (candidate["candidate_id"],),
@@ -451,7 +459,29 @@ def _work_summary(connection: Any, work_id: str) -> dict[str, Any]:
         """SELECT COUNT(DISTINCT f.file_id), COUNT(v.version_id) FROM library_files f
            LEFT JOIN file_versions v ON v.file_id = f.file_id WHERE f.work_id = ?""", (work_id,)
     ).fetchone()
-    return {**dict(work), "tags": [dict(row) for row in tags], "file_count": counts[0], "version_count": counts[1]}
+    tag_items = [dict(row) for row in tags]
+    shelf_tag = next((item["name"] for item in tag_items if item["name"].startswith("shelf:")), "")
+    shelf = shelf_tag.removeprefix("shelf:") if shelf_tag else "unclassified"
+    return {**dict(work), "tags": tag_items, "shelf": shelf,
+            "shelf_label": LIBRARY_SHELVES.get(shelf, shelf),
+            "file_count": counts[0], "version_count": counts[1]}
+
+
+def move_work_to_shelf(project_root: Path, work_id: str, shelf: str,
+                       library_root: Path | None = None) -> dict[str, Any]:
+    if shelf not in LIBRARY_SHELVES:
+        raise ValueError(f"unknown library shelf: {shelf}")
+    root = library_root_for(project_root, library_root)
+    with connect_library(root) as connection:
+        if connection.execute("SELECT 1 FROM works WHERE work_id = ?", (work_id,)).fetchone() is None:
+            raise KeyError(f"unknown work: {work_id}")
+        connection.execute(
+            """DELETE FROM work_tags WHERE work_id = ? AND tag_id IN
+               (SELECT tag_id FROM tags WHERE name LIKE 'shelf:%')""", (work_id,),
+        )
+        _add_tag(connection, work_id, f"shelf:{shelf}", "user")
+        _refresh_search(connection, work_id)
+    return work_detail(project_root, work_id, root)
 
 
 def search_library(
@@ -563,7 +593,8 @@ def update_work(
                 [*edition_updates.values(), edition_id, work_id],
             )
         connection.execute(
-            """DELETE FROM work_tags WHERE work_id = ? AND origin = 'user'""", (work_id,)
+            """DELETE FROM work_tags WHERE work_id = ? AND origin = 'user'
+               AND tag_id NOT IN (SELECT tag_id FROM tags WHERE name LIKE 'shelf:%')""", (work_id,)
         )
         for tag in tags:
             _add_tag(connection, work_id, tag, "user")

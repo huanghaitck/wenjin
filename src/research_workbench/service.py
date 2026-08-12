@@ -852,8 +852,10 @@ def list_sources(project_root: Path) -> list[dict[str, Any]]:
             """SELECT s.source_id, s.title, s.original_name, s.processing_state, s.use_state,
                       s.created_at, (SELECT COUNT(*) FROM pages p WHERE p.source_id = s.source_id) AS page_count,
                       COALESCE((SELECT sv.byte_count FROM source_versions sv WHERE sv.source_id = s.source_id
-                                ORDER BY sv.created_at DESC LIMIT 1), 0) AS byte_count
-               FROM sources s ORDER BY s.created_at, s.source_id"""
+                                ORDER BY sv.created_at DESC LIMIT 1), 0) AS byte_count,
+                      COALESCE(cm.verification_status, 'UNVERIFIED') AS citation_verification_status
+               FROM sources s LEFT JOIN source_citation_metadata cm ON cm.source_id = s.source_id
+               ORDER BY s.created_at, s.source_id"""
         ).fetchall()]
     for row in rows:
         if row["source_id"] in contexts:
@@ -880,6 +882,7 @@ def source_view(project_root: Path, source_id: str) -> dict[str, Any]:
         source["citation_metadata"] = dict(citation_row) if citation_row else {
             "source_id": source_id, "author": "", "title": source["title"], "edition": "",
             "place": "", "publisher": "", "year": "", "type_code": "",
+            "translator": "", "journal": "", "volume": "", "issue": "", "page_range": "",
             "verification_status": "UNVERIFIED",
             "verified_by": "", "verified_at": "",
         }
@@ -1365,6 +1368,11 @@ def save_source_citation_metadata(project_root: Path, source_id: str, payload: d
         "publisher": str(payload.get("publisher", "")).strip(),
         "year": year,
         "type_code": str(payload.get("type_code", "")).strip().upper(),
+        "translator": str(payload.get("translator", "")).strip(),
+        "journal": str(payload.get("journal", "")).strip(),
+        "volume": str(payload.get("volume", "")).strip(),
+        "issue": str(payload.get("issue", "")).strip(),
+        "page_range": str(payload.get("page_range", "")).strip(),
         "verification_status": "HUMAN_VERIFIED",
         "verified_by": verified_by,
         "verified_at": now,
@@ -1375,11 +1383,12 @@ def save_source_citation_metadata(project_root: Path, source_id: str, payload: d
         connection.execute(
             """INSERT OR REPLACE INTO source_citation_metadata(
                    source_id, author, title, edition, place, publisher, year, type_code,
-                   verification_status, verified_by, verified_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   verification_status, verified_by, verified_at, translator, journal, volume, issue, page_range
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             tuple(values[key] for key in (
                 "source_id", "author", "title", "edition", "place", "publisher", "year", "type_code",
-                "verification_status", "verified_by", "verified_at",
+                "verification_status", "verified_by", "verified_at", "translator", "journal", "volume",
+                "issue", "page_range",
             )),
         )
         append_audit(connection, "source_citation_metadata_verified", "source", source_id, {

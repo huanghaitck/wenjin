@@ -14,6 +14,7 @@ from research_workbench.library import (
     _pdf_bibliography,
     approve_candidates,
     link_work_to_project,
+    move_work_to_shelf,
     scan_directory,
     search_library,
     update_work,
@@ -122,6 +123,9 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(search_library(self.project, "Professor A", library_root=self.library)[0]["work_id"], work_id)
         self.assertEqual(search_library(self.project, "知识", library_root=self.library)[0]["work_id"], work_id)
         self.assertEqual(search_library(self.project, tags=["知识史"], library_root=self.library)[0]["work_id"], work_id)
+        moved = move_work_to_shelf(self.project, work_id, "monographs", self.library)
+        self.assertEqual(moved["shelf"], "monographs")
+        self.assertEqual(moved["shelf_label"], "学术专著")
         linked = link_work_to_project(self.project, work_id, self.library)
         self.assertEqual(len(linked["project_links"]), 1)
         version = linked["files"][0]["versions"][0]

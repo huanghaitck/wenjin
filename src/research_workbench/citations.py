@@ -79,9 +79,16 @@ def render_citation(data: dict[str, Any], mode: str) -> tuple[str, str]:
 def create_note(project_root: Path, manuscript_id: str, anchor_node_id: str, anchor_offset: int,
                 anchor_text: str, template_id: str, mode: str, citation_data: dict[str, Any],
                 evidence_id: str = "") -> dict[str, Any]:
-    templates = {item["template_id"] for item in ensure_journal_templates(project_root)}
+    templates = {item["template_id"]: item for item in ensure_journal_templates(project_root)}
     if template_id not in templates:
         raise KeyError(f"unknown journal template: {template_id}")
+    requirements = templates[template_id].get("requirements", {})
+    if requirements.get("citation_system") == "sequential_reference":
+        if mode != "REFORMAT_EXISTING" or citation_data.get("note_role") != "explanatory":
+            raise ValueError(
+                "this journal uses inline sequential references for source citations; "
+                "footnotes are reserved for explicitly identified explanatory text"
+            )
     rendered, verification_state = render_citation(citation_data, mode)
     source_refs: list[dict[str, Any]] = []
     with connect(project_root) as connection:
