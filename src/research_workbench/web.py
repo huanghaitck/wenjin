@@ -54,7 +54,10 @@ from .library import (
 )
 from .library_store import resolve_library_root
 from .project_library import add_library_file_to_project
-from .research import connector_capabilities, list_retrievals, retrieval_record, route_retrieval_result, search
+from .research import (
+    add_authenticated_results, connector_capabilities, create_authenticated_search_task,
+    list_retrievals, retrieval_record, route_retrieval_result, search,
+)
 from .research_design import create_design_draft, decide_design, design_state
 from .research_events import decide_event, event_anchor_text, event_state, export_event_register
 from .scholarship import (
@@ -571,6 +574,16 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/freeze/create":
                 result = create_freeze(
                     self.server.project_root, str(payload["title"]), [str(value) for value in payload["claim_ids"]],
+                )
+            elif parsed.path == "/api/research/authenticated-task":
+                result = create_authenticated_search_task(
+                    self.server.project_root, str(payload["database"]), str(payload["query"]),
+                    str(payload.get("start_url", "")),
+                )
+            elif parsed.path == "/api/research/authenticated-results":
+                result = add_authenticated_results(
+                    self.server.project_root, str(payload["record_id"]),
+                    [dict(item) for item in payload.get("items", [])],
                 )
             elif parsed.path == "/api/research/result/route":
                 result = route_retrieval_result(

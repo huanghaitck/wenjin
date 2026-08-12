@@ -27,6 +27,14 @@ RETRIEVAL_ROUTES = {
     "excluded": "排除",
 }
 
+AUTHENTICATED_DATABASES = {
+    "CNKI": "https://kns.cnki.net/kns8s/",
+    "读秀": "https://www.duxiu.com/",
+    "国家哲学社会科学文献中心": "https://www.ncpssd.cn/",
+    "学校发现系统": "",
+    "其他已登录数据库": "",
+}
+
 
 def _fetch(url: str, headers: dict[str, str]) -> dict[str, Any]:
     request = Request(url, headers={"User-Agent": "HistoricalResearchWorkbench/0.6", **headers})
@@ -118,6 +126,73 @@ def search(project_root: Path, provider: str, query: str, limit: int = 10,
                  item["container"], item["doi"], item["url"], item["open_access_url"],
                  json.dumps(item["raw"], ensure_ascii=False)),
             )
+    return retrieval_record(project_root, record_id)
+
+
+def create_authenticated_search_task(project_root: Path, database: str, query: str,
+                                     start_url: str = "") -> dict[str, Any]:
+    database, query, start_url = database.strip(), query.strip(), start_url.strip()
+    if database not in AUTHENTICATED_DATABASES:
+        raise ValueError(f"unsupported authenticated database: {database}")
+    if not query:
+        raise ValueError("research query is required")
+    start_url = start_url or AUTHENTICATED_DATABASES[database]
+    if not start_url.startswith(("https://", "http://")):
+        raise ValueError("authenticated database task requires an http(s) start URL")
+    record_id, now = f"RET_{uuid.uuid4().hex}", utc_now()
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO retrieval_records(record_id, provider, query, filters_json, status,
+               result_count, request_url, response_hash, error, created_at)
+               VALUES (?, 'authenticated_browser', ?, ?, 'awaiting_user_session', 0, ?, '', NULL, ?)""",
+            (record_id, query, json.dumps({"database": database}, ensure_ascii=False), start_url, now),
+        )
+        append_audit(connection, "authenticated_search_task_created", "retrieval_record", record_id, {
+            "database": database, "query": query, "start_url": start_url,
+        })
+    return retrieval_record(project_root, record_id)
+
+
+def add_authenticated_results(project_root: Path, record_id: str,
+                              items: list[dict[str, Any]]) -> dict[str, Any]:
+    if not items:
+        raise ValueError("at least one retrieval result is required")
+    with connect(project_root) as connection:
+        record = connection.execute(
+            "SELECT provider FROM retrieval_records WHERE record_id = ?", (record_id,)
+        ).fetchone()
+        if record is None or record["provider"] != "authenticated_browser":
+            raise ValueError("results can only be added to an authenticated browser task")
+        added = 0
+        for index, raw in enumerate(items):
+            title = str(raw.get("title", "")).strip()
+            if not title:
+                continue
+            url = str(raw.get("url", "")).strip()
+            external_id = str(raw.get("external_id", "")).strip() or hashlib.sha256(
+                f"{title}\n{url}".encode("utf-8")
+            ).hexdigest()[:24]
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO retrieval_results(
+                   result_id, record_id, external_id, title, authors, publication_year,
+                   container_title, doi, url, open_access_url, raw_json, qualification)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, 'DISCOVERED')""",
+                (f"RER_{uuid.uuid4().hex}", record_id, external_id, title,
+                 str(raw.get("authors", "")).strip(), str(raw.get("year", "")).strip(),
+                 str(raw.get("container", "")).strip(), str(raw.get("doi", "")).strip(), url,
+                 json.dumps(raw, ensure_ascii=False)),
+            )
+            added += cursor.rowcount
+        count = connection.execute(
+            "SELECT COUNT(*) FROM retrieval_results WHERE record_id = ?", (record_id,)
+        ).fetchone()[0]
+        connection.execute(
+            "UPDATE retrieval_records SET status = 'captured', result_count = ? WHERE record_id = ?",
+            (count, record_id),
+        )
+        append_audit(connection, "authenticated_results_captured", "retrieval_record", record_id, {
+            "submitted": len(items), "added": added, "result_count": count,
+        })
     return retrieval_record(project_root, record_id)
 
 

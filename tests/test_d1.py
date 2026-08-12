@@ -12,7 +12,9 @@ import pymupdf
 from research_workbench.db import connect
 from research_workbench.library import approve_candidates, scan_directory, work_detail
 from research_workbench.project_library import add_library_file_to_project
-from research_workbench.research import route_retrieval_result, search
+from research_workbench.research import (
+    add_authenticated_results, create_authenticated_search_task, route_retrieval_result, search,
+)
 from research_workbench.scholarship import (
     approve_freeze,
     create_browser_session,
@@ -89,6 +91,18 @@ class D1EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(routed["results"][0]["qualification"], "DISCOVERED")
         self.assertEqual(routed["results"][0]["route"], "fulltext_queue")
         self.assertEqual(routed["results"][0]["route_decided_by"], "Professor")
+
+    def test_authenticated_database_task_captures_discovered_results_without_credentials(self) -> None:
+        task = create_authenticated_search_task(self.project, "CNKI", "秦岭 外国人 考察")
+        self.assertEqual(task["status"], "awaiting_user_session")
+        self.assertNotIn("cookie", json.dumps(task).lower())
+        captured = add_authenticated_results(self.project, task["record_id"], [{
+            "title": "近代外国人秦岭考察研究", "authors": "研究者", "year": "2021",
+            "container": "历史地理", "url": "https://example.invalid/detail/1",
+        }])
+        self.assertEqual(captured["status"], "captured")
+        self.assertEqual(captured["result_count"], 1)
+        self.assertEqual(captured["results"][0]["qualification"], "DISCOVERED")
 
     def test_wrong_document_identity_blocks_the_whole_source(self) -> None:
         result = reject_source_identity(

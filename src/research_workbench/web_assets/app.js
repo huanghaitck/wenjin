@@ -551,6 +551,16 @@ function renderContext() {
     renderResearchEvents(container);
   } else if (state.contextMode === 'retrieval') {
     container.append(card('已登录学术数据库', '知网、读秀和学校数据库通过用户可见的浏览器会话工作：程序保存检索式、题录和下载回执；验证码、授权提示与下载确认由研究者处理。'));
+    const authForm = document.createElement('section'); authForm.className = 'context-form';
+    const database = document.createElement('select'); database.id = 'authenticatedDatabase';
+    for (const name of ['CNKI','读秀','国家哲学社会科学文献中心','学校发现系统','其他已登录数据库']) database.append(new Option(name,name));
+    const databaseLabel = document.createElement('label'); databaseLabel.textContent = '已登录数据库'; databaseLabel.append(database);
+    authForm.append(databaseLabel, formField('检索式（保存为任务包）', 'authenticatedQuery'), formField('自定义入口网址（可留空）', 'authenticatedStartUrl'));
+    authForm.append(actionButton('建立可见检索任务', async () => {
+      state.retrievalRecord = await request('/api/research/authenticated-task', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({database:database.value, query:$('authenticatedQuery').value, start_url:$('authenticatedStartUrl').value})});
+      await refreshResearch('已建立检索任务；请在可见浏览器中登录、检索，并把题录送回收件箱。');
+      state.retrievalRecord = await request(`/api/research/record?id=${encodeURIComponent(state.retrievalRecord.record_id)}`); renderContext();
+    }, true)); container.append(authForm);
     const form = document.createElement('section'); form.className = 'context-form';
     const provider = document.createElement('select'); provider.id = 'researchProvider';
     for (const item of state.capabilities?.research_connectors || []) {
@@ -586,6 +596,16 @@ function renderContext() {
       }, true));
       node.append(routing);
       container.append(node);
+    }
+    if (state.retrievalRecord?.provider === 'authenticated_browser') {
+      const capture = document.createElement('section'); capture.className = 'context-form';
+      const open = document.createElement('a'); open.href = state.retrievalRecord.request_url; open.target = '_blank'; open.textContent = '打开数据库（用户可见会话）'; capture.append(open);
+      const help = document.createElement('p'); help.textContent = '每行一条：题名｜作者｜年份｜刊名｜详情页网址。验证码、授权和下载确认请在浏览器中亲自处理。'; capture.append(help);
+      const textarea = document.createElement('textarea'); textarea.placeholder = '题名｜作者｜年份｜刊名｜https://...'; capture.append(textarea);
+      capture.append(actionButton('批量送入检索收件箱', async () => {
+        const items = textarea.value.split(/\r?\n/).filter(line => line.trim()).map(line => { const [title,authors,year,container,url] = line.split('｜'); return {title,authors,year,container,url}; });
+        state.retrievalRecord = await request('/api/research/authenticated-results', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({record_id:state.retrievalRecord.record_id, items})}); renderContext(); notice('题录已进入收件箱，资格仍为 DISCOVERED。');
+      }, true)); container.append(capture);
     }
   } else if (state.contextMode === 'evidence') {
     const translation = state.capabilities?.translation;
