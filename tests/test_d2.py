@@ -300,6 +300,18 @@ class D2AuthoringReadingTests(unittest.TestCase):
                 self.project, internal["proposal_id"], True, "Professor", reason="Checked prose",
             )
 
+    def test_defensive_cluster_warns_without_blocking_historical_qualification(self) -> None:
+        section = self.manuscript["sections"][1]
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "polish", "保留证据边界",
+            writer=lambda _prompt: "材料不能证明全程连续，也不等于当地活动从此中断。",
+        )
+        self.assertEqual(proposal["validation"]["prose_risk_warnings"], ["defensive_cluster"])
+        decision = decide_writing_proposal(
+            self.project, proposal["proposal_id"], True, "Professor", reason="Necessary qualification",
+        )
+        self.assertEqual(decision["status"], "approved")
+
     def test_section_draft_lists_shared_evidence_once(self) -> None:
         first = create_claim(self.project, "道路是移动条件。")
         first = create_evidence(

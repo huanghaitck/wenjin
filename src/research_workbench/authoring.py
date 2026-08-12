@@ -724,10 +724,14 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
         if validation["missing_markers"]:
             raise ValueError("writing proposal removed protected markers: " + ", ".join(validation["missing_markers"]))
         raise ValueError("writing proposal violates its evidence contract")
-    if approved and validation["prose_risk_warnings"]:
+    blocking_prose = [
+        warning for warning in validation["prose_risk_warnings"]
+        if warning == "internal_process"
+    ]
+    if approved and blocking_prose:
         raise ValueError(
-            "writing proposal still contains research-process or defensive prose: "
-            + ", ".join(validation["prose_risk_warnings"])
+            "writing proposal still contains research-process prose: "
+            + ", ".join(blocking_prose)
         )
     if approved and validation.get("character_budget_status") == "OUT_OF_RANGE":
         requested = validation["requested_character_budget"]
