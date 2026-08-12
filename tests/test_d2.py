@@ -111,7 +111,8 @@ class D2AuthoringReadingTests(unittest.TestCase):
         proposal = create_writing_proposal(
             self.project, abstract["section_id"], "metadata_draft", "写摘要",
             writer=lambda prompt: prompts.append(prompt) or (
-                "正式研究门禁已经满足。本文不能外推，也不等于统计抽样，待补证项另见事件清单。"
+                "正式研究门禁已经满足。本文不能外推，也不等于统计抽样，"
+                "待补证项另见事件清单；表中称为核心个案之一和时间锚。"
             ),
         )
         self.assertIn("证据门禁、冻结状态、待补证清单", prompts[0])

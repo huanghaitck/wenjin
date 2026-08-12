@@ -634,6 +634,12 @@ def preview_document_export(project_root: Path, manuscript_id: str, template_id:
         export_tree, warnings, citation_status = _prepare_sequential_references(
             project_root, export_tree, manuscript_id,
         )
+    work_language = sorted(set(re.findall(
+        r"在本文中的作用|核心个案(?:之一)?|核心窗口|时间锚|观察段|正文时段",
+        _plain_text(export_tree),
+    )))
+    if work_language:
+        warnings.append("正文仍含研究过程语言：" + "、".join(work_language))
     readiness = formal_research_readiness(project_root)
     if readiness["status"] != "READY":
         warnings.extend(f"正式研究门禁：{item}" for item in readiness["blockers"])

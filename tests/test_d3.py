@@ -19,6 +19,7 @@ from research_workbench.document_model import (
     ensure_document,
     export_document,
     import_docx,
+    preview_document_export,
     save_document,
 )
 from research_workbench.service import initialize_project, save_source_citation_metadata
@@ -237,6 +238,15 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         text = (self.project / exported["project_path"]).read_text(encoding="utf-8")
         self.assertIn("已有研究指出这一差异。[1]23", text)
         self.assertIn("[1] 李四. 秦岭考察研究[J]. 唐都学刊，2024(2)：20-30.", text)
+
+    def test_export_preview_warns_when_research_process_labels_enter_manuscript(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "内部标签稿", "# 正文\n\n| 人物 | 在本文中的作用 |\n| --- | --- |\n| 甲 | 核心个案之一 |",
+        )
+        preview = preview_document_export(
+            self.project, manuscript["manuscript_id"], "builtin-tangdu-current",
+        )
+        self.assertTrue(any("正文仍含研究过程语言" in item for item in preview["warnings"]))
 
     def test_tangdu_direct_source_citation_accepts_human_spot_checked_page(self) -> None:
         manuscript = import_manuscript(

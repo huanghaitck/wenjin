@@ -31,7 +31,8 @@ INTERNAL_PROSE_PATTERNS = {
     "internal_process": re.compile(
         r"(?:正式研究)?门禁|证据冻结|冻结(?:证据|边界|依据|文件|包)|"
         r"(?:工作台|项目)(?:内部|随研究包)|补证(?:票|任务)|待补证项|"
-        r"(?:事件|证据)(?:台账|清单)|EVID:|CITE:|Phase\s*\d|Agent",
+        r"(?:事件|证据)(?:台账|清单)|在本文中的作用|核心个案(?:之一)?|"
+        r"核心窗口|时间锚|观察段|正文时段|EVID:|CITE:|Phase\s*\d|Agent",
         re.I,
     ),
     "defensive_cluster": re.compile(
