@@ -14,9 +14,21 @@ from research_workbench.desktop_runtime import bootstrap_desktop
 from research_workbench.document_model import ensure_document, reimport_docx
 from research_workbench.model_settings import public_settings, save_role
 from research_workbench.service import initialize_project
+from research_workbench.web import build_server
 
 
 class D5DesktopPackagingTests(unittest.TestCase):
+    def test_serve_infers_desktop_roots_from_a_registered_project(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = bootstrap_desktop(Path(directory))
+            server = build_server(Path(paths["project_root"]), port=0)
+            try:
+                self.assertEqual(server.workspace_root, Path(paths["workspace_root"]).resolve())
+                self.assertEqual(server.library_root, Path(paths["library_root"]).resolve())
+                self.assertEqual(server.config_root, Path(paths["config_root"]).resolve())
+            finally:
+                server.server_close()
+
     def test_first_run_creates_stable_local_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             first = bootstrap_desktop(Path(directory))

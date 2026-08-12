@@ -772,6 +772,15 @@ def build_server(
     project_root = project_root.resolve()
     if not (project_root / "project.sqlite3").is_file():
         raise FileNotFoundError(f"project database does not exist: {project_root}")
+    desktop_data_root = None
+    if project_root.parent.name == "projects" and project_root.parent.parent.name == "workspace":
+        candidate = project_root.parent.parent.parent
+        if (candidate / "config").is_dir() and (candidate / "library").is_dir():
+            desktop_data_root = candidate
+    if desktop_data_root is not None:
+        workspace_root = workspace_root or (desktop_data_root / "workspace")
+        library_root = library_root or (desktop_data_root / "library")
+        config_root = config_root or (desktop_data_root / "config")
     server = WorkbenchServer((host, port), WorkbenchHandler)
     server.library_root = resolve_library_root(project_root, library_root)
     server.workspace_root = (workspace_root or (project_root.parent / "historical-workbench-workspace")).resolve()
