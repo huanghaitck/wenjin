@@ -878,6 +878,7 @@ function renderAuthoring() {
   $('sectionHeading').textContent = section?.heading || '选择一个章节';
   $('sectionHeading').contentEditable=section?'true':'false';
   $('sectionHeading').title=section?'可直接修改标题；保存新修订后生效。':'';
+  $('sectionHeading').onfocus = selectEditableHeading;
   $('sectionVersion').textContent = state.document ? `${state.document.current_revision_id} · 结构化稿件修订` : (section ? `${section.current_version_id} · ${section.operation}` : '人工保存后才产生新修订');
   $('sectionBase').value = section?.content || '';
   $('manuscriptTitleEdit').value=state.document?.document?.title||manuscript?.title||'';
@@ -1233,6 +1234,16 @@ async function loadSource(sourceId, keepPage = false) {
     clearReviewReason();
   }
   render();
+}
+
+function selectEditableHeading() {
+  const heading = $('sectionHeading');
+  if (!heading?.isContentEditable) return;
+  const range = document.createRange();
+  range.selectNodeContents(heading);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
 }
 
 function currentPage() { return state.view?.pages[state.pageIndex]; }
