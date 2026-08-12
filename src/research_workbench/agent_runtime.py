@@ -101,6 +101,9 @@ For source.list, use_state describes page-processing usability, not whether a wo
 missing, or a prerequisite. When research_context is present, use its source_type, carrier,
 witness_relation, reading_status and notes to distinguish an original witness, derivative locator,
 version-chain item and background study. Do not infer a research priority from blocked/partial alone.
+Never translate a blocked, pending, partial or zero-page processing state into a claim that the
+historical work itself is illegible, unavailable, absent or unusable. Say only that its local
+page processing is unfinished unless source inspection independently establishes a material defect.
 When locating a translation or other derivative against an original source, prioritize dates,
 chronological sequence and neighboring pages; repeated lexical hits are only leads. A translation
 of the same witness is a locator aid, not independent corroboration. If a relevant sentence is

@@ -522,7 +522,7 @@ function renderContext() {
       } else if (source.page_count > 0) {
         node.append(actionButton(source.use_state === 'locator_only' ? '查看定位文本' : '查看原页与文本', async () => { await loadSource(source.source_id); setMode('source'); }));
       } else {
-        const unavailable = actionButton('文件不可用', () => {}); unavailable.disabled = true; node.append(unavailable);
+        const unavailable = actionButton('清洗未完成，暂无页面', () => {}); unavailable.disabled = true; node.append(unavailable);
       }
       container.append(node);
     }

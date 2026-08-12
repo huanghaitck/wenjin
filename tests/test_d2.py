@@ -101,6 +101,25 @@ class D2AuthoringReadingTests(unittest.TestCase):
         self.assertIn("1872年，旅行者沿秦岭道路行进", prompts[0])
         self.assertNotIn("[EVID:", proposal["proposed_content"])
 
+    def test_drafting_flags_internal_process_and_defensive_clusters_as_style_risks(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "秦岭活跃期", "# 摘要与关键词\n\n（待写）\n\n# 正文\n\n" +
+            "1871年至1879年，外国旅行者连续进入秦岭。" * 30,
+        )
+        abstract = manuscript["sections"][0]
+        prompts: list[str] = []
+        proposal = create_writing_proposal(
+            self.project, abstract["section_id"], "metadata_draft", "写摘要",
+            writer=lambda prompt: prompts.append(prompt) or (
+                "正式研究门禁已经满足。本文不能外推，也不等于统计抽样，待补证项另见事件清单。"
+            ),
+        )
+        self.assertIn("证据门禁、冻结状态、待补证清单", prompts[0])
+        self.assertEqual(
+            set(proposal["validation"]["prose_risk_warnings"]),
+            {"internal_process", "defensive_cluster"},
+        )
+
     def test_approved_section_with_markdown_table_syncs_to_document(self) -> None:
         section = self.manuscript["sections"][1]
         proposal = create_writing_proposal(

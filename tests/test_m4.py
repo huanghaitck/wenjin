@@ -821,6 +821,10 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         action = _parse_action("候选页已定位；请人工核对原页。")
         self.assertEqual(action, {"type": "final", "content": "候选页已定位；请人工核对原页。"})
 
+    def test_system_prompt_separates_processing_state_from_material_quality(self) -> None:
+        self.assertIn("Never translate a blocked, pending, partial or zero-page processing state", SYSTEM_PROMPT)
+        self.assertIn("page processing is unfinished", SYSTEM_PROMPT)
+
     def test_parser_accepts_observed_deepseek_tool_wrappers_only_when_they_wrap_the_whole_action(self) -> None:
         action = _parse_action(
             '<json_logic><tool_call>{"type":"tool_call","tool":"source.page",'

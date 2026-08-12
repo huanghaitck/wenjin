@@ -27,6 +27,18 @@ HISTORICAL_QUALIFIERS = (
     "可能", "尚不足以", "不能据此", "只能说明", "未见", "尚无", "仅限于",
     "最有把握", "再进一步", "有些", "在此个案中",
 )
+INTERNAL_PROSE_PATTERNS = {
+    "internal_process": re.compile(
+        r"(?:正式研究)?门禁|证据冻结|冻结(?:证据|边界|依据|文件|包)|"
+        r"(?:工作台|项目)(?:内部|随研究包)|补证(?:票|任务)|待补证项|"
+        r"(?:事件|证据)(?:台账|清单)|EVID:|CITE:|Phase\s*\d|Agent",
+        re.I,
+    ),
+    "defensive_cluster": re.compile(
+        r"(?:不能|不得|不等于|并非|不再|不作|不以|只限于|仅限于).{0,90}"
+        r"(?:不能|不得|不等于|并非|不再|不作|不以|只限于|仅限于)"
+    ),
+}
 REVIEW_ROLES = {
     "argument_reviewer": "检查问题意识、比较结构、章节任务、因果强度和竞争解释；不要替作者重写正文。",
     "source_critic": "检查每项事实是否由已登记证据支持、是否把同一见证的译本当作独立证据，并标出过度解释。",
@@ -373,6 +385,11 @@ def _validate_markers(content: str, markers: list[str], evidence_contract: dict[
     return result
 
 
+def _prose_risk_warnings(content: str) -> list[str]:
+    """Flag research-process prose without treating a style warning as evidence failure."""
+    return [name for name, pattern in INTERNAL_PROSE_PATTERNS.items() if pattern.search(content)]
+
+
 def _model_capability() -> dict[str, Any]:
     provider = os.getenv("HRW_AGENT_PROVIDER", "").strip().lower()
     model = os.getenv("HRW_AGENT_MODEL", "").strip()
@@ -556,6 +573,9 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             "3. 直接引文必须逐字复制下列原文并紧跟 [EVID:证据编号]，不得翻译、改写或拼接原文；若不直接引用则用审慎转述。\n"
             "4. counterevidence 与限制条件必须保留；证据不足处写成问题、假设或明确的待补证项。\n"
             "5. 只返回章节正文，不写工作说明，不补造学术史。\n"
+            "6. 后台的冻结、核验、门禁、事件表和补证状态只约束取材，不得写进论文。谨慎通过来源归属、"
+            "时间范围和限定词自然体现；避免连续使用‘不能、不得、不等于、并非’作预防性辩护。"
+            "先写人物在具体时间地点的行动及材料差异，再形成有限判断。\n"
             f"冻结边界：{boundary}\n人工批准依据：{approval_reason}\n具体要求：{instruction}\n\n"
             f"人工批准的解释性主张（不能替代原文证据）：\n{claim_text}\n\n"
             f"冻结证据（同一证据只列一次）：\n{evidence_text}"
@@ -591,6 +611,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             f"只依据下列已批准论文正文，为《{manuscript['title']}》生成“{row['heading']}”。\n"
             "硬约束：不得引入正文没有的人物、年代、地点、材料或结论；不得输出证据编号、参考文献、"
             "脚注或工作说明；不得把方法上的限定改成强结论。只返回可直接放入稿件的内容。\n"
+            "摘要只概括历史问题、时段、主要材料、历史过程和结论；不要报告事件条数、证据门禁、冻结状态、"
+            "待补证清单或审计结果，也不要用连续否定句预先回应内部研究风险。\n"
             f"具体要求：{instruction}\n\n已批准正文：\n{body}"
         )
         fallback = base_content
@@ -622,6 +644,7 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         fallback = re.sub(r"[ \t]+", " ", base_content).replace(" ,", "，").replace(" .", "。")
     proposed = (writer(prompt) if writer else (_model_write(prompt) if _model_capability()["available"] else fallback)).strip()
     validation = _validate_markers(proposed, markers, evidence_contract)
+    validation["prose_risk_warnings"] = _prose_risk_warnings(proposed)
     if operation == "historical_humanize":
         before = [value.strip() for value in re.split(r"\n\s*\n", base_content) if value.strip()]
         after = [value.strip() for value in re.split(r"\n\s*\n", proposed) if value.strip()]
