@@ -836,7 +836,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("page processing is unfinished", SYSTEM_PROMPT)
 
     def test_planning_context_explains_source_state_semantics(self) -> None:
-        context = _planning_context(self.project_root)
+        context = _planning_context(self.project)
         semantics = context["source_state_semantics"]
         self.assertIn("not the historical value", semantics["processing_state"])
         self.assertIn("not evidence", semantics["zero_pages"])
