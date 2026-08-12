@@ -12,7 +12,9 @@ from typing import Any
 from docx import Document
 from docx.document import Document as DocxDocument
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 from docx.shared import Cm, Pt
 from docx.shared import RGBColor
 from docx.table import Table
@@ -56,6 +58,11 @@ def _nodes_from_text(text: str) -> list[dict[str, Any]]:
     index = 0
     while index < len(lines):
         line = lines[index]
+        if line.startswith("### "):
+            flush_paragraph()
+            nodes.append({"type": "subheading", "node_id": _id("NOD"), "text": line[4:].strip()})
+            index += 1
+            continue
         if "|" in line and index + 1 < len(lines) and _is_table_divider(lines[index + 1]):
             flush_paragraph()
             rows = [_table_cells(line)]
@@ -134,7 +141,7 @@ def _validate_tree(tree: dict[str, Any]) -> None:
             if not node_id or node_id in seen:
                 raise ValueError("document node IDs must be present and unique")
             seen.add(node_id)
-        if any(node.get("type") not in {"paragraph", "quote", "list_item", "table"} for node in section["children"]):
+        if any(node.get("type") not in {"paragraph", "quote", "list_item", "subheading", "table"} for node in section["children"]):
             raise ValueError("unsupported document node type")
         for node in section["children"]:
             if node.get("type") != "table":
@@ -253,6 +260,10 @@ def save_document(project_root: Path, manuscript_id: str, tree: dict[str, Any],
             content = "\n\n".join(_node_text(node).strip() for node in section["children"]).strip()
             prior = existing.get(section_id, {})
             base = prior.get("current_version_id")
+            if not content and str(prior.get("current_content") or "").strip():
+                raise ValueError(
+                    "a non-empty manuscript section cannot be saved as blank; reload and retry"
+                )
             version_id = base
             if not prior or content != str(prior.get("current_content") or ""):
                 version_id = _id("SEV")
@@ -292,7 +303,7 @@ def sync_approved_section(project_root: Path, manuscript_id: str, section_id: st
     for index, node in enumerate(new_children):
         if index < len(old_children):
             node["node_id"] = old_children[index]["node_id"]
-    if [node.get("text", "") for node in old_children] == [node["text"] for node in new_children]:
+    if [_node_text(node) for node in old_children] == [_node_text(node) for node in new_children]:
         return current
     section["children"] = new_children
     revision_id, now = _id("DREV"), utc_now()
@@ -353,7 +364,7 @@ def markdown_from_tree(tree: dict[str, Any], notes: list[dict[str, Any]] | None 
             if node.get("type") == "table":
                 lines.extend([_table_markdown(node.get("rows", [])), ""])
                 continue
-            prefix = "> " if node.get("type") == "quote" else ""
+            prefix = "### " if node.get("type") == "subheading" else ("> " if node.get("type") == "quote" else "")
             text = _markdown_text(str(node.get("text", "")), by_node.get(str(node.get("node_id")), []))
             lines.extend([prefix + text, ""])
     if ordered:
@@ -530,6 +541,16 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any],
             warnings.append(f"来源 {source_id} 缺少引文元数据：{','.join(missing)}")
         references.append(_reference_entry(number, item))
     if source_numbers:
+        prepared["children"] = [
+            section for section in prepared["children"]
+            if not (
+                str(section.get("heading", "")).strip() == "参考文献"
+                and all(
+                    not re.match(r"^\s*\[\d+\]", _node_text(node))
+                    for node in section.get("children", [])
+                )
+            )
+        ]
         reference_section = {
             "type": "section", "node_id": _id("NOD"), "section_id": "",
             "heading": "参考文献", "children": [
@@ -756,7 +777,7 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         normal.font.name = "SimSun"
         normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         normal.font.size = Pt(float(requirements.get("body_size_pt", 12)))
-        for style_name, size in (("Heading 1", 14),):
+        for style_name, size in (("Heading 1", 14), ("Heading 2", 12)):
             style = document.styles[style_name]
             style.font.name = "SimSun"
             style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
@@ -777,12 +798,25 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
                     if rows:
                         table = document.add_table(rows=len(rows), cols=len(rows[0]))
                         table.style = "Table Grid"
+                        table.autofit = False
+                        total_width = 15.2
+                        weights = [0.16, 0.18, 0.24, 0.21, 0.21] if len(rows[0]) == 5 else [1 / len(rows[0])] * len(rows[0])
                         for row_index, row in enumerate(rows):
+                            properties = table.rows[row_index]._tr.get_or_add_trPr()
+                            properties.append(OxmlElement("w:cantSplit"))
+                            if row_index == 0:
+                                properties.append(OxmlElement("w:tblHeader"))
                             for column_index, value in enumerate(row):
-                                table.cell(row_index, column_index).text = str(value)
+                                cell = table.cell(row_index, column_index)
+                                cell.width = Cm(total_width * weights[column_index])
+                                cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+                                cell.text = str(value)
                                 if row_index == 0:
-                                    for run in table.cell(row_index, column_index).paragraphs[0].runs:
+                                    for run in cell.paragraphs[0].runs:
                                         run.bold = True
+                    continue
+                if node.get("type") == "subheading":
+                    paragraph = document.add_heading(str(node.get("text", "")), level=2)
                     continue
                 style = "Quote" if node.get("type") == "quote" else None
                 paragraph = document.add_paragraph(style=style)

@@ -104,6 +104,22 @@ class D4PracticalAuthoringTests(unittest.TestCase):
             self.assertIn("footnoteReference", package.read("word/document.xml").decode("utf-8"))
             self.assertIn("eachPage", package.read("word/document.xml").decode("utf-8"))
 
+    def test_markdown_subheading_becomes_a_real_word_heading(self) -> None:
+        manuscript = import_manuscript(self.project, "小标题测试", "# 正文\n\n开头。")
+        ensure_document(self.project, manuscript["manuscript_id"])
+        section = manuscript["sections"][0]
+        from research_workbench.document_model import sync_approved_section
+        sync_approved_section(
+            self.project, manuscript["manuscript_id"], section["section_id"],
+            "开头。\n\n### 材料与方法\n\n后文。", section["current_version_id"],
+        )
+        word = export_document(self.project, manuscript["manuscript_id"], "docx")
+        with zipfile.ZipFile(self.project / word["project_path"]) as package:
+            xml = package.read("word/document.xml").decode("utf-8")
+        self.assertIn("Heading2", xml)
+        self.assertIn("材料与方法", xml)
+        self.assertNotIn("### 材料与方法", xml)
+
     def test_article_ui_exposes_note_and_template_controls(self) -> None:
         root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
         html = (root / "index.html").read_text(encoding="utf-8")
@@ -114,6 +130,16 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         self.assertIn("humanStates.has(item.block.verification_state)", script)
         self.assertIn("const shownEvidence=new Set()", script)
         self.assertIn("proposal.proposed_content.length", script)
+        self.assertIn("child.nodeType !== Node.TEXT_NODE", script)
+        self.assertIn("replaceChild(paragraph,child)", script)
+
+    def test_nonempty_section_cannot_be_erased_by_a_blank_structured_save(self) -> None:
+        tree = self.document["document"]
+        tree["children"][0]["children"] = [{
+            "type": "paragraph", "node_id": self.node["node_id"], "text": "",
+        }]
+        with self.assertRaisesRegex(ValueError, "cannot be saved as blank"):
+            save_document(self.project, self.manuscript["manuscript_id"], tree)
 
 
 if __name__ == "__main__":

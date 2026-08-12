@@ -13,6 +13,7 @@ from research_workbench.research_events import (
     event_anchor_text,
     event_coverage,
     event_state,
+    export_event_register,
 )
 from research_workbench.scholarship import (
     approve_freeze,
@@ -278,6 +279,35 @@ class ResearchEventTests(unittest.TestCase):
         self.assertNotIn("original_text", state["events"][0])
         self.assertNotIn("translation", state["events"][0])
         self.assertNotIn("model_snapshot", state["events"][0])
+
+    def test_approved_event_register_exports_source_linkage_and_utf8_csv(self) -> None:
+        selected = self._create()
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        decide_event(
+            self.project, str(selected["event_id"]), True,
+            "Professor", "Approved for the event register",
+        )
+        create_event_candidates(
+            self.project,
+            [{
+                "case_id": "draft-case",
+                "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {"original_text": [self.block_id]},
+            }],
+            "test-model",
+        )
+
+        result = export_event_register(self.project)
+        target = self.project / result["project_path"]
+        exported = target.read_text(encoding="utf-8-sig")
+
+        self.assertEqual(result["row_count"], 1)
+        self.assertTrue(target.read_bytes().startswith(b"\xef\xbb\xbf"))
+        self.assertIn("source_title", exported)
+        self.assertIn("Test source", exported)
+        self.assertIn(str(selected["event_id"]), exported)
+        self.assertNotIn("draft-case", exported)
 
     def test_every_source_derived_field_requires_its_own_anchors(self) -> None:
         with self.assertRaisesRegex(ValueError, "event_date requires explicit block anchors"):

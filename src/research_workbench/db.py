@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 DATABASE_NAME = "project.sqlite3"
 
 
@@ -1021,6 +1021,19 @@ def _migrate(connection: sqlite3.Connection) -> None:
         connection.execute(
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (17, utc_now()),
+        )
+        version = 17
+    if version < 18:
+        # Before schema 18, creating a reading job immediately marked it completed
+        # after copying a fixed block prefix. Preserve those notes as locators but
+        # require the new page-batched reader to prove completion.
+        connection.execute(
+            """UPDATE reading_jobs SET status = 'running', completed_at = NULL
+               WHERE status = 'completed'"""
+        )
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (18, utc_now()),
         )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.

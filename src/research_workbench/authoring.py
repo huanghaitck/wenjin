@@ -22,7 +22,7 @@ from .skill_registry import get_skill
 
 
 Writer = Callable[[str], str]
-OPERATIONS = {"polish", "historical_humanize", "section_draft"}
+OPERATIONS = {"polish", "historical_humanize", "section_draft", "metadata_draft"}
 HISTORICAL_QUALIFIERS = (
     "可能", "尚不足以", "不能据此", "只能说明", "未见", "尚无", "仅限于",
     "最有把握", "再进一步", "有些", "在此个案中",
@@ -346,7 +346,9 @@ def _validate_markers(content: str, markers: list[str], evidence_contract: dict[
     result: dict[str, Any] = {"valid": not missing, "missing_markers": missing}
     if evidence_contract:
         allowed_ids = set(evidence_contract["evidence_ids"])
-        cited_ids = re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", content)
+        marker_tokens = re.findall(r"\[EVID:([^\]\r\n]*)\]", content)
+        malformed_markers = [token for token in marker_tokens if not re.fullmatch(r"[A-Za-z0-9_]+", token)]
+        cited_ids = [token for token in marker_tokens if re.fullmatch(r"[A-Za-z0-9_]+", token)]
         invalid_ids = [evidence_id for evidence_id in cited_ids if evidence_id not in allowed_ids]
         def normalize_quote(value: str) -> str:
             return re.sub(r"\s+", " ", re.sub("\u00ad\\s*", "\u00ad", value)).strip()
@@ -362,9 +364,12 @@ def _validate_markers(content: str, markers: list[str], evidence_contract: dict[
             "evidence_linked": bool(cited_ids),
             "cited_evidence_ids": list(dict.fromkeys(cited_ids)),
             "invalid_evidence_ids": list(dict.fromkeys(invalid_ids)),
+            "malformed_evidence_markers": list(dict.fromkeys(malformed_markers)),
             "altered_quotes": list(dict.fromkeys(altered_quotes)),
         })
-        result["valid"] = bool(result["valid"] and cited_ids and not invalid_ids and not altered_quotes)
+        result["valid"] = bool(
+            result["valid"] and cited_ids and not invalid_ids and not malformed_markers and not altered_quotes
+        )
     return result
 
 
@@ -386,17 +391,33 @@ def _model_write(prompt: str) -> str:
     base = os.environ["HRW_AGENT_BASE_URL"].rstrip("/")
     if provider == "ollama":
         url = base if base.endswith("/api/chat") else base + "/api/chat"
-        payload = {"model": model, "stream": False, "messages": [{"role": "user", "content": prompt}]}
+        payload = {
+            "model": model,
+            "stream": False,
+            "options": {"num_predict": int(os.getenv("HRW_AGENT_WRITE_MAX_TOKENS", "8192"))},
+            "messages": [{"role": "user", "content": prompt}],
+        }
         headers = {"Content-Type": "application/json"}
     else:
         url = base if base.endswith("/chat/completions") else base + "/chat/completions"
-        payload = {"model": model, "temperature": 0, "messages": [{"role": "user", "content": prompt}]}
+        payload = {
+            "model": model,
+            "temperature": 0,
+            "max_tokens": int(os.getenv("HRW_AGENT_WRITE_MAX_TOKENS", "8192")),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if "api.deepseek.com" in base or model.startswith("deepseek-"):
+            payload["thinking"] = {"type": "disabled"}
         headers = {"Content-Type": "application/json", "Authorization": f"Bearer {os.environ['HRW_AGENT_API_KEY']}"}
     request = Request(url, data=json.dumps(payload, ensure_ascii=False).encode(), headers=headers, method="POST")
-    with urlopen(request, timeout=120, context=ssl.create_default_context(cafile=certifi.where())) as response:
+    timeout = int(os.getenv("HRW_AGENT_TIMEOUT_SECONDS", "120"))
+    with urlopen(request, timeout=timeout, context=ssl.create_default_context(cafile=certifi.where())) as response:
         raw = json.loads(response.read().decode())
-    return (raw.get("message", {}).get("content", "") if provider == "ollama"
-            else raw["choices"][0]["message"]["content"])
+    content = (raw.get("message", {}).get("content", "") if provider == "ollama"
+               else raw["choices"][0]["message"].get("content", ""))
+    if not content.strip():
+        raise ValueError("writing model returned an empty response")
+    return content
 
 
 def _secondary_review_capability() -> dict[str, Any]:
@@ -473,6 +494,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     if row is None:
         raise KeyError(f"unknown manuscript section: {section_id}")
     base_content, evidence_refs = row["content"], []
+    if operation == "polish" and base_content.strip() in {"", "待写", "（待写）", "(待写)"}:
+        raise ValueError("placeholder sections require metadata_draft instead of polish")
     markers = (_historical_markers(base_content) if operation == "historical_humanize"
                else (_markers(base_content) if operation == "polish" else []))
     if operation == "section_draft":
@@ -498,21 +521,30 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             scoped_evidence = [evidence for evidence in claim["evidence"] if evidence["evidence_id"] in selected]
             if scoped_evidence:
                 scoped_claims.append({**claim, "evidence": scoped_evidence})
+        evidence_by_id: dict[str, dict[str, Any]] = {}
+        claim_ids_by_evidence: dict[str, list[str]] = {}
+        for claim in scoped_claims:
+            for evidence in claim["evidence"]:
+                evidence_by_id.setdefault(evidence["evidence_id"], evidence)
+                claim_ids_by_evidence.setdefault(evidence["evidence_id"], []).append(claim["claim_id"])
         evidence_refs = [
-            {"claim_id": claim["claim_id"], "evidence_id": evidence["evidence_id"],
+            {"claim_ids": claim_ids_by_evidence[evidence_id], "evidence_id": evidence_id,
              "page_id": evidence["page_id"], "source_version_id": evidence["source_version_id"]}
-            for claim in scoped_claims for evidence in claim["evidence"]
+            for evidence_id, evidence in evidence_by_id.items()
         ]
         evidence_contract = {
-            "evidence_ids": [evidence["evidence_id"] for claim in scoped_claims for evidence in claim["evidence"]],
-            "quotes": [evidence["quote"] for claim in scoped_claims for evidence in claim["evidence"]],
+            "evidence_ids": list(evidence_by_id),
+            "quotes": [evidence["quote"] for evidence in evidence_by_id.values()],
         }
+        claim_text = "\n".join(
+            f"- {claim['claim_id']}：{claim['text']}" for claim in scoped_claims
+        )
         evidence_text = "\n".join(
-            f"人工批准的解释性主张（不能替代原文证据）：{claim['text']}\n" + "\n".join(
-                f"- [EVID:{e['evidence_id']}]｜关系 {e['relation']}｜物理页 "
-                f"{'–'.join(str(page) for page in e.get('physical_pages', [e['physical_page']]))}｜原文：{e['quote']}"
-                for e in claim["evidence"]
-            ) for claim in scoped_claims
+            f"- [EVID:{evidence_id}]｜支持主张 {','.join(claim_ids_by_evidence[evidence_id])}"
+            f"｜关系 {evidence['relation']}｜物理页 "
+            f"{'–'.join(str(page) for page in evidence.get('physical_pages', [evidence['physical_page']]))}"
+            f"｜原文：{evidence['quote']}"
+            for evidence_id, evidence in evidence_by_id.items()
         )
         boundary = freeze["payload"].get("boundary", "")
         approval_reason = freeze["payload"].get("approval", {}).get("reason", "")
@@ -524,7 +556,9 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             "3. 直接引文必须逐字复制下列原文并紧跟 [EVID:证据编号]，不得翻译、改写或拼接原文；若不直接引用则用审慎转述。\n"
             "4. counterevidence 与限制条件必须保留；证据不足处写成问题、假设或明确的待补证项。\n"
             "5. 只返回章节正文，不写工作说明，不补造学术史。\n"
-            f"冻结边界：{boundary}\n人工批准依据：{approval_reason}\n具体要求：{instruction}\n\n{evidence_text}"
+            f"冻结边界：{boundary}\n人工批准依据：{approval_reason}\n具体要求：{instruction}\n\n"
+            f"人工批准的解释性主张（不能替代原文证据）：\n{claim_text}\n\n"
+            f"冻结证据（同一证据只列一次）：\n{evidence_text}"
         )
         fallback = "\n\n".join(
             f"{claim['text']}\n\n" + "".join(
@@ -532,6 +566,34 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                 for e in claim["evidence"]
             ) for claim in scoped_claims
         )
+    elif operation == "metadata_draft":
+        evidence_contract = None
+        with connect(project_root) as connection:
+            manuscript = connection.execute(
+                "SELECT title FROM manuscripts WHERE manuscript_id = ?", (row["manuscript_id"],)
+            ).fetchone()
+            approved_sections = connection.execute(
+                """SELECT s.heading, v.content FROM manuscript_sections s
+                   JOIN section_versions v ON v.version_id = s.current_version_id
+                   WHERE s.manuscript_id = ? AND s.section_id != ?
+                   ORDER BY s.section_order""",
+                (row["manuscript_id"], section_id),
+            ).fetchall()
+        excluded = ("摘要", "关键词", "英文", "作者", "投稿", "参考文献")
+        body = "\n\n".join(
+            f"## {item['heading']}\n{item['content']}" for item in approved_sections
+            if not any(label in item["heading"] for label in excluded)
+            and item["content"].strip() not in {"", "待写", "（待写）", "(待写)"}
+        )
+        if len(body) < 500:
+            raise ValueError("metadata drafting requires an approved manuscript body")
+        prompt = (
+            f"只依据下列已批准论文正文，为《{manuscript['title']}》生成“{row['heading']}”。\n"
+            "硬约束：不得引入正文没有的人物、年代、地点、材料或结论；不得输出证据编号、参考文献、"
+            "脚注或工作说明；不得把方法上的限定改成强结论。只返回可直接放入稿件的内容。\n"
+            f"具体要求：{instruction}\n\n已批准正文：\n{body}"
+        )
+        fallback = base_content
     elif operation == "historical_humanize":
         evidence_contract = None
         selected_skill = get_skill(skill_name or "historical-humanizer-zh")
@@ -721,37 +783,137 @@ def create_reading_job(project_root: Path, title: str, question: str, mode: str,
     if not title.strip() or not question.strip() or not source_ids or not stop_condition.strip():
         raise ValueError("reading job requires title, question, sources and stop condition")
     job_id, now = _id("RDJ"), utc_now()
-    notes = []
     with connect(project_root) as connection:
         connection.execute(
             "INSERT INTO reading_jobs(job_id, title, question, mode, source_ids_json, stop_condition, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)",
             (job_id, title.strip(), question.strip(), mode, _json(source_ids), stop_condition.strip(), now),
         )
-        block_limit = 5 if mode == "metadata" else (30 if mode == "targeted" else 120)
-        for source_id in source_ids:
-            rows = connection.execute(
-                """SELECT p.page_id, p.physical_page, b.block_id,
-                          COALESCE(b.human_text, b.machine_text) AS text
-                   FROM blocks b JOIN pages p ON p.page_id = b.page_id
-                   WHERE p.source_id = ? AND p.use_state = 'research_usable'
-                     AND b.use_state = 'research_usable'
-                   ORDER BY p.physical_page, b.block_order LIMIT ?""", (source_id, block_limit),
-            ).fetchall()
-            if not rows:
-                continue
-            refs = [{"page_id": row["page_id"], "physical_page": row["physical_page"],
-                     "block_id": row["block_id"]} for row in rows]
-            content = "\n\n".join(f"[物理页 {row['physical_page']}] {row['text']}" for row in rows)
-            note_id = _id("RDN")
-            connection.execute(
-                "INSERT INTO reading_notes(note_id, job_id, source_id, page_refs_json, content, qualification, created_at) VALUES (?, ?, ?, ?, ?, 'READING_NOTE_NOT_EVIDENCE', ?)",
-                (note_id, job_id, source_id, _json(refs), content, utc_now()),
-            )
-            notes.append({"note_id": note_id, "source_id": source_id, "page_refs": refs,
-                          "content": content, "qualification": "READING_NOTE_NOT_EVIDENCE"})
-        connection.execute("UPDATE reading_jobs SET status = 'completed', completed_at = ? WHERE job_id = ?", (utc_now(), job_id))
     return {"job_id": job_id, "title": title, "question": question, "mode": mode,
-            "stop_condition": stop_condition, "status": "completed", "notes": notes}
+            "stop_condition": stop_condition, "status": "running", "notes": []}
+
+
+def reading_job_batch(project_root: Path, job_id: str, source_id: str,
+                      after_physical_page: int = 0, page_limit: int = 5) -> dict[str, Any]:
+    if not 1 <= page_limit <= 10:
+        raise ValueError("reading page_limit must be between 1 and 10")
+    with connect(project_root) as connection:
+        job = connection.execute("SELECT * FROM reading_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise KeyError(f"unknown reading job: {job_id}")
+        if source_id not in json.loads(job["source_ids_json"]):
+            raise ValueError("source is not assigned to this reading job")
+        selected_pages = connection.execute(
+            """SELECT page_id, physical_page, printed_page, verification_state, use_state
+               FROM pages WHERE source_id = ? AND physical_page > ?
+                 AND use_state = 'research_usable'
+               ORDER BY physical_page LIMIT ?""",
+            (source_id, after_physical_page, page_limit),
+        ).fetchall()
+        pages = []
+        for page in selected_pages:
+            blocks = connection.execute(
+                """SELECT block_id, block_order, block_type,
+                          COALESCE(human_text, machine_text) AS text,
+                          verification_state, use_state
+                   FROM blocks WHERE page_id = ? AND use_state = 'research_usable'
+                   ORDER BY block_order""",
+                (page["page_id"],),
+            ).fetchall()
+            pages.append({**dict(page), "blocks": [dict(block) for block in blocks]})
+        total_pages = connection.execute(
+            "SELECT COUNT(*) FROM pages WHERE source_id = ?", (source_id,)
+        ).fetchone()[0]
+        usable_pages = connection.execute(
+            "SELECT COUNT(*) FROM pages WHERE source_id = ? AND use_state = 'research_usable'", (source_id,)
+        ).fetchone()[0]
+        last_page = pages[-1]["physical_page"] if pages else after_physical_page
+        has_more = connection.execute(
+            """SELECT 1 FROM pages WHERE source_id = ? AND physical_page > ?
+               AND use_state = 'research_usable' LIMIT 1""", (source_id, last_page),
+        ).fetchone() is not None
+    return {
+        "job_id": job_id, "source_id": source_id, "mode": job["mode"],
+        "question": job["question"], "stop_condition": job["stop_condition"],
+        "pages": pages, "next_after_physical_page": last_page, "has_more": has_more,
+        "total_pages": total_pages, "usable_pages": usable_pages,
+        "blocked_or_unusable_pages": total_pages - usable_pages,
+    }
+
+
+def save_reading_note(project_root: Path, job_id: str, source_id: str,
+                      physical_pages: list[int], content: str,
+                      complete: bool = False) -> dict[str, Any]:
+    pages = sorted({int(value) for value in physical_pages})
+    if not pages or not content.strip():
+        raise ValueError("reading note requires physical pages and content")
+    with connect(project_root) as connection:
+        job = connection.execute("SELECT * FROM reading_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        if job is None:
+            raise KeyError(f"unknown reading job: {job_id}")
+        source_ids = json.loads(job["source_ids_json"])
+        if source_id not in source_ids:
+            raise ValueError("source is not assigned to this reading job")
+        placeholders = ",".join("?" for _ in pages)
+        page_rows = connection.execute(
+            f"""SELECT page_id, physical_page FROM pages
+                WHERE source_id = ? AND physical_page IN ({placeholders})
+                  AND use_state = 'research_usable' ORDER BY physical_page""",
+            (source_id, *pages),
+        ).fetchall()
+        if [row["physical_page"] for row in page_rows] != pages:
+            raise ValueError("reading note pages must all be research usable")
+        refs = []
+        for page in page_rows:
+            blocks = connection.execute(
+                """SELECT block_id FROM blocks WHERE page_id = ? AND use_state = 'research_usable'
+                   ORDER BY block_order""", (page["page_id"],),
+            ).fetchall()
+            refs.extend({"page_id": page["page_id"], "physical_page": page["physical_page"],
+                         "block_id": block["block_id"]} for block in blocks)
+        note_id, now = _id("RDN"), utc_now()
+        connection.execute(
+            """INSERT INTO reading_notes(note_id, job_id, source_id, page_refs_json, content,
+               qualification, created_at) VALUES (?, ?, ?, ?, ?, 'READING_NOTE_NOT_EVIDENCE', ?)""",
+            (note_id, job_id, source_id, _json(refs), content.strip(), now),
+        )
+        status = str(job["status"])
+        if complete:
+            if job["mode"] == "full":
+                incomplete = False
+                needs_repair = False
+                for assigned_source_id in source_ids:
+                    covered = {
+                        int(ref["physical_page"])
+                        for row in connection.execute(
+                            "SELECT page_refs_json FROM reading_notes WHERE job_id = ? AND source_id = ?",
+                            (job_id, assigned_source_id),
+                        )
+                        for ref in json.loads(row["page_refs_json"])
+                    }
+                    usable = connection.execute(
+                        "SELECT COUNT(*) FROM pages WHERE source_id = ? AND use_state = 'research_usable'",
+                        (assigned_source_id,),
+                    ).fetchone()[0]
+                    total = connection.execute(
+                        "SELECT COUNT(*) FROM pages WHERE source_id = ?", (assigned_source_id,)
+                    ).fetchone()[0]
+                    incomplete = incomplete or len(covered) < usable
+                    needs_repair = needs_repair or usable < total
+                status = "running" if incomplete else ("needs_repair" if needs_repair else "completed")
+            else:
+                noted_sources = {
+                    row["source_id"] for row in connection.execute(
+                        "SELECT DISTINCT source_id FROM reading_notes WHERE job_id = ?", (job_id,)
+                    )
+                }
+                status = "completed" if set(source_ids) <= noted_sources else "running"
+            connection.execute(
+                "UPDATE reading_jobs SET status = ?, completed_at = ? WHERE job_id = ?",
+                (status, now, job_id),
+            )
+    return {"note_id": note_id, "job_id": job_id, "source_id": source_id,
+            "physical_pages": pages, "qualification": "READING_NOTE_NOT_EVIDENCE",
+            "status": status}
 
 
 def list_reading_jobs(project_root: Path) -> list[dict[str, Any]]:

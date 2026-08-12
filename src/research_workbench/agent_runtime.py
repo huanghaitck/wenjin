@@ -18,7 +18,13 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .db import connect, utc_now
-from .authoring import authoring_state
+from .authoring import (
+    authoring_state,
+    create_historiography_entry,
+    create_reading_job,
+    reading_job_batch,
+    save_reading_note,
+)
 from .research import list_retrievals
 from .research_design import create_design_draft, current_shared_design
 from .research_events import create_event_candidates, event_coverage, event_state
@@ -52,6 +58,10 @@ Available actions:
 {"type":"tool_call","tool":"research_event.list","arguments":{"case_ids":["exact-case-id"],"statuses":["approved"],"detail":"summary"}}
 {"type":"tool_call","tool":"research_event.coverage","arguments":{"case_ids":["exact-case-id"]}}
 {"type":"tool_call","tool":"research_event.propose_batch","arguments":{"events":[{"case_id":"...","event_date":"...","source_id":"...","block_ids":["..."],"field_anchors":{"event_date":["block-id"],"route":["block-id"],"movement_mode":["block-id"],"genre":["block-id"],"participant_visibility":["block-id"],"outcome_destination":["block-id"],"original_text":["block-id"]},"route":"...","movement_mode":"...","investigation_object":"...","recording_technique":"...","genre":"...","chinese_participants":"...","participant_visibility":"...","institutional_task":"...","outcome_destination":"..."}]}}
+{"type":"tool_call","tool":"reading_job.create","arguments":{"title":"...","question":"...","mode":"metadata|targeted|full","source_ids":["exact-source-id"],"stop_condition":"..."}}
+{"type":"tool_call","tool":"reading_job.batch","arguments":{"job_id":"...","source_id":"...","after_physical_page":0,"page_limit":5}}
+{"type":"tool_call","tool":"reading_note.save","arguments":{"job_id":"...","source_id":"...","physical_pages":[1,2],"content":"source-grounded reading analysis","complete":false}}
+{"type":"tool_call","tool":"historiography.create","arguments":{"work_title":"...","position":"...","contribution":"...","limitation":"...","relevance":"...","source_refs":["exact-source-id"]}}
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
@@ -96,6 +106,13 @@ chronological sequence and neighboring pages; repeated lexical hits are only lea
 of the same witness is a locator aid, not independent corroboration. If a relevant sentence is
 unfinished at the bottom of a page, inspect the next physical page before reporting the passage.
 Cross-page evidence requires a human-confirmed continuation relation in the workbench.
+Use reading_job.create to persist bounded metadata, targeted or full reading work. Creation starts the
+job; it does not read or complete it. Read at most ten physical pages at a time with reading_job.batch,
+then save a concise source-grounded analysis with reading_note.save. Full reading can complete only after
+every usable page of every assigned source is covered; blocked pages yield needs_repair. A reading note
+is a scoped interpretation aid, never evidence by itself. Use historiography.create only after the
+named study has been read deeply enough to state its position, contribution, evidence path, limitation
+and relation to the current research question. Do not create historiography from titles or abstracts.
 Write final content for a researcher as readable prose with short headings or bullet lines.
 Do not return a Python repr, JSON dump, or an object-shaped report unless the user explicitly asks for one.
 Never expose or echo internal lines beginning with TOOL_RESULT in the final answer.
@@ -664,12 +681,20 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         arguments = action.get("arguments", {})
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
-        if tool_name == "research_event.propose_batch" and any(
-            item.get("tool") == tool_name for item in observations
-        ):
+        prior_batch_calls = [item for item in observations if item.get("tool") == tool_name]
+        batch_retry_blocked = (
+            tool_name == "research_event.propose_batch"
+            and prior_batch_calls
+            and (
+                any(item.get("result") is not None for item in prior_batch_calls)
+                or len(prior_batch_calls) >= 2
+                or _forbids_failed_batch_retry(objective)
+            )
+        )
+        if batch_retry_blocked:
             message = (
-                "research_event.propose_batch was already attempted once in this run; "
-                "return a final response instead of retrying or proposing duplicate rows"
+                "research_event.propose_batch already succeeded, exhausted its one correction, "
+                "or the researcher forbade correction after validation failure; return a final response"
             )
             with connect(project_root) as connection:
                 _append_run_event(connection, run_id, "tool_retry_blocked", {"tool": tool_name})
@@ -693,12 +718,24 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
+        if tool_name == "research_event.propose_batch" and required_tool == tool_name:
+            created = result if isinstance(result, list) else []
+            event_ids = [str(item.get("event_id", "")) for item in created if isinstance(item, dict)]
+            suffix = f"（{', '.join(value for value in event_ids if value)}）" if event_ids else ""
+            _complete_run(
+                project_root,
+                run_id,
+                f"工作台已保存 {len(created)} 条待审事件候选{suffix}。"
+                "本轮按一次写入约束结束；候选仍须逐条对照原页后由研究者决定。",
+            )
+            return
     raise RuntimeError("agent exhausted the tool-call budget without returning a final response")
 
 
 def _explicit_required_tool(objective: str) -> str:
     patterns = (
         r"(?:恰好|只)\s*成功调用一次\s+`?([a-z][a-z0-9_.]+)`?",
+        r"(?:恰好|只)?\s*调用(?:成功)?一次\s+`?([a-z][a-z0-9_.]+)`?",
         r"(?:再|重新|务必|必须|请)?\s*调用\s*`?([a-z][a-z0-9_.]+)`?\s*(?:恰好|只)?一次",
     )
     for pattern in patterns:
@@ -706,6 +743,10 @@ def _explicit_required_tool(objective: str) -> str:
         if match:
             return match.group(1)
     return ""
+
+
+def _forbids_failed_batch_retry(objective: str) -> bool:
+    return bool(re.search(r"(?:失败|校验失败).{0,12}(?:不要|不得|禁止).{0,6}(?:重试|再试|再次调用)", objective))
 
 
 def _claimed_unexecuted_write_tool(
@@ -966,7 +1007,7 @@ def _post_json_blocking(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -1052,15 +1093,15 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         elif tool_name == "research_event.propose_batch":
             with connect(project_root) as connection:
                 prior = connection.execute(
-                    """SELECT tool_call_id FROM tool_calls
+                    """SELECT status FROM tool_calls
                        WHERE run_id = ? AND tool_name = ? AND tool_call_id <> ?
-                       LIMIT 1""",
+                       ORDER BY created_at""",
                     (run_id, tool_name, call_id),
-                ).fetchone()
-            if prior:
+                ).fetchall()
+            if any(row["status"] == "COMPLETED" for row in prior) or len(prior) >= 2:
                 raise ValueError(
-                    "research_event.propose_batch was already attempted once in this run; "
-                    "return a final response instead of proposing duplicate rows"
+                    "research_event.propose_batch already succeeded or exhausted its one "
+                    "validation correction; return a final response"
                 )
             events = arguments.get("events", [])
             if not isinstance(events, list):
@@ -1073,6 +1114,40 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result = create_event_candidates(
                 project_root, events, str(snapshot.get("model", "research-agent")), "model", snapshot,
             )
+        elif tool_name == "reading_job.create":
+            source_ids = arguments.get("source_ids", [])
+            if not isinstance(source_ids, list):
+                raise ValueError("reading_job.create source_ids must be a list")
+            result = create_reading_job(
+                project_root,
+                str(arguments.get("title", "")),
+                str(arguments.get("question", "")),
+                str(arguments.get("mode", "")),
+                [str(value) for value in source_ids],
+                str(arguments.get("stop_condition", "")),
+            )
+        elif tool_name == "reading_job.batch":
+            result = reading_job_batch(
+                project_root,
+                str(arguments.get("job_id", "")),
+                str(arguments.get("source_id", "")),
+                int(arguments.get("after_physical_page", 0)),
+                int(arguments.get("page_limit", 5)),
+            )
+        elif tool_name == "reading_note.save":
+            physical_pages = arguments.get("physical_pages", [])
+            if not isinstance(physical_pages, list):
+                raise ValueError("reading_note.save physical_pages must be a list")
+            result = save_reading_note(
+                project_root,
+                str(arguments.get("job_id", "")),
+                str(arguments.get("source_id", "")),
+                [int(value) for value in physical_pages],
+                str(arguments.get("content", "")),
+                bool(arguments.get("complete", False)),
+            )
+        elif tool_name == "historiography.create":
+            result = create_historiography_entry(project_root, arguments)
         else:
             title = str(arguments.get("title", "")).strip()
             content = str(arguments.get("content", "")).strip()

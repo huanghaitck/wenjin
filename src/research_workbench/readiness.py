@@ -34,7 +34,8 @@ def formal_research_readiness(project_root: Path) -> dict[str, Any]:
         return {
             "status": "BLOCKED", "design_id": "", "blockers": ["尚无人工批准的共同研究设计"],
             "warnings": [], "event_requirement": None, "case_coverage": [],
-            "historiography_entries": 0, "reading_jobs": 0, "frozen_source_count": 0,
+            "historiography_entries": 0, "reading_jobs": 0, "completed_reading_jobs": 0,
+            "frozen_source_count": 0,
         }
 
     text = design["content"]
@@ -49,6 +50,9 @@ def formal_research_readiness(project_root: Path) -> dict[str, Any]:
             "SELECT COUNT(*) FROM historiography_entries"
         ).fetchone()[0]
         reading_jobs = connection.execute("SELECT COUNT(*) FROM reading_jobs").fetchone()[0]
+        completed_reading_jobs = connection.execute(
+            "SELECT COUNT(*) FROM reading_jobs WHERE status = 'completed'"
+        ).fetchone()[0]
         project_source_count = connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
         frozen_sources: set[str] = set()
         for row in connection.execute(
@@ -78,6 +82,8 @@ def formal_research_readiness(project_root: Path) -> dict[str, Any]:
         blockers.append("研究设计要求建立学术史，但项目尚无学术史条目")
     if reading_jobs == 0:
         warnings.append("项目尚无登记的定向或全文阅读任务；图书馆中的材料不能自动视为已读")
+    elif completed_reading_jobs == 0:
+        warnings.append(f"项目已有 {reading_jobs} 项阅读任务，但尚无一项满足完成条件")
     if len(frozen_sources) < project_source_count:
         warnings.append(
             f"项目登记 {project_source_count} 种来源，最新批准冻结仅覆盖 {len(frozen_sources)} 种；"
@@ -89,5 +95,6 @@ def formal_research_readiness(project_root: Path) -> dict[str, Any]:
         "blockers": blockers, "warnings": warnings,
         "event_requirement": minimum, "case_coverage": coverage,
         "historiography_entries": historiography_entries, "reading_jobs": reading_jobs,
+        "completed_reading_jobs": completed_reading_jobs,
         "project_source_count": project_source_count, "frozen_source_count": len(frozen_sources),
     }

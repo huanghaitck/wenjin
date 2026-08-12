@@ -21,6 +21,7 @@ from research_workbench.agent_runtime import (
     _post_json,
     _read_page,
     _search_source_blocks,
+    _execute_tool,
     _thread_history,
     assign_model,
     create_thread,
@@ -326,6 +327,46 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("tool_retry_blocked", [event["event_type"] for event in run["events"]])
         create_candidates.assert_not_called()
 
+    def test_event_batch_validation_failure_allows_one_correction(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": {}},
+            },
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": [{"case_id": "CASE_1"}]},
+            },
+        ])
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=lambda *args: next(actions)),
+                patch(
+                    "research_workbench.agent_runtime.create_event_candidates",
+                    return_value=[{"event_id": "EVT_1"}],
+                ) as create_candidates,
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "调用 research_event.propose_batch 一次提交事件。",
+                )
+
+        run = result["runs"][0]
+        event_calls = [
+            call for call in run["tool_calls"]
+            if call["tool_name"] == "research_event.propose_batch"
+        ]
+        self.assertEqual([call["status"] for call in event_calls], ["FAILED", "COMPLETED"])
+        self.assertEqual(run["status"], "COMPLETED")
+        create_candidates.assert_called_once()
+
     def test_explicit_required_tool_prevents_a_premature_final_answer(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
@@ -365,6 +406,38 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("required_tool_missing", [event["event_type"] for event in run["events"]])
         self.assertIn("explicitly required", observations[1][0]["error"])
         create_candidates.assert_called_once()
+
+    def test_explicit_single_event_batch_completes_from_tool_receipt(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions = iter([
+            {
+                "type": "tool_call", "tool": "research_event.propose_batch",
+                "arguments": {"events": [{"case_id": "CASE_1"}]},
+            },
+        ])
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with (
+                patch("research_workbench.agent_runtime._model_action", side_effect=lambda *args: next(actions)) as model,
+                patch(
+                    "research_workbench.agent_runtime.create_event_candidates",
+                    return_value=[{"event_id": "EVT_1"}],
+                ),
+            ):
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "只调用一次 research_event.propose_batch 保存候选，随后结束。",
+                )
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual(model.call_count, 1)
+        self.assertIn("已保存 1 条待审事件候选", result["messages"][-1]["content"]["text"])
 
     def test_natural_required_tool_order_prevents_a_premature_final_answer(self) -> None:
         environment = {
@@ -612,6 +685,69 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("Only a locator", listed["notes"])
         self.assertEqual(source_view(self.project, source_id)["source"]["research_context"], listed)
 
+    def test_agent_can_persist_reading_job_and_historiography(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            run_id = connection.execute("SELECT run_id FROM runs LIMIT 1").fetchone()
+            if run_id is None:
+                result = send_message(self.project, self.thread["thread_id"], "check")
+                run_id = (result["runs"][0]["run_id"],)
+        finally:
+            connection.close()
+
+        reading = _execute_tool(
+            self.project,
+            run_id[0],
+            "reading_job.create",
+            {
+                "title": "直接研究定向阅读",
+                "question": "作者如何解释旅行者的地方中介？",
+                "mode": "targeted",
+                "source_ids": [source_id],
+                "stop_condition": "连续两轮不再出现新的材料路径。",
+            },
+        )
+        self.assertEqual(reading["status"], "running")
+        batch = _execute_tool(
+            self.project,
+            run_id[0],
+            "reading_job.batch",
+            {"job_id": reading["job_id"], "source_id": source_id, "page_limit": 10},
+        )
+        self.assertTrue(batch["pages"])
+        saved = _execute_tool(
+            self.project,
+            run_id[0],
+            "reading_note.save",
+            {
+                "job_id": reading["job_id"],
+                "source_id": source_id,
+                "physical_pages": [page["physical_page"] for page in batch["pages"]],
+                "content": "作者从地方中介解释旅行者的移动。",
+                "complete": True,
+            },
+        )
+        self.assertEqual(saved["status"], "completed")
+        historiography = _execute_tool(
+            self.project,
+            run_id[0],
+            "historiography.create",
+            {
+                "work_title": "Test source",
+                "position": "从地方中介解释进入路径",
+                "contribution": "识别道路使用者和引导者",
+                "limitation": "未比较三个考察案例",
+                "relevance": "作为中介网络解释路径的直接研究",
+                "source_refs": [source_id],
+            },
+        )
+        self.assertEqual(historiography["status"], "candidate")
+        self.assertIn('"tool":"reading_job.create"', SYSTEM_PROMPT)
+        self.assertIn('"tool":"reading_job.batch"', SYSTEM_PROMPT)
+        self.assertIn('"tool":"reading_note.save"', SYSTEM_PROMPT)
+        self.assertIn('"tool":"historiography.create"', SYSTEM_PROMPT)
+
     def test_schema_v2_project_migrates_on_open(self) -> None:
         connection = sqlite3.connect(database_path(self.project))
         try:
@@ -629,7 +765,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 17)
+        self.assertEqual(version, 18)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:

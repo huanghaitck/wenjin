@@ -4,14 +4,19 @@ import tempfile
 import json
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+from research_workbench.document_model import export_document
 
 from research_workbench.authoring import (
     add_style_profile_sample,
     create_historiography_entry,
     create_journal_template,
     create_reading_job,
+    reading_job_batch,
+    save_reading_note,
     create_style_profile,
     create_writing_proposal,
     decide_writing_proposal,
@@ -76,6 +81,48 @@ class D2AuthoringReadingTests(unittest.TestCase):
         document = document_detail(self.project, self.manuscript["manuscript_id"])
         self.assertIn("1908", document["document"]["children"][0]["children"][0]["text"])
         self.assertEqual(decision["document_revision_id"], document["current_revision_id"])
+
+    def test_placeholder_requires_metadata_draft_and_uses_approved_body(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "秦岭调查比较",
+            "# 摘要与关键词\n\n（待写）\n\n# 正文\n\n1872年，旅行者沿秦岭道路行进。" * 20,
+        )
+        abstract = manuscript["sections"][0]
+        with self.assertRaisesRegex(ValueError, "metadata_draft"):
+            create_writing_proposal(
+                self.project, abstract["section_id"], "polish", "生成摘要", writer=lambda prompt: "错误摘要",
+            )
+        prompts = []
+        proposal = create_writing_proposal(
+            self.project, abstract["section_id"], "metadata_draft", "写300字摘要",
+            writer=lambda prompt: prompts.append(prompt) or "本文比较1872年秦岭道路调查。",
+        )
+        self.assertTrue(proposal["validation"]["valid"])
+        self.assertIn("1872年，旅行者沿秦岭道路行进", prompts[0])
+        self.assertNotIn("[EVID:", proposal["proposed_content"])
+
+    def test_approved_section_with_markdown_table_syncs_to_document(self) -> None:
+        section = self.manuscript["sections"][1]
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "polish", "加入比较表",
+            writer=lambda prompt: "| 个案 | 路线 |\n| --- | --- |\n| 甲 | 山路 |",
+        )
+        decision = decide_writing_proposal(
+            self.project, proposal["proposal_id"], True, "Professor",
+            edited_content="| 个案 | 路线 |\n| --- | --- |\n| 甲 | 山路 |",
+            reason="Table checked",
+        )
+        detail = document_detail(self.project, self.manuscript["manuscript_id"])
+        synced = next(item for item in detail["document"]["children"] if item["section_id"] == section["section_id"])
+        self.assertEqual(synced["children"][0]["type"], "table")
+        self.assertEqual(decision["document_revision_id"], detail["current_revision_id"])
+        word = export_document(
+            self.project, self.manuscript["manuscript_id"], "docx", "builtin-tangdu-current",
+        )
+        with zipfile.ZipFile(self.project / word["project_path"]) as package:
+            xml = package.read("word/document.xml").decode("utf-8")
+        self.assertIn("w:tblHeader", xml)
+        self.assertIn("w:cantSplit", xml)
 
     def test_historical_humanizer_uses_only_approved_high_level_style_profile(self) -> None:
         paragraph = ("1908年，材料称“队伍进入草原”。[^1]这一记载只能说明队伍当日的位置，"
@@ -165,6 +212,13 @@ class D2AuthoringReadingTests(unittest.TestCase):
             decide_writing_proposal(
                 self.project, translated["proposal_id"], True, "Professor", reason="Translated the source quote",
             )
+        malformed = create_writing_proposal(
+            self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"],
+            writer=lambda prompt: f"道路受限。[EVID:{evidence_id}][EVID:EVT_241?]",
+            evidence_ids=[evidence_id],
+        )
+        self.assertFalse(malformed["validation"]["valid"])
+        self.assertEqual(malformed["validation"]["malformed_evidence_markers"], ["EVT_241?"])
         german_quotes = create_writing_proposal(
             self.project, section["section_id"], "section_draft", "形成一段", freeze["freeze_id"],
             writer=lambda prompt: f'材料记载：„The expedition left the station in winter." [EVID:{evidence_id}]',
@@ -182,14 +236,48 @@ class D2AuthoringReadingTests(unittest.TestCase):
         )
         self.assertEqual(decision["status"], "approved")
 
+    def test_section_draft_lists_shared_evidence_once(self) -> None:
+        first = create_claim(self.project, "道路是移动条件。")
+        first = create_evidence(
+            self.project, first["claim_id"], f"{self.source['source_id']}:B2",
+            "The sentence continues toward the page boundary", "直接记载", "supports",
+        )
+        second = create_claim(self.project, "道路也是观察对象。")
+        evidence_id = first["evidence"][0]["evidence_id"]
+        with connect(self.project) as connection:
+            connection.execute(
+                "INSERT INTO claim_evidence(link_id, claim_id, evidence_id, relation, created_at) "
+                "VALUES ('LNK_shared', ?, ?, 'supports', '2026-01-01')",
+                (second["claim_id"], evidence_id),
+            )
+        freeze = create_freeze(self.project, "共享证据", [first["claim_id"], second["claim_id"]])
+        approve_freeze(self.project, freeze["freeze_id"], "Professor", "Checked shared source")
+        prompts: list[str] = []
+        proposal = create_writing_proposal(
+            self.project, self.manuscript["sections"][1]["section_id"], "section_draft", "形成一段",
+            freeze["freeze_id"], writer=lambda prompt: prompts.append(prompt) or f"道路受限。[EVID:{evidence_id}]",
+        )
+        self.assertEqual(prompts[0].count(f"[EVID:{evidence_id}]"), 1)
+        self.assertEqual(len(proposal["evidence_refs"]), 1)
+        self.assertEqual(set(proposal["evidence_refs"][0]["claim_ids"]), {first["claim_id"], second["claim_id"]})
+
     def test_bounded_reading_historiography_and_journal_export(self) -> None:
         job = create_reading_job(
             self.project, "定向阅读", "材料如何叙述移动？", "targeted",
             [self.source["source_id"]], "完成当前可用块后停止",
         )
-        self.assertEqual(job["status"], "completed")
-        self.assertTrue(job["notes"])
-        self.assertEqual(job["notes"][0]["qualification"], "READING_NOTE_NOT_EVIDENCE")
+        self.assertEqual(job["status"], "running")
+        batch = reading_job_batch(
+            self.project, job["job_id"], self.source["source_id"], page_limit=10,
+        )
+        self.assertTrue(batch["pages"])
+        note = save_reading_note(
+            self.project, job["job_id"], self.source["source_id"],
+            [page["physical_page"] for page in batch["pages"]],
+            "当前可用页说明旅行者怎样移动。", complete=True,
+        )
+        self.assertEqual(note["status"], "completed")
+        self.assertEqual(note["qualification"], "READING_NOTE_NOT_EVIDENCE")
         entry = create_historiography_entry(self.project, {
             "work_title": "A Study", "position": "强调知识生产", "contribution": "提出中介问题",
             "limitation": "材料范围有限", "relevance": "可用于对照", "source_refs": [self.source["source_id"]],
@@ -207,7 +295,7 @@ class D2AuthoringReadingTests(unittest.TestCase):
 
     def test_schema_eleven_is_current(self) -> None:
         with connect(self.project) as connection:
-            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 17)
+            self.assertEqual(connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0], 18)
 
     def test_loopback_authoring_api_imports_and_proposes_without_overwriting(self) -> None:
         server = build_server(

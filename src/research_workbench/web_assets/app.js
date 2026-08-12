@@ -447,6 +447,10 @@ function renderResearchEvents(container) {
   const stateValue=state.snapshot.research_events||{events:[],counts:{}};
   container.append(card('逐事件比较表',
     `待核 ${stateValue.counts.draft||0} · 已批准 ${stateValue.counts.approved||0} · 已拒绝 ${stateValue.counts.rejected||0}。批准事件仍不是冻结证据。`));
+  container.append(actionButton('导出已批准事件清单',async()=>{
+    const result=await request('/api/research-events/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({statuses:['approved']})});
+    notice(`已导出 ${result.row_count} 项事件：${result.native_path||result.project_path}`);
+  },true));
   if(!stateValue.events.length){container.append(card('尚无事件候选','在研究对话中让 Agent 定位来源页并提交 research_event.propose_batch。'));return;}
   const labels={case_id:'比较个案',event_date:'日期',start_place:'起点',end_place:'行程终点',route:'路线/通道',movement_time:'移动时间',distance_original:'原载距离',distance_normalized:'换算',movement_mode:'移动方式',investigation_object:'调查对象',recording_technique:'记录技术',genre:'体裁',chinese_participants:'中国参与者',participant_visibility:'参与者可见度',institutional_task:'机构任务',outcome_destination:'成果/知识产出去向（非行程终点）',translation:'译文',missing_reason:'缺失原因',notes:'备注'};
   const sourceFields=new Set(['event_date','start_place','end_place','route','movement_time','distance_original','movement_mode','investigation_object','recording_technique','genre','chinese_participants','participant_visibility','institutional_task','outcome_destination','translation','original_text']);
@@ -773,7 +777,7 @@ function renderDocumentCanvas() {
       }
       table.append(body);canvas.append(table);continue;
     }
-    const element = document.createElement(node.type === 'quote' ? 'blockquote' : 'p');
+    const element = document.createElement(node.type === 'quote' ? 'blockquote' : (node.type === 'subheading' ? 'h3' : 'p'));
     element.dataset.nodeId = node.node_id; element.dataset.nodeType = node.type;
     const placements = activeNotes.map((note, index) => ({note, number:index + 1}))
       .filter((item) => item.note.anchor_node_id === node.node_id)
@@ -801,13 +805,18 @@ function captureDocumentSection() {
   const heading=$('sectionHeading').innerText.trim();
   if(!heading) throw new Error('章节标题不能为空。');
   section.heading=heading;
-  section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li, table')).map((node) => {
+  for (const child of [...$('documentCanvas').childNodes]) {
+    if (child.nodeType !== Node.TEXT_NODE || !child.textContent.trim()) continue;
+    const paragraph=document.createElement('p');paragraph.textContent=child.textContent;
+    $('documentCanvas').replaceChild(paragraph,child);
+  }
+  section.children = [...$('documentCanvas').children].filter((node) => node.matches('p, blockquote, li, h3, table')).map((node) => {
     if (node.tagName === 'TABLE') return {
       type:'table',node_id:node.dataset.nodeId||`NOD_${crypto.randomUUID().replaceAll('-', '')}`,
       rows:[...node.rows].map((row)=>[...row.cells].map((cell)=>cell.innerText.trim())),
     };
     return {
-      type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : 'paragraph'),
+      type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : (node.tagName === 'H3' ? 'subheading' : 'paragraph')),
       node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
       text: (() => { const clone=node.cloneNode(true); clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove()); return clone.innerText.trim(); })(),
     };
@@ -1035,7 +1044,7 @@ function renderAuthoringControl(section, proposal) {
     }
     const form = document.createElement('section'); form.className='context-form';
     const operation = document.createElement('select'); operation.id='writingOperation';
-    operation.append(new Option('保真润色','polish'), new Option('史学去模板化（证据保真）','historical_humanize'), new Option('基于冻结证据分节写作','section_draft'));
+    operation.append(new Option('保真润色','polish'), new Option('依据已批准正文生成摘要/投稿信息','metadata_draft'), new Option('史学去模板化（证据保真）','historical_humanize'), new Option('基于冻结证据分节写作','section_draft'));
     const operationLabel=document.createElement('label'); operationLabel.textContent='操作'; operationLabel.append(operation);
     const skill=document.createElement('select');skill.id='writingSkill';
     if(humanizerSkill) skill.append(new Option(`historical-humanizer-zh · ${humanizerSkill.sha256.slice(0,12)}…`,humanizerSkill.name));
@@ -1259,6 +1268,7 @@ function blockCard(block, pageAnomaly) {
   const card = document.createElement('article'); card.className = 'block-card';
   const anomaly = openAnomalies().find((item) => item.scope_type === 'block' && item.target_id === block.block_id);
   card.classList.toggle('blocked', Boolean(anomaly)); card.dataset.order = block.block_order;
+  card.dataset.region = JSON.stringify(block.source_region || null);
   const meta = document.createElement('div'); meta.className = 'block-meta';
   const region = block.source_region ? Object.values(block.source_region).map((v) => Number(v).toFixed(2)).join(', ') : '未定位';
   const label = document.createElement('span'); label.textContent = `块 ${block.block_order} · 区域 ${region}`;
@@ -1321,7 +1331,40 @@ function renderBlocks() {
     effective_text: '',
     source_region: null,
   }, pageIssue));
-  if (!locator) container.append(addBlock);
+  if (!locator) {
+    const twoColumn = document.createElement('button');
+    twoColumn.type = 'button'; twoColumn.textContent = '按双栏阅读顺序重排';
+    twoColumn.onclick = () => {
+      const cards = [...container.querySelectorAll('.block-card')];
+      const located = cards.map((card, index) => ({
+        card, index, region: JSON.parse(card.dataset.region || 'null'),
+      })).filter((item) => item.region);
+      const left = located.filter((item) => item.region.x1 <= 0.52 && item.region.y0 >= 0.1);
+      const right = located.filter((item) => item.region.x0 >= 0.48 && item.region.y0 >= 0.1);
+      const starts = left.flatMap((l) => right
+        .filter((r) => Math.abs(l.region.y0 - r.region.y0) <= 0.07)
+        .map((r) => Math.max(l.region.y0, r.region.y0)));
+      if (!starts.length) { notice('未识别到稳定的双栏起点，请人工调整。', true); return; }
+      const start = Math.min(...starts);
+      const suffixStarts = located.filter((item) => {
+        const width = item.region.x1 - item.region.x0;
+        return item.region.y0 > Math.max(0.7, start + 0.2) && width >= 0.55;
+      }).map((item) => item.region.y0);
+      const suffixStart = suffixStarts.length ? Math.min(...suffixStarts) - 0.03 : 1.1;
+      const byPosition = (a, b) => (a.region.y0 - b.region.y0)
+        || (a.region.x0 - b.region.x0) || (a.index - b.index);
+      const prefix = located.filter((item) => item.region.y0 < start).sort(byPosition);
+      const body = located.filter((item) => item.region.y0 >= start && item.region.y0 < suffixStart);
+      const bodyLeft = body.filter((item) => (item.region.x0 + item.region.x1) / 2 < 0.5).sort(byPosition);
+      const bodyRight = body.filter((item) => (item.region.x0 + item.region.x1) / 2 >= 0.5).sort(byPosition);
+      const suffix = located.filter((item) => item.region.y0 >= suffixStart).sort(byPosition);
+      const ordered = [...prefix, ...bodyLeft, ...bodyRight, ...suffix];
+      if (ordered.length !== cards.length) { notice('本页存在无位置块，未自动重排。', true); return; }
+      for (const item of ordered) container.insertBefore(item.card, addBlock);
+      notice('已生成双栏顺序：请对照原页检查后，再提交整页修正。');
+    };
+    container.append(twoColumn, addBlock);
+  }
   $('pageRepair').hidden = locator;
   $('pageRepair').textContent = pageIssue ? '提交整页修正' : '保存整页结构修正';
   $('pageRepair').onclick = async () => {

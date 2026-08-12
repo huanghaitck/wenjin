@@ -56,7 +56,7 @@ from .library_store import resolve_library_root
 from .project_library import add_library_file_to_project
 from .research import connector_capabilities, list_retrievals, retrieval_record, search
 from .research_design import create_design_draft, decide_design, design_state
-from .research_events import decide_event, event_anchor_text, event_state
+from .research_events import decide_event, event_anchor_text, event_state, export_event_register
 from .scholarship import (
     approve_freeze,
     create_browser_session,
@@ -470,6 +470,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     payload.get("edits") if isinstance(payload.get("edits"), dict) else None,
                     payload.get("field_anchors") if isinstance(payload.get("field_anchors"), dict) else None,
                 )
+            elif parsed.path == "/api/research-events/export":
+                result = export_event_register(
+                    self.server.project_root,
+                    [str(value) for value in payload.get("case_ids", [])]
+                    if isinstance(payload.get("case_ids"), list) else None,
+                    [str(value) for value in payload.get("statuses", [])]
+                    if isinstance(payload.get("statuses"), list) else None,
+                )
+                if self.server.desktop_mode:
+                    result["native_path"] = str(
+                        (self.server.project_root / result["project_path"]).resolve()
+                    )
             elif parsed.path == "/api/approval/decide":
                 edited = payload.get("edited_request")
                 if not isinstance(payload.get("approved"), bool):

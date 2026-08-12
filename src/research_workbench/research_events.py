@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import re
 import uuid
@@ -17,6 +18,16 @@ PRE_SOURCE_FIELDS = (
 )
 POST_SOURCE_FIELDS = ("original_text", "translation", "missing_reason", "notes")
 TEXT_FIELDS = PRE_SOURCE_FIELDS + POST_SOURCE_FIELDS
+
+EVENT_EXPORT_FIELDS = (
+    "event_id", "case_id", "event_date", "start_place", "end_place", "route",
+    "movement_time", "distance_original", "distance_normalized", "movement_mode",
+    "investigation_object", "recording_technique", "genre", "chinese_participants",
+    "participant_visibility", "institutional_task", "outcome_destination", "source_title",
+    "source_id", "source_version_id", "physical_pages", "printed_pages", "block_ids",
+    "original_text", "translation", "missing_reason", "notes", "qualification", "status",
+    "decided_by", "decision_reason",
+)
 
 SOURCE_ANCHORED_FIELDS = {
     "event_date", "start_place", "end_place", "route", "movement_time",
@@ -196,6 +207,46 @@ def event_coverage(project_root: Path, case_ids: list[str] | None = None) -> dic
         "global_counts": state["counts"],
         "coverage_rule": "non-empty source-derived field with at least one explicit field anchor",
     }
+
+
+def export_event_register(
+    project_root: Path,
+    case_ids: list[str] | None = None,
+    statuses: list[str] | None = None,
+) -> dict[str, Any]:
+    selected_statuses = statuses or ["approved"]
+    state = event_state(project_root, case_ids=case_ids, statuses=selected_statuses)
+    with connect(project_root) as connection:
+        source_titles = {
+            row["source_id"]: row["title"]
+            for row in connection.execute("SELECT source_id, title FROM sources")
+        }
+    export_root = project_root / "exports"
+    export_root.mkdir(parents=True, exist_ok=True)
+    target = export_root / "research-events-approved.csv"
+    with target.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=EVENT_EXPORT_FIELDS)
+        writer.writeheader()
+        for event in sorted(
+            state["events"], key=lambda item: (item["case_id"], item["event_date"], item["event_id"])
+        ):
+            row = {field: event.get(field, "") for field in EVENT_EXPORT_FIELDS}
+            row["source_title"] = source_titles.get(event["source_id"], "")
+            for field in ("physical_pages", "printed_pages", "block_ids"):
+                row[field] = " | ".join(str(value) for value in event.get(field, []))
+            writer.writerow(row)
+    append_payload = {
+        "case_ids": state["filters"]["case_ids"],
+        "statuses": state["filters"]["statuses"],
+        "row_count": len(state["events"]),
+        "project_path": str(target.relative_to(project_root)),
+    }
+    with connect(project_root) as connection:
+        append_audit(
+            connection, "research_event_register_exported", "project", "research_events",
+            append_payload,
+        )
+    return append_payload
 
 
 def event_anchor_text(project_root: Path, event_id: str) -> dict[str, Any]:

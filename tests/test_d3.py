@@ -161,6 +161,33 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn('w:vertAlign w:val="superscript"', document_xml)
         self.assertIn("[1]12", document_xml)
 
+    def test_generated_references_replace_placeholder_section(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "顺序编码稿",
+            "# 正文\n\n甲事。[EVID:EVT_one]\n\n# 参考文献\n\n（由工作台生成）\n\n# 英文摘要\n\nEnglish",
+        )
+        with connect(self.project) as connection:
+            project_id = connection.execute("SELECT project_id FROM projects").fetchone()[0]
+            connection.execute(
+                "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("SRC_book", project_id, "测试书", "local_file", "book.pdf", "acquired", "ready", "partial", "2026-01-01"),
+            )
+            payload = {"claims": [{"evidence": [
+                {"evidence_id": "EVT_one", "source_id": "SRC_book", "printed_pages": ["12"]},
+            ]}]}
+            connection.execute(
+                "INSERT INTO evidence_freezes(freeze_id, title, status, payload_json, approved_by, approved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("FRZ_test", "测试冻结", "approved", json.dumps(payload), "tester", "2026-01-01", "2026-01-01"),
+            )
+        save_source_citation_metadata(self.project, "SRC_book", {
+            "author": "张三", "title": "测试书", "place": "西安", "publisher": "测试出版社",
+            "year": "1908", "type_code": "M", "verified_by": "tester",
+        })
+        exported = export_document(self.project, manuscript["manuscript_id"], "markdown", "builtin-tangdu-current")
+        text = (self.project / exported["project_path"]).read_text(encoding="utf-8")
+        self.assertEqual(text.count("## 参考文献"), 1)
+        self.assertNotIn("（由工作台生成）", text)
+
     def test_tangdu_template_separates_references_and_explanatory_footnotes(self) -> None:
         template = next(
             item for item in ensure_journal_templates(self.project)
@@ -227,6 +254,7 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn('id="documentCanvas"', html)
         self.assertIn('id="browserWorkbench"', html)
         self.assertIn("插入正文引证并保存新修订", app)
+        self.assertIn("按双栏阅读顺序重排", app)
         self.assertIn("解释性脚注文字（不得填写书目引证）", app)
         self.assertIn("保存本稿投稿信息", app)
         self.assertIn("四层分开，不自动沉淀", app)

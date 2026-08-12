@@ -183,6 +183,21 @@ class D6ManuscriptReviewTests(unittest.TestCase):
         self.assertEqual(payload["thinking"], {"type": "disabled"})
         self.assertEqual(payload["max_tokens"], 8192)
 
+    def test_deepseek_writing_uses_configured_budget_and_timeout(self) -> None:
+        response = {"choices": [{"message": {"content": "分节正文。"}}]}
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "deepseek-v4-flash",
+            "HRW_AGENT_BASE_URL": "https://api.deepseek.com", "HRW_AGENT_API_KEY": "test-key",
+            "HRW_AGENT_WRITE_MAX_TOKENS": "10000", "HRW_AGENT_TIMEOUT_SECONDS": "300",
+        }
+        with patch.dict(os.environ, environment, clear=False), patch.object(authoring, "urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = json.dumps(response).encode()
+            self.assertEqual(authoring._model_write("写一节正文"), "分节正文。")
+            payload = json.loads(urlopen.call_args.args[0].data.decode())
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertEqual(payload["max_tokens"], 10000)
+        self.assertEqual(urlopen.call_args.kwargs["timeout"], 300)
+
 
 if __name__ == "__main__":
     unittest.main()
