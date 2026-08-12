@@ -546,6 +546,7 @@ function renderContext() {
     const form = document.createElement('section'); form.className = 'context-form';
     const provider = document.createElement('select'); provider.id = 'researchProvider';
     for (const item of state.capabilities?.research_connectors || []) {
+      if (item.mode === 'user_visible_session') continue;
       const option = new Option(`${item.provider}${item.available ? '' : '（未配置）'}`, item.provider); option.disabled = !item.available; provider.append(option);
     }
     const label = document.createElement('label'); label.textContent = '开放数据库'; label.append(provider);
