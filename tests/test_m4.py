@@ -125,13 +125,17 @@ class M4AgentWorkspaceTests(unittest.TestCase):
 
     def test_agent_authoring_state_omits_full_text(self) -> None:
         from research_workbench.authoring import import_manuscript
+        from research_workbench.agent_runtime import _read_authoring_section
 
-        import_manuscript(self.project, "Long draft", "# 第一节\n" + "正文" * 20000)
+        detail = import_manuscript(self.project, "Long draft", "# 第一节\n" + "正文" * 20000)
         state = _compact_authoring_state(self.project)
         manuscript = state["manuscripts"][0]
         self.assertEqual(manuscript["character_count"], 40000)
         self.assertNotIn("content", manuscript["sections"][0])
         self.assertLess(len(json.dumps(state, ensure_ascii=False)), 20000)
+        section = _read_authoring_section(self.project, detail["sections"][0]["section_id"])
+        self.assertEqual(section["heading"], "第一节")
+        self.assertEqual(len(section["content"]), 40000)
 
     def test_profiles_and_assignment_never_persist_api_key(self) -> None:
         secret = "not-for-database"

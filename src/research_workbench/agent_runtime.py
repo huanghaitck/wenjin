@@ -120,6 +120,7 @@ Available actions:
 {"type":"tool_call","tool":"research.plan_context","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{}}
 {"type":"tool_call","tool":"authoring.state","arguments":{}}
+{"type":"tool_call","tool":"authoring.section","arguments":{"section_id":"exact-section-id"}}
 {"type":"tool_call","tool":"research_design.current","arguments":{}}
 {"type":"tool_call","tool":"research_design.propose","arguments":{"title":"...","content":"...","change_summary":"..."}}
 {"type":"tool_call","tool":"research_event.list","arguments":{"case_ids":["exact-case-id"],"statuses":["approved"],"detail":"summary"}}
@@ -1136,8 +1137,25 @@ def _post_json_blocking(
     return result
 
 
+def _read_authoring_section(project_root: Path, section_id: str) -> dict[str, Any]:
+    if not section_id:
+        raise ValueError("authoring.section requires section_id")
+    with connect(project_root) as connection:
+        row = connection.execute(
+            """SELECT s.section_id, s.manuscript_id, s.section_order, s.heading,
+                      s.current_version_id, v.content
+               FROM manuscript_sections s
+               JOIN section_versions v ON v.version_id = s.current_version_id
+               WHERE s.section_id = ?""",
+            (section_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown manuscript section: {section_id}")
+    return dict(row)
+
+
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -1176,6 +1194,8 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result = list_retrievals(project_root)
         elif tool_name == "authoring.state":
             result = _compact_authoring_state(project_root)
+        elif tool_name == "authoring.section":
+            result = _read_authoring_section(project_root, str(arguments.get("section_id", "")))
         elif tool_name == "research_design.current":
             with connect(project_root) as connection:
                 run = connection.execute(
