@@ -1087,6 +1087,9 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
     research = research_state(project_root)
     shared_design = current_shared_design(project_root)
     cited_evidence_ids = set(re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", internal_manuscript_text))
+    cited_direct_pages = set(re.findall(
+        r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_]+)\]", internal_manuscript_text,
+    ))
     approved_freezes = [freeze for freeze in research["freezes"] if freeze["status"] == "approved"]
     relevant_freezes = [
         freeze for freeze in approved_freezes
@@ -1119,6 +1122,25 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
                     f"- {evidence['evidence_id']}｜{evidence['relation']}｜{evidence['source_id']}｜{locator}"
                     f"｜FROZEN_APPROVED｜{evidence['qualification']}｜{evidence['quote']}"
                 )
+    if cited_direct_pages:
+        with connect(project_root) as connection:
+            for source_id, page_id in sorted(cited_direct_pages):
+                row = connection.execute(
+                    """SELECT p.physical_page, p.printed_page, p.verification_state, p.use_state,
+                              s.title, m.author, m.year, m.verification_status
+                       FROM pages p JOIN sources s ON s.source_id = p.source_id
+                       LEFT JOIN source_citation_metadata m ON m.source_id = p.source_id
+                       WHERE p.source_id = ? AND p.page_id = ?""",
+                    (source_id, page_id),
+                ).fetchone()
+                if row is None:
+                    continue
+                evidence_lines.append(
+                    f"- DIRECT_PAGE_CITABLE｜{source_id}｜{page_id}｜{row['title']}｜"
+                    f"{row['author']}｜{row['year']}｜原书页 {row['printed_page']}｜"
+                    f"物理页 {row['physical_page']}｜页状态 {row['verification_state']}｜"
+                    f"用途 {row['use_state']}｜书目状态 {row['verification_status']}"
+                )
     previous_reports = ""
     if use_secondary and manuscript["review_groups"]:
         latest = next((group for group in manuscript["review_groups"] if group["is_current"]), None)
@@ -1134,8 +1156,9 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
             "请结合证据台账核对正文引文，不把模型记忆当作来源。\n"
             "引文必须使用原书印刷页；物理页只用于在 PDF 中回查，不得用物理页替换原书页。"
             "参考文献表通常不要求补写卷册总页数，不得因书目条目没有总页数而否定已核原书页。\n"
-            "证据台账中的 CANDIDATE_NOT_FROZEN 只能作为有界回退线索，不能当作当前正文已经获准使用的证据；"
-            "只有 FROZEN_APPROVED 且实际进入稿件的证据才能支撑当前论断。\n"
+            "证据台账中的 CANDIDATE_NOT_FROZEN 只能作为有界回退线索，不能当作当前正文已经获准使用的证据。"
+            "FROZEN_APPROVED 是批准冻结证据；DIRECT_PAGE_CITABLE 是正文直接引用且已通过页面与书目门禁的原页，"
+            "两者都可支撑与其内容相符的正文事实。不要因为 DIRECT_PAGE_CITABLE 未进入冻结包就判定其未登记或不可引用。\n"
             f"本轮角色：{role}\n职责：{REVIEW_ROLES[role]}\n"
             "请用中文依次输出：阻断问题、主要问题、次要问题、可保留之处、建议的有界回退步骤。"
             "每个问题指出具体章节或证据编号；没有证据就明确说没有。不要展示推理过程，"

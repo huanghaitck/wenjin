@@ -238,6 +238,47 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn("已有研究指出这一差异。[1]23", text)
         self.assertIn("[1] 李四. 秦岭考察研究[J]. 唐都学刊，2024(2)：20-30.", text)
 
+    def test_tangdu_direct_source_citation_accepts_human_spot_checked_page(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "学术史抽查页引证", "# 正文\n\n已有研究指出这一差异。[CITE:SRC_study@PAGE_study]",
+        )
+        with connect(self.project) as connection:
+            project_id = connection.execute("SELECT project_id FROM projects").fetchone()[0]
+            connection.execute(
+                "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("SRC_study", project_id, "研究论文", "local_file", "study.pdf", "acquired", "ready", "partial", "2026-01-01"),
+            )
+            connection.execute(
+                """INSERT INTO pages(page_id, source_id, physical_page, printed_page, page_type,
+                   verification_state, use_state, machine_payload_json, human_payload_json)
+                   VALUES (?, ?, ?, ?, 'content', 'human_spot_checked', 'research_usable', '{}', '{}')""",
+                ("PAGE_study", "SRC_study", 7, "23"),
+            )
+        save_source_citation_metadata(self.project, "SRC_study", {
+            "author": "李四", "title": "秦岭考察研究", "place": "", "publisher": "",
+            "year": "2024", "type_code": "J", "journal": "唐都学刊", "issue": "2",
+            "page_range": "20-30", "verified_by": "tester",
+        })
+        exported = export_document(
+            self.project, manuscript["manuscript_id"], "markdown", "builtin-tangdu-current",
+        )
+        text = (self.project / exported["project_path"]).read_text(encoding="utf-8")
+        self.assertIn("已有研究指出这一差异。[1]23", text)
+        self.assertNotIn("尚未完成逐页人工核验", "\n".join(exported["fidelity"]["warnings"]))
+
+    def test_tangdu_superscript_range_stops_before_following_chinese_prose(self) -> None:
+        from research_workbench.document_model import SEQUENTIAL_CITATION_RE
+
+        for text, expected in (
+            ("山路艰险。[5]235—237这使秦岭成为交通对象。", "[5]235—237"),
+            ("前人已有讨论。[2]28李蕾、沈弘继续指出。", "[2]28"),
+            ("目录见卷首。[1]I这意味着材料需要重读。", "[1]I"),
+        ):
+            with self.subTest(text=text):
+                match = SEQUENTIAL_CITATION_RE.search(text)
+                self.assertIsNotNone(match)
+                self.assertEqual(match.group(0), expected)
+
     def test_ui_has_four_permanent_workspaces_and_nested_repair(self) -> None:
         html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")
         for label in ("研究对话", "研究图书馆", "文章工作台", "项目设置"):

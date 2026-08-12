@@ -396,7 +396,9 @@ DIRECT_CITATION_MARKER_RE = re.compile(r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)
 REFERENCE_MARKER_RE = re.compile(
     r"(?:\[EVID:[A-Za-z0-9_]+\])+|\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]"
 )
-SEQUENTIAL_CITATION_RE = re.compile(r"(\[\d+\](?:[^\s，。；：\[\]]+))")
+SEQUENTIAL_CITATION_RE = re.compile(
+    r"(\[\d+\](?:原书页待核|[0-9IVXLCDMivxlcdm]+(?:[—–\-、,，][0-9IVXLCDMivxlcdm]+)*))"
+)
 
 
 def _add_text_runs(paragraph: Any, text: str, superscript_citations: bool) -> None:
@@ -473,7 +475,7 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any],
                 warnings.append(f"来源引证 {source_id} 的原页 {page_id} 不存在")
                 return match.group(0)
             if page["use_state"] != "research_usable" or page["verification_state"] not in {
-                "human_verified", "human_repaired",
+                "human_spot_checked", "human_verified", "human_repaired",
             }:
                 warnings.append(f"来源引证 {source_id} 的原页 {page_id} 尚未完成逐页人工核验")
                 return match.group(0)

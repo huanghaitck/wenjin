@@ -103,7 +103,7 @@ class M3OcrProposalTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 18)
+        self.assertEqual(version, 19)
         self.assertIsNotNone(table)
 
     def test_pending_proposal_preserves_blocked_source_and_provenance(self) -> None:

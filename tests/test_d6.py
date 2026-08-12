@@ -168,6 +168,34 @@ class D6ManuscriptReviewTests(unittest.TestCase):
         self.assertTrue(all("物理页只用于在 PDF 中回查" in prompt for prompt in prompts))
         self.assertTrue(all("总框架1861—1879；核心窗口1871—1875" in prompt for prompt in prompts))
 
+    def test_review_ledger_includes_citable_direct_page_markers(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "原页直引评审稿", "# 正文\n\n道路事实。[CITE:SRC_book@PAGE_book_20]",
+        )
+        with connect(self.project) as connection:
+            project_id = connection.execute("SELECT project_id FROM projects").fetchone()[0]
+            connection.execute(
+                "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("SRC_book", project_id, "测试书", "local_file", "book.pdf", "acquired", "ready", "partial", "2026-01-01"),
+            )
+            connection.execute(
+                "INSERT INTO pages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("PAGE_book_20", "SRC_book", 20, "12", "body", "human_spot_checked",
+                 "research_usable", "{}", "{}"),
+            )
+        save_source_citation_metadata(self.project, "SRC_book", {
+            "author": "张三", "title": "测试书", "place": "西安", "publisher": "测试出版社",
+            "year": "1908", "type_code": "M", "verified_by": "tester",
+        })
+        prompts: list[str] = []
+        run_manuscript_review(
+            self.project, manuscript["manuscript_id"], "builtin-tangdu-current",
+            reviewer=lambda prompt: prompts.append(prompt) or "阻断问题：无。主要问题：无。建议：保留。",
+        )
+        self.assertTrue(all("DIRECT_PAGE_CITABLE｜SRC_book｜PAGE_book_20" in prompt for prompt in prompts))
+        self.assertTrue(all("不要因为 DIRECT_PAGE_CITABLE 未进入冻结包" in prompt for prompt in prompts))
+        self.assertTrue(all("道路事实。[1]12" in prompt for prompt in prompts))
+
     def test_deepseek_review_requests_disable_thinking_mode(self) -> None:
         response = {
             "choices": [{"message": {"content": "阻断问题：无。"}, "finish_reason": "stop"}],
