@@ -988,8 +988,8 @@ def _parse_action(content: str) -> dict[str, Any]:
 def _parse_tagged_tool_action(text: str) -> dict[str, Any] | None:
     """Parse DeepSeek's XML-like tool form, including its observed mismatched closer."""
     invoke = re.fullmatch(
-        r'<tool_calls>\s*<invoke\s+name="([a-z][a-z0-9_.]+)">\s*'
-        r'(.*?)\s*</invoke>\s*</tool_calls>',
+        r'(?:<tool_calls>\s*)?<invoke\s+name="([a-z][a-z0-9_.]+)">\s*'
+        r'(.*?)\s*</invoke>(?:\s*</tool_calls>)?',
         text,
         flags=re.DOTALL,
     )
