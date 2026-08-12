@@ -945,6 +945,8 @@ def _parse_action(content: str) -> dict[str, Any]:
         text = re.sub(r"\s*```$", "", text)
     if dsml_action := _parse_dsml_action(text):
         return dsml_action
+    if tagged_action := _parse_tagged_tool_action(text):
+        return tagged_action
     if bracketed := re.fullmatch(r"<\s*(\{.*\})\s*>", text, flags=re.DOTALL):
         text = bracketed.group(1).strip()
     elif text.startswith("<{") and text.endswith("}"):
@@ -981,6 +983,23 @@ def _parse_action(content: str) -> dict[str, Any]:
     if not isinstance(action, dict):
         raise ValueError("agent response JSON must be an object")
     return _normalize_action(action)
+
+
+def _parse_tagged_tool_action(text: str) -> dict[str, Any] | None:
+    """Parse DeepSeek's XML-like tool form, including its observed mismatched closer."""
+    wrapped = re.fullmatch(
+        r"<tool_call>\s*<type>tool_call</type>\s*"
+        r"<tool>([a-z][a-z0-9_.]+)</tool>\s*"
+        r"<arguments>(.*?)</arguments>\s*</(?:tool_call|invoke)>",
+        text,
+        flags=re.DOTALL,
+    )
+    if not wrapped:
+        return None
+    arguments = json.loads(unescape(wrapped.group(2)).strip() or "{}")
+    if not isinstance(arguments, dict):
+        raise ValueError("tagged tool arguments must be a JSON object")
+    return {"type": "tool_call", "tool": wrapped.group(1), "arguments": arguments}
 
 
 def _normalize_action(action: dict[str, Any]) -> dict[str, Any]:

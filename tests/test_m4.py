@@ -873,6 +873,16 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         prose = '示例：<tool_call>{"type":"tool_call","tool":"source.page","arguments":{}}</tool_call>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
 
+    def test_parser_accepts_deepseek_pro_tagged_tool_action(self) -> None:
+        action = _parse_action(
+            '<tool_call><type>tool_call</type><tool>source.search</tool>'
+            '<arguments>{"query":"1861","source_id":"SRC_1","limit":10}</arguments></invoke>'
+        )
+        self.assertEqual(action, {
+            "type": "tool_call", "tool": "source.search",
+            "arguments": {"query": "1861", "source_id": "SRC_1", "limit": 10},
+        })
+
     def test_parser_accepts_observed_deepseek_dsml_only_as_the_whole_response(self) -> None:
         action = _parse_action(
             '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="source.page">'
