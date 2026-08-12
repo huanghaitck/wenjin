@@ -18,6 +18,7 @@ from research_workbench.agent_runtime import (
     ModelProfile,
     SYSTEM_PROMPT,
     _agent_research_state,
+    _compact_authoring_state,
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
@@ -121,6 +122,16 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("freezes", state)
         self.assertNotIn("artifacts", state)
         self.assertLess(len(json.dumps(state, ensure_ascii=False)), 5000)
+
+    def test_agent_authoring_state_omits_full_text(self) -> None:
+        from research_workbench.authoring import import_manuscript
+
+        import_manuscript(self.project, "Long draft", "# 第一节\n" + "正文" * 20000)
+        state = _compact_authoring_state(self.project)
+        manuscript = state["manuscripts"][0]
+        self.assertEqual(manuscript["character_count"], 40000)
+        self.assertNotIn("content", manuscript["sections"][0])
+        self.assertLess(len(json.dumps(state, ensure_ascii=False)), 20000)
 
     def test_profiles_and_assignment_never_persist_api_key(self) -> None:
         secret = "not-for-database"

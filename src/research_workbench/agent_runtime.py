@@ -39,6 +39,73 @@ MAX_TOOL_CALLS = 12
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CHARS = 30000
 MAX_HISTORY_MESSAGE_CHARS = 8000
+
+
+def _compact_authoring_state(project_root: Path) -> dict[str, Any]:
+    """Return an index for agent routing without embedding whole drafts or reviews."""
+    state = authoring_state(project_root)
+    manuscripts = []
+    for manuscript in state.get("manuscripts", []):
+        sections = [
+            {
+                "section_id": section.get("section_id"),
+                "heading": section.get("heading"),
+                "section_order": section.get("section_order"),
+                "current_version_id": section.get("current_version_id"),
+                "character_count": len(str(section.get("content", ""))),
+            }
+            for section in manuscript.get("sections", [])
+        ]
+        review_groups = [
+            {
+                "review_group_id": group.get("review_group_id"),
+                "template_id": group.get("template_id"),
+                "created_at": group.get("created_at"),
+                "is_current": group.get("is_current"),
+                "reviewer_roles": [
+                    report.get("reviewer_role") for report in group.get("reports", [])
+                ],
+            }
+            for group in manuscript.get("review_groups", [])
+        ]
+        manuscripts.append({
+            "manuscript_id": manuscript.get("manuscript_id"),
+            "title": manuscript.get("title"),
+            "status": manuscript.get("status"),
+            "source_format": manuscript.get("source_format"),
+            "updated_at": manuscript.get("updated_at"),
+            "character_count": sum(section["character_count"] for section in sections),
+            "sections": sections,
+            "review_groups": review_groups,
+        })
+    reading_jobs = [
+        {
+            "job_id": job.get("job_id"),
+            "title": job.get("title"),
+            "question": job.get("question"),
+            "mode": job.get("mode"),
+            "source_ids": job.get("source_ids", []),
+            "stop_condition": job.get("stop_condition"),
+            "status": job.get("status"),
+            "note_count": len(job.get("notes", [])),
+        }
+        for job in state.get("reading_jobs", [])
+    ]
+    return {
+        "boundary": (
+            "Compact index only. It intentionally omits manuscript text, reading-note text and "
+            "review reports; request a bounded detail tool before quoting or revising content."
+        ),
+        "manuscripts": manuscripts,
+        "reading_jobs": reading_jobs,
+        "historiography": state.get("historiography", []),
+        "journal_templates": state.get("journal_templates", []),
+        "style_profiles": state.get("style_profiles", []),
+        "submission_profiles": state.get("submission_profiles", []),
+        "writing_model": state.get("writing_model", {}),
+        "review_models": state.get("review_models", {}),
+        "formal_research_readiness": state.get("formal_research_readiness", {}),
+    }
 SYSTEM_PROMPT = """You are the main agent in a local historical research workbench.
 Use tools to inspect project facts. Never claim you read a source unless a tool returned it.
 Return exactly one JSON object for exactly one action and no markdown. If several tools are needed,
@@ -1064,7 +1131,7 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         elif tool_name == "retrieval.list":
             result = list_retrievals(project_root)
         elif tool_name == "authoring.state":
-            result = authoring_state(project_root)
+            result = _compact_authoring_state(project_root)
         elif tool_name == "research_design.current":
             with connect(project_root) as connection:
                 run = connection.execute(

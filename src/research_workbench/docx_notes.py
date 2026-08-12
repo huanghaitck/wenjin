@@ -45,7 +45,8 @@ def _footnotes(notes: list[str]) -> bytes:
         text_run = etree.SubElement(paragraph, f"{{{W}}}r")
         properties = etree.SubElement(text_run, f"{{{W}}}rPr")
         etree.SubElement(properties, f"{{{W}}}rFonts", {
-            f"{{{W}}}ascii": "FangSong", f"{{{W}}}hAnsi": "FangSong", f"{{{W}}}eastAsia": "仿宋",
+            f"{{{W}}}ascii": "Times New Roman", f"{{{W}}}hAnsi": "Times New Roman",
+            f"{{{W}}}eastAsia": "仿宋",
         })
         etree.SubElement(properties, f"{{{W}}}sz", {f"{{{W}}}val": "21"})
         value = etree.SubElement(text_run, f"{{{W}}}t")

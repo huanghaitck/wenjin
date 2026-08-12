@@ -782,19 +782,25 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         section_properties = document.sections[0]
         section_properties.page_width, section_properties.page_height = Cm(21), Cm(29.7)
         normal = document.styles["Normal"]
-        normal.font.name = "SimSun"
+        normal.font.name = "Times New Roman"
+        normal._element.rPr.rFonts.set(qn("w:ascii"), "Times New Roman")
+        normal._element.rPr.rFonts.set(qn("w:hAnsi"), "Times New Roman")
         normal._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         normal.font.size = Pt(float(requirements.get("body_size_pt", 12)))
         for style_name, size in (("Heading 1", 14), ("Heading 2", 12)):
             style = document.styles[style_name]
-            style.font.name = "SimSun"
-            style._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
+            style.font.name = "Times New Roman"
+            style._element.rPr.rFonts.set(qn("w:ascii"), "Times New Roman")
+            style._element.rPr.rFonts.set(qn("w:hAnsi"), "Times New Roman")
+            style._element.rPr.rFonts.set(qn("w:eastAsia"), "黑体")
             style.font.size = Pt(size)
             style.font.color.rgb = RGBColor(0, 0, 0)
         title = document.add_paragraph()
         title_run = title.add_run(str(export_tree.get("title", "未命名稿件")))
         title_run.bold = True
-        title_run.font.name = "SimSun"
+        title_run.font.name = "Times New Roman"
+        title_run._element.rPr.rFonts.set(qn("w:ascii"), "Times New Roman")
+        title_run._element.rPr.rFonts.set(qn("w:hAnsi"), "Times New Roman")
         title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         title_run.font.size = Pt(18)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER

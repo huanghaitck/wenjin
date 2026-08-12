@@ -159,8 +159,12 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         import zipfile
         with zipfile.ZipFile(self.project / word["project_path"]) as package:
             document_xml = package.read("word/document.xml").decode("utf-8")
+            styles_xml = package.read("word/styles.xml").decode("utf-8")
         self.assertIn('w:vertAlign w:val="superscript"', document_xml)
         self.assertIn("[1]12", document_xml)
+        self.assertIn('w:ascii="Times New Roman"', styles_xml)
+        self.assertIn('w:eastAsia="宋体"', styles_xml)
+        self.assertIn('w:eastAsia="黑体"', styles_xml)
 
     def test_generated_references_replace_placeholder_section(self) -> None:
         manuscript = import_manuscript(
