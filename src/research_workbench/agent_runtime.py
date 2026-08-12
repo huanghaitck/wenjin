@@ -987,6 +987,29 @@ def _parse_action(content: str) -> dict[str, Any]:
 
 def _parse_tagged_tool_action(text: str) -> dict[str, Any] | None:
     """Parse DeepSeek's XML-like tool form, including its observed mismatched closer."""
+    invoke = re.fullmatch(
+        r'<tool_calls>\s*<invoke\s+name="([a-z][a-z0-9_.]+)">\s*'
+        r'(.*?)\s*</invoke>\s*</tool_calls>',
+        text,
+        flags=re.DOTALL,
+    )
+    if invoke:
+        arguments: dict[str, Any] = {}
+        remainder = invoke.group(2).strip()
+        parameter_pattern = re.compile(
+            r'<parameter\s+name="([a-zA-Z_][a-zA-Z0-9_]*)">(.*?)</parameter>',
+            flags=re.DOTALL,
+        )
+        matches = list(parameter_pattern.finditer(remainder))
+        if not matches or parameter_pattern.sub("", remainder).strip():
+            raise ValueError("tagged invoke contains malformed parameters")
+        for match in matches:
+            value = unescape(match.group(2)).strip()
+            try:
+                arguments[match.group(1)] = json.loads(value)
+            except json.JSONDecodeError:
+                arguments[match.group(1)] = value
+        return {"type": "tool_call", "tool": invoke.group(1), "arguments": arguments}
     wrapped = re.fullmatch(
         r"<tool_call>\s*<type>tool_call</type>\s*"
         r"<tool>([a-z][a-z0-9_.]+)</tool>\s*"
