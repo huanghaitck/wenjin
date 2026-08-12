@@ -82,6 +82,7 @@ from .service import (
     project_status,
     reject_ocr_proposal,
     register_source,
+    reject_source_identity,
     revise_page,
     save_source_citation_metadata,
     source_view,
@@ -443,6 +444,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["content"]),
                     payload.get("context") if isinstance(payload.get("context"), dict) else None,
                     str(payload.get("planning_mode", "guided_execution")),
+                )
+            elif parsed.path == "/api/source/reject-identity":
+                result = reject_source_identity(
+                    self.server.project_root,
+                    str(payload["source_id"]),
+                    str(payload["reviewer"]),
+                    str(payload["reason"]),
                 )
             elif parsed.path == "/api/research-design/draft":
                 result = create_design_draft(

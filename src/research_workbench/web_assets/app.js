@@ -524,6 +524,14 @@ function renderContext() {
       } else {
         const unavailable = actionButton('清洗未完成，暂无页面', () => {}); unavailable.disabled = true; node.append(unavailable);
       }
+      if (source.use_state !== 'blocked' || source.processing_state !== 'error') {
+        node.append(actionButton('标记整份文件不符', async () => {
+          const reviewer = window.prompt('复核人', 'Professor'); if (!reviewer) return;
+          const reason = window.prompt('文件身份为何不符？'); if (!reason) return;
+          await request('/api/source/reject-identity', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source_id:source.source_id, reviewer, reason})});
+          await refreshResearch('整份文件已阻断；原文件和审计记录保留。'); state.contextMode='sources'; renderContext();
+        }));
+      }
       container.append(node);
     }
     if (!state.snapshot.sources.length) container.append(card('项目还没有文献', '从图书馆加入书籍，或在顶部导入 PDF。'));

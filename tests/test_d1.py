@@ -26,7 +26,8 @@ from research_workbench.scholarship import (
     review_artifact,
 )
 from research_workbench.service import (
-    import_structure, initialize_project, list_anomalies, register_source, submit_block_repair, verify_page,
+    import_structure, initialize_project, list_anomalies, register_source, reject_source_identity,
+    submit_block_repair, verify_page,
 )
 from research_workbench.workspace import (
     create_workspace_project,
@@ -88,6 +89,24 @@ class D1EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(routed["results"][0]["qualification"], "DISCOVERED")
         self.assertEqual(routed["results"][0]["route"], "fulltext_queue")
         self.assertEqual(routed["results"][0]["route_decided_by"], "Professor")
+
+    def test_wrong_document_identity_blocks_the_whole_source(self) -> None:
+        result = reject_source_identity(
+            self.project, self.source["source_id"], "Professor",
+            "题名声称是天津条约，正文实际为另一份条约",
+        )
+        self.assertEqual(result["use_state"], "blocked")
+        with connect(self.project) as connection:
+            source = connection.execute(
+                "SELECT processing_state, use_state FROM sources WHERE source_id = ?",
+                (self.source["source_id"],),
+            ).fetchone()
+            open_identity = connection.execute(
+                "SELECT COUNT(*) FROM anomalies WHERE anomaly_id = ? AND status = 'open'",
+                (result["anomaly_id"],),
+            ).fetchone()[0]
+        self.assertEqual((source["processing_state"], source["use_state"]), ("error", "blocked"))
+        self.assertEqual(open_identity, 1)
 
     def test_library_version_is_copied_into_project_without_changing_original(self) -> None:
         materials, library = self.root / "materials", self.root / "library"

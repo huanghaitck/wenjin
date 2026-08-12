@@ -763,6 +763,42 @@ def verify_page(project_root: Path, page_id: str, reviewer: str, reason: str) ->
     return {"page_id": page_id, "verification_state": "human_verified", "reviewer": reviewer}
 
 
+def reject_source_identity(project_root: Path, source_id: str, reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("source rejection requires reviewer and reason")
+    with connect(project_root) as connection:
+        source = connection.execute(
+            "SELECT source_id, title FROM sources WHERE source_id = ?", (source_id,)
+        ).fetchone()
+        if source is None:
+            raise KeyError(f"unknown source: {source_id}")
+        anomaly_id = f"{source_id}:A_IDENTITY"
+        connection.execute(
+            "UPDATE sources SET processing_state = 'error', use_state = 'blocked' WHERE source_id = ?",
+            (source_id,),
+        )
+        connection.execute("UPDATE pages SET use_state = 'blocked' WHERE source_id = ?", (source_id,))
+        connection.execute(
+            """UPDATE blocks SET use_state = 'blocked' WHERE page_id IN (
+                   SELECT page_id FROM pages WHERE source_id = ?
+               ) AND use_state != 'superseded'""", (source_id,),
+        )
+        connection.execute(
+            """INSERT INTO anomalies(
+                   anomaly_id, source_id, scope_type, target_id, severity, category,
+                   message, status, created_at, resolved_at, repair_id
+               ) VALUES (?, ?, 'source', ?, 'systemic', 'identity', ?, 'open', ?, NULL, NULL)
+               ON CONFLICT(anomaly_id) DO UPDATE SET message=excluded.message, status='open', resolved_at=NULL""",
+            (anomaly_id, source_id, source_id, reason, utc_now()),
+        )
+        append_audit(connection, "source_identity_rejected", "source", source_id, {
+            "reviewer": reviewer, "reason": reason, "previous_title": source["title"],
+        })
+    return {"source_id": source_id, "processing_state": "error", "use_state": "blocked",
+            "anomaly_id": anomaly_id, "reviewer": reviewer, "reason": reason}
+
+
 def verify_block(project_root: Path, block_id: str, reviewer: str, reason: str) -> dict[str, Any]:
     reviewer, reason = reviewer.strip(), reason.strip()
     if not reviewer or not reason:
