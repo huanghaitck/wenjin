@@ -310,6 +310,52 @@ class M3OcrProposalTests(unittest.TestCase):
             [("paragraph", "Correct first paragraph."), ("heading", "Visible heading")],
         )
 
+    def test_open_relation_review_does_not_block_human_repaired_endpoint(self) -> None:
+        anomaly = next(
+            item for item in source_view(self.project, self.source["source_id"])["anomalies"]
+            if item["scope_type"] == "page"
+        )
+        submit_page_repair(
+            self.project,
+            anomaly["anomaly_id"],
+            {"blocks": [{"order": 1, "type": "paragraph", "text": "Human transcription"}]},
+            "reviewer",
+            "Verified against the page.",
+        )
+        block_id = list_blocks(self.project, self.source["source_id"])[0]["block_id"]
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            connection.execute(
+                """INSERT INTO page_relations(
+                       relation_id, source_id, relation_type, from_block_id, to_block_id,
+                       machine_value, verification_state
+                   ) VALUES (?, ?, 'continues_to', ?, ?, '{}', 'machine_parsed')""",
+                ("REL_test", self.source["source_id"], block_id, block_id),
+            )
+            connection.execute(
+                """INSERT INTO anomalies(
+                       anomaly_id, source_id, scope_type, target_id, category, severity,
+                       message, status, created_at
+                   ) VALUES (?, ?, 'relation', ?, 'location', 'local', ?, 'open', 'test')""",
+                ("ANO_relation", self.source["source_id"], "REL_test", "Review endpoint"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        from research_workbench.service import _recalculate_source_state
+        connection = sqlite3.connect(database_path(self.project))
+        connection.row_factory = sqlite3.Row
+        try:
+            _recalculate_source_state(connection, self.source["source_id"])
+            connection.commit()
+        finally:
+            connection.close()
+
+        active = list_blocks(self.project, self.source["source_id"])
+        self.assertEqual(active[0]["verification_state"], "human_repaired")
+        self.assertEqual(active[0]["use_state"], "research_usable")
+
     def test_page_number_save_does_not_reload_pending_edits(self) -> None:
         script = (
             Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"

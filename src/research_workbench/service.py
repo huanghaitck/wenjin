@@ -1567,8 +1567,12 @@ def _recalculate_source_state(connection: Any, source_id: str) -> None:
                 if relation:
                     for block_id in (relation["from_block_id"], relation["to_block_id"]):
                         if block_id:
-                            connection.execute("UPDATE blocks SET use_state = 'blocked' WHERE block_id = ?",
-                                               (block_id,))
+                            connection.execute(
+                                """UPDATE blocks SET use_state = 'blocked'
+                                   WHERE block_id = ? AND verification_state NOT IN
+                                         ('human_verified', 'human_repaired')""",
+                                (block_id,),
+                            )
         processing_state = "needs_review" if blocking else "accepted"
         usable_body_blocks = connection.execute(
             """SELECT COUNT(*) FROM blocks b JOIN pages p ON p.page_id = b.page_id
