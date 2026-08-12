@@ -5,6 +5,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.request import Request, urlopen
 
 import pymupdf
@@ -25,6 +26,7 @@ from research_workbench.scholarship import (
     decide_memory_candidate,
     draft_from_freeze,
     export_artifact,
+    launch_controlled_browser,
     review_artifact,
 )
 from research_workbench.service import (
@@ -200,6 +202,12 @@ class D1EndToEndDemoTests(unittest.TestCase):
     def test_browser_receipt_rejects_secrets_and_memory_stays_local_candidate(self) -> None:
         session = create_browser_session(self.project, "https://example.org/search?q=archive", "example.org")
         self.assertEqual(session["status"], "user_controlled")
+        with patch("research_workbench.scholarship.shutil.which", return_value="agent-browser"), patch(
+            "research_workbench.scholarship.subprocess.Popen"
+        ) as launch:
+            launched = launch_controlled_browser(self.project, session["session_id"])
+        self.assertEqual(launched["status"], "controlled_browser_open")
+        self.assertIn("--headed", launch.call_args.args[0])
         with self.assertRaisesRegex(ValueError, "credential"):
             create_browser_session(self.project, "https://example.org/?token=secret", "example.org")
         candidate = create_memory_candidate(

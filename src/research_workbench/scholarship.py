@@ -3,6 +3,8 @@ from __future__ import annotations
 import csv
 import json
 import re
+import shutil
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any
@@ -600,6 +602,39 @@ def create_browser_session(project_root: Path, start_url: str, allowed_domain: s
             (session_id, start_url, allowed_domain, json.dumps(receipt, ensure_ascii=False), now),
         )
     return {"session_id": session_id, "status": "user_controlled", **receipt, "created_at": now}
+
+
+def launch_controlled_browser(project_root: Path, session_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT session_id, start_url, allowed_domain FROM browser_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown browser session: {session_id}")
+    executable = shutil.which("agent-browser")
+    if not executable:
+        raise RuntimeError("受控浏览器组件 agent-browser 不可用，请在 Skills 页面检查程序集成。")
+    browser_session = f"hrw-{row['session_id'][-12:]}"
+    subprocess.Popen(
+        [executable, "--session", browser_session, "--headed", "open", row["start_url"]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    with connect(project_root) as connection:
+        connection.execute(
+            "UPDATE browser_sessions SET status = 'controlled_browser_open' WHERE session_id = ?",
+            (session_id,),
+        )
+    return {
+        "session_id": session_id,
+        "browser_session": browser_session,
+        "status": "controlled_browser_open",
+        "start_url": row["start_url"],
+        "allowed_domain": row["allowed_domain"],
+        "boundary": "User handles login, CAPTCHA, payment, download and submission.",
+    }
 
 
 def list_browser_sessions(project_root: Path) -> list[dict[str, Any]]:

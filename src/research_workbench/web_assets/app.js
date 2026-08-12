@@ -2021,6 +2021,17 @@ $('loadBrowser').onclick = () => {
   const url = $('browserAddress').value.trim(); try { new URL(url); } catch { notice('请输入完整的网址。', true); return; }
   $('researchFrame').src = url; renderBrowserControls(); notice('正在中央研究浏览器中打开；若站点拒绝嵌入，请使用系统浏览器。');
 };
+$('controlledBrowser').onclick = async () => {
+  const url=$('browserAddress').value.trim(); let domain='';
+  try { domain=new URL(url).hostname; } catch { notice('请输入完整的网址。',true); return; }
+  try {
+    notice('正在启动可见的受控研究浏览器……');
+    state.browserSession=await request('/api/browser/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start_url:url,allowed_domain:domain})});
+    const launched=await request('/api/browser/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.browserSession.session_id})});
+    await refreshResearch('受控浏览器已打开；请在可见窗口处理登录、验证码、滑块和下载。');
+    state.browserSession=launched; renderBrowserControls();
+  } catch(error) { notice(error.message,true); }
+};
 $('externalBrowser').onclick = () => { const url=$('browserAddress').value.trim(); try { new URL(url); window.open(url,'_blank','noopener'); } catch { notice('请输入完整的网址。',true); } };
 
 const initialMode = new URLSearchParams(window.location.search).get('mode');

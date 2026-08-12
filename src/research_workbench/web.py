@@ -71,6 +71,7 @@ from .scholarship import (
     decide_memory_candidate,
     draft_from_freeze,
     export_artifact,
+    launch_controlled_browser,
     research_state,
     review_artifact,
 )
@@ -616,6 +617,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/browser/session":
                 result = create_browser_session(
                     self.server.project_root, str(payload["start_url"]), str(payload["allowed_domain"]),
+                )
+            elif parsed.path == "/api/browser/launch":
+                result = launch_controlled_browser(
+                    self.server.project_root, str(payload["session_id"]),
                 )
             elif parsed.path == "/api/memory/create":
                 result = create_memory_candidate(

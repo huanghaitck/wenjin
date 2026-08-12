@@ -165,9 +165,9 @@
 
   <main id="browserWorkbench" class="browser-workbench" hidden>
     <section class="browser-center surface">
-      <header class="browser-bar"><input id="browserAddress" value="https://www.crossref.org/"><button id="loadBrowser" class="primary-inline">打开研究网页</button><button id="externalBrowser">系统浏览器打开</button></header>
+      <header class="browser-bar"><input id="browserAddress" value="https://www.crossref.org/"><button id="loadBrowser" class="primary-inline">打开研究网页</button><button id="controlledBrowser">受控浏览器打开</button><button id="externalBrowser">普通浏览器打开</button></header>
       <iframe id="researchFrame" title="研究浏览器预览" sandbox="allow-forms allow-scripts"></iframe>
-      <p class="boundary-note browser-warning">部分数据库禁止嵌入显示；此时使用系统浏览器。Demo 不读取 Cookie，也不绕过登录、验证码、付费墙或许可限制。</p>
+      <p class="boundary-note browser-warning">知网等数据库禁止嵌入时，请使用受控浏览器；登录、验证码和滑块由你在可见窗口完成。工作台不读取 Cookie，也不绕过付费墙或许可限制。</p>
     </section>
     <aside class="browser-side surface"><header class="agent-heading"><div><h2>浏览会话</h2><p>域名范围、收集篮与回执</p></div></header><div id="browserControls" class="context-content"></div></aside>
   </main>

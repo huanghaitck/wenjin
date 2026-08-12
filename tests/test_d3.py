@@ -304,6 +304,8 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn('id="openSourceRepair"', html)
         self.assertIn('id="documentCanvas"', html)
         self.assertIn('id="browserWorkbench"', html)
+        self.assertIn('id="controlledBrowser"', html)
+        self.assertIn("受控浏览器已打开", app)
         self.assertIn("插入正文引证并保存新修订", app)
         self.assertIn("按双栏阅读顺序重排", app)
         self.assertIn("解释性脚注文字（不得填写书目引证）", app)
