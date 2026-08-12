@@ -15,6 +15,7 @@ from research_workbench.agent_runtime import (
     ModelActionFormatError,
     ModelProfile,
     SYSTEM_PROMPT,
+    _agent_research_state,
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
@@ -109,6 +110,14 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(rejected["runs"][0]["approvals"][0]["status"], "rejected")
         self.assertFalse((self.project / "research" / "notes" / f"{approval['approval_id']}.md").exists())
         self.assertIn("未写入项目", rejected["messages"][-1]["content"]["text"])
+
+    def test_agent_research_state_is_a_compact_index(self) -> None:
+        state = _agent_research_state(self.project)
+        self.assertIn("counts", state)
+        self.assertIn("claims", state)
+        self.assertIn("freezes", state)
+        self.assertNotIn("artifacts", state)
+        self.assertLess(len(json.dumps(state, ensure_ascii=False)), 5000)
 
     def test_profiles_and_assignment_never_persist_api_key(self) -> None:
         secret = "not-for-database"

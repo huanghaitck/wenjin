@@ -1042,7 +1042,7 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 arguments.get("physical_page"),
             )
         elif tool_name == "research.state":
-            result = research_state(project_root)
+            result = _agent_research_state(project_root)
         elif tool_name == "research.plan_context":
             result = _planning_context(project_root)
         elif tool_name == "retrieval.list":
@@ -1235,6 +1235,33 @@ def _planning_context(project_root: Path) -> dict[str, Any]:
             for item in research.get("freezes", [])
         ],
         "boundary": "This compact planning context is project state, not source evidence. Inspect original pages before evidence use.",
+    }
+
+
+def _agent_research_state(project_root: Path) -> dict[str, Any]:
+    research = research_state(project_root)
+    return {
+        "counts": {
+            "claims": len(research.get("claims", [])),
+            "evidence": sum(len(item.get("evidence", [])) for item in research.get("claims", [])),
+            "freezes": len(research.get("freezes", [])),
+            "approved_freezes": sum(item.get("status") == "approved" for item in research.get("freezes", [])),
+            "artifacts": len(research.get("artifacts", [])),
+            "browser_sessions": len(research.get("browser_sessions", [])),
+            "memory_candidates": len(research.get("memory_candidates", [])),
+        },
+        "claims": [
+            {"claim_id": item.get("claim_id", ""), "text": item.get("text", ""),
+             "status": item.get("status", ""), "evidence_count": len(item.get("evidence", []))}
+            for item in research.get("claims", [])[:30]
+        ],
+        "freezes": [
+            {"freeze_id": item.get("freeze_id", ""), "title": item.get("title", ""),
+             "status": item.get("status", ""),
+             "claim_count": len(item.get("payload", {}).get("claims", []))}
+            for item in research.get("freezes", [])[:20]
+        ],
+        "boundary": "Compact index only. Inspect exact sources and verified pages before using evidence.",
     }
 
 
