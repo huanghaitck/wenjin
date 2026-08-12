@@ -202,12 +202,16 @@ class D1EndToEndDemoTests(unittest.TestCase):
     def test_browser_receipt_rejects_secrets_and_memory_stays_local_candidate(self) -> None:
         session = create_browser_session(self.project, "https://example.org/search?q=archive", "example.org")
         self.assertEqual(session["status"], "user_controlled")
+        reused = create_browser_session(self.project, "https://example.org/another", "example.org")
+        self.assertEqual(reused["session_id"], session["session_id"])
+        self.assertTrue(reused["reused"])
         with patch("research_workbench.scholarship.shutil.which", return_value="agent-browser"), patch(
             "research_workbench.scholarship.subprocess.Popen"
         ) as launch:
             launched = launch_controlled_browser(self.project, session["session_id"])
         self.assertEqual(launched["status"], "controlled_browser_open")
         self.assertIn("--headed", launch.call_args.args[0])
+        self.assertIn("--restore", launch.call_args.args[0])
         with self.assertRaisesRegex(ValueError, "credential"):
             create_browser_session(self.project, "https://example.org/?token=secret", "example.org")
         candidate = create_memory_candidate(

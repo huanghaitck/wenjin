@@ -593,6 +593,15 @@ def create_browser_session(project_root: Path, start_url: str, allowed_domain: s
         raise ValueError("browser session URLs must not contain credential query parameters")
     if parsed.hostname.lower() != allowed_domain and not parsed.hostname.lower().endswith("." + allowed_domain):
         raise ValueError("start URL must be inside the allowed domain")
+    with connect(project_root) as connection:
+        existing = connection.execute(
+            """SELECT session_id, start_url, allowed_domain, status, receipt_json, created_at
+               FROM browser_sessions WHERE allowed_domain = ? ORDER BY created_at DESC LIMIT 1""",
+            (allowed_domain,),
+        ).fetchone()
+    if existing is not None:
+        receipt = json.loads(existing["receipt_json"])
+        return {**dict(existing), **receipt, "reused": True}
     session_id, now = _id("BRS"), utc_now()
     receipt = {"start_url": start_url, "allowed_domain": allowed_domain,
                "boundary": "User handles login, CAPTCHA, payment, download and submission."}
@@ -601,7 +610,8 @@ def create_browser_session(project_root: Path, start_url: str, allowed_domain: s
             "INSERT INTO browser_sessions(session_id, start_url, allowed_domain, status, receipt_json, created_at) VALUES (?, ?, ?, 'user_controlled', ?, ?)",
             (session_id, start_url, allowed_domain, json.dumps(receipt, ensure_ascii=False), now),
         )
-    return {"session_id": session_id, "status": "user_controlled", **receipt, "created_at": now}
+    return {"session_id": session_id, "status": "user_controlled", **receipt, "created_at": now,
+            "reused": False}
 
 
 def launch_controlled_browser(project_root: Path, session_id: str) -> dict[str, Any]:
@@ -617,7 +627,7 @@ def launch_controlled_browser(project_root: Path, session_id: str) -> dict[str, 
         raise RuntimeError("受控浏览器组件 agent-browser 不可用，请在 Skills 页面检查程序集成。")
     browser_session = f"hrw-{row['session_id'][-12:]}"
     subprocess.Popen(
-        [executable, "--session", browser_session, "--headed", "open", row["start_url"]],
+        [executable, "--session", browser_session, "--restore", "--headed", "open", row["start_url"]],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),

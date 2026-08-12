@@ -2028,7 +2028,7 @@ $('controlledBrowser').onclick = async () => {
     notice('正在启动可见的受控研究浏览器……');
     state.browserSession=await request('/api/browser/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({start_url:url,allowed_domain:domain})});
     const launched=await request('/api/browser/launch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:state.browserSession.session_id})});
-    await refreshResearch('受控浏览器已打开；请在可见窗口处理登录、验证码、滑块和下载。');
+    await refreshResearch(state.browserSession.reused ? '已复用该数据库的持久浏览会话；无需重复建立登录窗口。' : '受控浏览器已打开；请在可见窗口处理登录、验证码、滑块和下载。');
     state.browserSession=launched; renderBrowserControls();
   } catch(error) { notice(error.message,true); }
 };
