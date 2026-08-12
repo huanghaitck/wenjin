@@ -19,6 +19,7 @@ from research_workbench.agent_runtime import (
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
+    _planning_context,
     _post_json,
     _read_page,
     _search_source_blocks,
@@ -833,6 +834,12 @@ class M4AgentWorkspaceTests(unittest.TestCase):
     def test_system_prompt_separates_processing_state_from_material_quality(self) -> None:
         self.assertIn("Never translate a blocked, pending, partial or zero-page processing state", SYSTEM_PROMPT)
         self.assertIn("page processing is unfinished", SYSTEM_PROMPT)
+
+    def test_planning_context_explains_source_state_semantics(self) -> None:
+        context = _planning_context(self.project_root)
+        semantics = context["source_state_semantics"]
+        self.assertIn("not the historical value", semantics["processing_state"])
+        self.assertIn("not evidence", semantics["zero_pages"])
 
     def test_parser_accepts_observed_deepseek_tool_wrappers_only_when_they_wrap_the_whole_action(self) -> None:
         action = _parse_action(

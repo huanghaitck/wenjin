@@ -1211,6 +1211,11 @@ def _planning_context(project_root: Path) -> dict[str, Any]:
             "source_count": status.get("source_count", len(sources)),
             "open_anomaly_count": status.get("open_anomaly_count", 0),
         },
+        "source_state_semantics": {
+            "processing_state": "Describes the local ingestion or verification workflow, not the historical value or existence of the work.",
+            "use_state": "Describes what the current local copy may be used for; blocked or partial does not mean the work is absent from scholarship.",
+            "zero_pages": "Means this workspace has no usable pages yet; it is not evidence that the source lacks content.",
+        },
         "sources": [
             {
                 "source_id": item["source_id"], "title": item["title"],
