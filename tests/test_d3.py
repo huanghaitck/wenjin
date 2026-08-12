@@ -304,6 +304,8 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn("$('pageJump').value = page?.physical_page || '';", app)
         self.assertIn("sessionStorage.getItem('hrwManuscriptId')", app)
         self.assertIn("sessionStorage.setItem('hrwSectionId', state.sectionId)", app)
+        self.assertIn("本节尚有 ${pending.length} 份待审提案", app)
+        self.assertIn("字符预算未通过", app)
         self.assertNotIn('id="sourceMode"', html)
         self.assertIn('id="openSourceRepair"', html)
         self.assertIn('id="documentCanvas"', html)

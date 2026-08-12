@@ -1113,6 +1113,8 @@ function renderAuthoringControl(section, proposal) {
     const generate=actionButton('生成待审提案', async()=>{
       const evidence_ids=[...evidenceScope.selectedOptions].map((option)=>option.value);
       if(operation.value==='section_draft'&&!evidence_ids.length) throw new Error('请为本节至少选择一条已冻结证据。');
+      const pending=(section.proposals||[]).filter((item)=>item.status==='pending');
+      if(pending.length) throw new Error(`本节尚有 ${pending.length} 份待审提案；请先批准或拒绝，再生成新提案。`);
       generate.disabled=true; notice('写作模型正在生成待审提案，请勿重复提交。');
       try {
         const result=await request('/api/writing/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section_id:section.section_id,operation:operation.value,instruction:$('writingInstruction').value,freeze_id:freeze.value,evidence_ids,skill_name:skill.value,style_profile_id:styleProfile.value})});
@@ -1127,8 +1129,11 @@ function renderAuthoringControl(section, proposal) {
       if(proposal.validation.invalid_evidence_ids?.length) problems.push('无效证据编号：'+proposal.validation.invalid_evidence_ids.join('、'));
       if(proposal.validation.guard_status==='BLOCKED_PROTECTED_CHANGE') problems.push('精确保护项发生变化，禁止批准');
       if(proposal.operation==='section_draft'&&!proposal.validation.evidence_linked) problems.push('正文没有绑定冻结证据编号');
+      if(proposal.validation.character_budget_status==='OUT_OF_RANGE') problems.push(`字符预算未通过：实际 ${proposal.validation.actual_character_count}，要求 ${proposal.validation.requested_character_budget?.min}—${proposal.validation.requested_character_budget?.max}`);
+      const visibleWarnings=(proposal.validation.prose_risk_warnings||[]).filter((item)=>item!=='internal_process'||!proposal.proposed_content.includes('[EVID:'));
+      if(visibleWarnings.length) problems.push('语言风险提示：'+visibleWarnings.join('、'));
       const contractChecked=proposal.operation!=='section_draft'||Object.hasOwn(proposal.validation,'evidence_linked');
-      const detail=!contractChecked?'旧提案未经过当前证据契约检查，不可直接批准。':(proposal.validation.valid?'证据契约检查通过；仍须人工核对解释。':problems.join('\n'));
+      const detail=!contractChecked?'旧提案未经过当前证据契约检查，不可直接批准。':(proposal.validation.valid?`证据契约检查通过；仍须人工核对解释。${problems.length?'\n'+problems.join('\n'):''}`:problems.join('\n'));
       const node=card(`${proposal.operation} · ${proposal.status}`, detail);
       node.append(Object.assign(document.createElement('small'),{textContent:`提案 ${proposal.proposed_content.length} 字符 · 基础版本 ${proposal.base_version_id} · ${new Date(proposal.created_at).toLocaleString()}`}));
       if(proposal.operation==='historical_humanize') node.append(Object.assign(document.createElement('p'),{textContent:`精确保护：${proposal.validation.guard_status}；事实、归因、因果、范围和限定仍须逐段人工复核。\n段落决定：${(proposal.validation.paragraph_decisions||[]).map((item)=>`${item.paragraph}:${item.decision}`).join(' · ')||'待核'}`}));
