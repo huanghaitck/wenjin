@@ -896,6 +896,15 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             "arguments": {"query": 1879, "source_id": "SRC_1", "limit": 10},
         })
 
+    def test_parser_accepts_extra_invoke_parameter_attributes(self) -> None:
+        action = _parse_action(
+            '<tool_calls><invoke name="source.page">'
+            '<parameter name="source_id" string="true">SRC_1</parameter>'
+            '<parameter name="physical_page" type="number">230</parameter>'
+            '</invoke></tool_calls>'
+        )
+        self.assertEqual(action["arguments"], {"source_id": "SRC_1", "physical_page": 230})
+
     def test_parser_accepts_observed_deepseek_dsml_only_as_the_whole_response(self) -> None:
         action = _parse_action(
             '<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="source.page">'

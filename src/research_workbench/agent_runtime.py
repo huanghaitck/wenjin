@@ -997,18 +997,20 @@ def _parse_tagged_tool_action(text: str) -> dict[str, Any] | None:
         arguments: dict[str, Any] = {}
         remainder = invoke.group(2).strip()
         parameter_pattern = re.compile(
-            r'<parameter\s+name="([a-zA-Z_][a-zA-Z0-9_]*)">(.*?)</parameter>',
-            flags=re.DOTALL,
+            r'<parameter\s+([^>]+)>(.*?)</parameter>', flags=re.DOTALL,
         )
         matches = list(parameter_pattern.finditer(remainder))
         if not matches or parameter_pattern.sub("", remainder).strip():
             raise ValueError("tagged invoke contains malformed parameters")
         for match in matches:
+            name_match = re.search(r'\bname="([a-zA-Z_][a-zA-Z0-9_]*)"', match.group(1))
+            if not name_match:
+                raise ValueError("tagged invoke parameter is missing a valid name")
             value = unescape(match.group(2)).strip()
             try:
-                arguments[match.group(1)] = json.loads(value)
+                arguments[name_match.group(1)] = json.loads(value)
             except json.JSONDecodeError:
-                arguments[match.group(1)] = value
+                arguments[name_match.group(1)] = value
         return {"type": "tool_call", "tool": invoke.group(1), "arguments": arguments}
     wrapped = re.fullmatch(
         r"<tool_call>\s*<type>tool_call</type>\s*"
