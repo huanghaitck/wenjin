@@ -156,6 +156,18 @@ class D2AuthoringReadingTests(unittest.TestCase):
         self.assertTrue(proposal["validation"]["valid"])
         self.assertEqual(proposal["validation"]["prose_risk_warnings"], ["process_exposition"])
 
+    def test_polish_prompt_preserves_narrative_density_and_requires_direct_judgment(self) -> None:
+        section = self.manuscript["sections"][1]
+        prompts: list[str] = []
+        create_writing_proposal(
+            self.project, section["section_id"], "polish", "改善行文",
+            writer=lambda prompt: prompts.append(prompt) or section["content"],
+        )
+        self.assertIn("不得降低材料密度", prompts[0])
+        self.assertIn("应直接、肯定地写出", prompts[0])
+        self.assertIn("史料限度应紧邻相关判断", prompts[0])
+        self.assertIn("不得另写研究流程", prompts[0])
+
     def test_approved_section_with_markdown_table_syncs_to_document(self) -> None:
         section = self.manuscript["sections"][1]
         proposal = create_writing_proposal(

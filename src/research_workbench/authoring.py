@@ -1140,6 +1140,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
             "硬约束：不得改变事实、归因、因果、时间顺序、论证范围、限定词、阴性结果；不得改变引文、译文、"
             "脚注、页码、档号、专名、数字、术语、URL；不得增加第一人称、情绪、反问或模仿具体学者。\n"
             "表达操作：让材料和行动者先于抽象概念，叙事与分析交替，删除内部流程语言和重复总结；"
+            "除非作者明确要求压缩，不得删减史料叙述、历史过程或有证据支撑的分析。证据足以支持时应明确下判断，"
+            "不得用成串否定和预防性辩解代替论断；真正的史料限度只在相关判断处简洁交代，不另写流程说明。"
             "无法确定为纯语言变化时保留原句。\n"
             f"技能：{selected_skill['name']} / SHA-256 {selected_skill['sha256']}。\n"
             f"经批准的高层文风画像：{style_context}\n具体要求：{instruction}\n\n{base_content}"
@@ -1198,6 +1200,10 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         else:
             prompt = (
                 "润色以下中文历史学论文段落。不得新增、删除或强化事实，不得改变引文、数字、脚注标记和来源标识。"
+                "除非作者明确要求压缩，不得以精简、概括或合并为目标，不得降低材料密度或删去有助于讲清历史过程的叙述。"
+                "行文先交代人物、行动、时间、地点和材料，再据此作出判断；证据能够支持的判断应直接、肯定地写出，"
+                "不要改写成连续的‘并非’‘不能’‘不足以’等预防性辩解。真正的史料限度应紧邻相关判断简洁说明，"
+                "不得另写研究流程、材料分流、门禁、核验状态、统计口径或面向评审的自我辩护。"
                 f"{scope_rule}具体要求：{instruction}\n\n{writing_input}"
             )
         fallback = re.sub(r"[ \t]+", " ", writing_input).replace(" ,", "，").replace(" .", "。")
