@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,9 @@ LIBRARY_SHELVES = {
     "reference_works": "工具书与目录", "unclassified": "待分类",
 }
 SUGGESTED_SHELVES = {"archival_source": "primary_sources", "article": "academic_articles"}
+SCAN_PAGE_SIZE = 50
+SCAN_MAX_PAGE_SIZE = 50
+SCAN_WRITE_BATCH_SIZE = 50
 
 
 def _file_hash(path: Path) -> str:
@@ -215,7 +219,7 @@ def _candidate_action(connection: Any, item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def scan_directory(
+def create_scan_session(
     project_root: Path,
     source_root: Path,
     library_root: Path | None = None,
@@ -237,31 +241,34 @@ def scan_directory(
                ) VALUES (?, ?, ?, ?, 'scanning', ?)""",
             (session_id, str(source_root), skill["name"], skill["sha256"], now),
         )
-        for directory, _, filenames in os.walk(source_root, followlinks=False):
-            for filename in sorted(filenames):
-                path = Path(directory) / filename
-                if path.suffix.lower() not in CANDIDATE_SUFFIXES:
-                    continue
-                candidate_id = f"CND_{uuid.uuid4().hex}"
-                try:
-                    item = _inspect_file(path)
-                    identity = _candidate_action(connection, item)
-                    status = "preview"
-                    error = ""
-                except Exception as exc:
-                    stat = path.stat()
-                    item = {
-                        "path": str(path.resolve()), "format": path.suffix.lower().lstrip("."),
-                        "byte_count": stat.st_size, "modified_ns": stat.st_mtime_ns, "sha256": "",
-                        "suggested_title": path.stem, "suggested_author": "", "suggested_year": "",
-                        "suggested_publisher": "", "suggested_language": "und",
-                        "suggested_material_type": "unknown", "page_count": None,
-                        "text_layer": "unknown", "triage_state": "error",
-                        "triage_reason": "文件无法完成只读盘点。", "inspected_pages": 0, "sample_text": "",
-                    }
-                    identity = {"proposed_action": "error", "work_id": None, "edition_id": None, "file_id": None}
-                    status = "error"
-                    error = str(exc)
+    return scan_session(project_root, session_id, root)
+
+
+def run_scan_session(
+    project_root: Path,
+    session_id: str,
+    library_root: Path | None = None,
+) -> None:
+    root = library_root_for(project_root, library_root)
+    with connect_library(root) as connection:
+        session = connection.execute(
+            "SELECT * FROM scan_sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if session is None:
+            raise KeyError(f"unknown scan session: {session_id}")
+        source_root = Path(session["root_path"])
+    processed = 0
+    pending: list[tuple[str, dict[str, Any], str, str, dict[str, Any]]] = []
+
+    def flush_pending() -> None:
+        nonlocal processed
+        if not pending:
+            return
+        with connect_library(root) as connection:
+            for candidate_id, item, status, error, fallback_identity in pending:
+                identity = (
+                    _candidate_action(connection, item) if status != "error" else fallback_identity
+                )
                 connection.execute(
                     """INSERT INTO scan_candidates(
                            candidate_id, session_id, path, format, byte_count, modified_ns, sha256,
@@ -283,25 +290,139 @@ def scan_directory(
                         status, error,
                     ),
                 )
-        connection.execute(
-            "UPDATE scan_sessions SET status = 'preview_ready' WHERE session_id = ?",
-            (session_id,),
-        )
-    return scan_session(project_root, session_id, root)
+            processed += len(pending)
+            connection.execute(
+                "UPDATE scan_sessions SET processed_count = ? WHERE session_id = ?",
+                (processed, session_id),
+            )
+        pending.clear()
+
+    try:
+        for directory, _, filenames in os.walk(source_root, followlinks=False):
+            for filename in sorted(filenames):
+                path = Path(directory) / filename
+                if path.suffix.lower() not in CANDIDATE_SUFFIXES:
+                    continue
+                candidate_id = f"CND_{uuid.uuid4().hex}"
+                try:
+                    item = _inspect_file(path)
+                    identity = {"proposed_action": "", "work_id": None, "edition_id": None, "file_id": None}
+                    status = "preview"
+                    error = ""
+                except Exception as exc:
+                    stat = path.stat()
+                    item = {
+                        "path": str(path.resolve()), "format": path.suffix.lower().lstrip("."),
+                        "byte_count": stat.st_size, "modified_ns": stat.st_mtime_ns, "sha256": "",
+                        "suggested_title": path.stem, "suggested_author": "", "suggested_year": "",
+                        "suggested_publisher": "", "suggested_language": "und",
+                        "suggested_material_type": "unknown", "page_count": None,
+                        "text_layer": "unknown", "triage_state": "error",
+                        "triage_reason": "文件无法完成只读盘点。", "inspected_pages": 0, "sample_text": "",
+                    }
+                    identity = {"proposed_action": "error", "work_id": None, "edition_id": None, "file_id": None}
+                    status = "error"
+                    error = str(exc)
+                pending.append((candidate_id, item, status, error, identity))
+                if len(pending) >= SCAN_WRITE_BATCH_SIZE:
+                    flush_pending()
+        flush_pending()
+        with connect_library(root) as connection:
+            connection.execute(
+                """UPDATE scan_sessions
+                   SET status = 'preview_ready', processed_count = ?, completed_at = ?
+                   WHERE session_id = ?""",
+                (processed, utc_now(), session_id),
+            )
+    except Exception as exc:
+        pending.clear()
+        with connect_library(root) as connection:
+            connection.execute(
+                """UPDATE scan_sessions
+                   SET status = 'failed', error = ?, processed_count = ?, completed_at = ?
+                   WHERE session_id = ?""",
+                (str(exc), processed, utc_now(), session_id),
+            )
 
 
-def scan_session(project_root: Path, session_id: str, library_root: Path | None = None) -> dict[str, Any]:
+def start_scan_session(
+    project_root: Path,
+    source_root: Path,
+    library_root: Path | None = None,
+    skill_name: str = "historical-material-intake",
+    compatibility_wait: float = 0.0,
+) -> dict[str, Any]:
+    session = create_scan_session(project_root, source_root, library_root, skill_name)
     root = library_root_for(project_root, library_root)
+    worker = threading.Thread(
+        target=run_scan_session,
+        args=(project_root, session["session_id"], root),
+        name=f"library-scan-{session['session_id']}",
+        daemon=True,
+    )
+    worker.start()
+    # Optional only for callers that explicitly want a brief compatibility wait; the
+    # HTTP endpoint uses the non-blocking default.
+    if compatibility_wait > 0:
+        worker.join(timeout=compatibility_wait)
+    return scan_session(project_root, session["session_id"], root)
+
+
+def scan_directory(
+    project_root: Path,
+    source_root: Path,
+    library_root: Path | None = None,
+    skill_name: str = "historical-material-intake",
+) -> dict[str, Any]:
+    """Synchronous compatibility helper used by the CLI and existing small-directory callers."""
+    session = create_scan_session(project_root, source_root, library_root, skill_name)
+    run_scan_session(project_root, session["session_id"], library_root)
+    return scan_session(project_root, session["session_id"], library_root)
+
+
+def scan_session(
+    project_root: Path,
+    session_id: str = "",
+    library_root: Path | None = None,
+    page: int = 1,
+    page_size: int = SCAN_PAGE_SIZE,
+) -> dict[str, Any]:
+    root = library_root_for(project_root, library_root)
+    page = max(1, int(page))
+    page_size = max(1, min(int(page_size), SCAN_MAX_PAGE_SIZE))
     with connect_library(root) as connection:
-        session = connection.execute(
-            "SELECT * FROM scan_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        if session_id:
+            session = connection.execute(
+                "SELECT * FROM scan_sessions WHERE session_id = ?", (session_id,)
+            ).fetchone()
+        else:
+            session = connection.execute(
+                "SELECT * FROM scan_sessions ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
         if session is None:
             raise KeyError(f"unknown scan session: {session_id}")
+        total_count = connection.execute(
+            "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ?", (session["session_id"],)
+        ).fetchone()[0]
+        offset = (page - 1) * page_size
         candidates = connection.execute(
-            "SELECT * FROM scan_candidates WHERE session_id = ? ORDER BY path", (session_id,)
+            """SELECT candidate_id, session_id, path, format, byte_count, modified_ns, sha256,
+                      suggested_title, suggested_author, suggested_year, suggested_publisher,
+                      suggested_language, suggested_material_type, page_count, text_layer,
+                      triage_state, triage_reason, inspected_pages, proposed_action,
+                      existing_work_id, existing_edition_id, existing_file_id, status, error
+               FROM scan_candidates WHERE session_id = ? ORDER BY path LIMIT ? OFFSET ?""",
+            (session["session_id"], page_size, offset),
         ).fetchall()
-    return {**dict(session), "candidates": [dict(row) for row in candidates]}
+    return {
+        **dict(session),
+        "total_count": total_count,
+        "page": page,
+        "page_size": page_size,
+        "page_count": (total_count + page_size - 1) // page_size,
+        "has_more": offset + len(candidates) < total_count,
+        "candidates": [dict(row) for row in candidates],
+    }
 
 
 def _add_tag(connection: Any, work_id: str, name: str, origin: str) -> None:
@@ -369,6 +490,8 @@ def approve_candidates(
         ).fetchone()
         if session is None:
             raise KeyError(f"unknown scan session: {session_id}")
+        if session["status"] not in {"preview_ready", "partially_approved", "approved"}:
+            raise ValueError("scan candidates may only be approved after the scan preview is ready")
         skill = {"name": session["skill_name"], "sha256": session["skill_sha256"]}
         parameters: list[Any] = [session_id]
         clause = ""

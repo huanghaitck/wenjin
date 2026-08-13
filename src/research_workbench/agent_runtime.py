@@ -24,6 +24,7 @@ from .authoring import (
     create_reading_job,
     reading_job_batch,
     save_reading_note,
+    validate_historiography_entry_payload,
 )
 from .research import list_retrievals
 from .research_design import create_design_draft, current_shared_design
@@ -39,6 +40,16 @@ MAX_TOOL_CALLS = 24
 MAX_HISTORY_MESSAGES = 12
 MAX_HISTORY_CHARS = 30000
 MAX_HISTORY_MESSAGE_CHARS = 8000
+SOURCE_LIST_DEFAULT_LIMIT = 20
+SOURCE_LIST_MAX_LIMIT = 50
+ARTIFACT_WRITING_TOOLS = {
+    "research_design.propose",
+    "research_event.propose_batch",
+    "reading_job.create",
+    "reading_note.save",
+    "historiography.create",
+    "save_research_note",
+}
 
 
 def _compact_authoring_state(project_root: Path) -> dict[str, Any]:
@@ -112,7 +123,7 @@ Return exactly one JSON object for exactly one action and no markdown. If severa
 request them one at a time and wait for each TOOL_RESULT before choosing the next action.
 Available actions:
 {"type":"tool_call","tool":"project.status","arguments":{}}
-{"type":"tool_call","tool":"source.list","arguments":{}}
+{"type":"tool_call","tool":"source.list","arguments":{"source_ids":["optional-exact-source-id"],"query":"optional title or id fragment","limit":20}}
 {"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"exact composite id"}}
 {"type":"tool_call","tool":"source.page","arguments":{"source_id":"...","physical_page":249}}
@@ -165,10 +176,11 @@ than an unqualified historical fact. Keep witnessed actions and measurements dis
 author's explanations and from information attributed to other people.
 Normally omit original_text: the workbench copies the exact effective text from its original_text field anchors.
 Supply original_text only when selecting a shorter verbatim substring, and never normalize spelling or typography.
-For source.list, use_state describes page-processing usability, not whether a work is relevant,
-missing, or a prerequisite. When research_context is present, use its source_type, carrier,
-witness_relation, reading_status and notes to distinguish an original witness, derivative locator,
-version-chain item and background study. Do not infer a research priority from blocked/partial alone.
+source.list is a compact, bounded index, not a full project dump. When the researcher supplies an
+exact source_id, call it with source_ids=["..."]; otherwise use query and a small limit. Its result
+omits byte counts, full research_context and source text. Use source.page or the bounded reading tools
+for detail. For source.list, use_state describes page-processing usability, not whether a work is
+relevant, missing, or a prerequisite. Do not infer a research priority from blocked/partial alone.
 Never translate a blocked, pending, partial or zero-page processing state into a claim that the
 historical work itself is illegible, unavailable, absent or unusable. Say only that its local
 page processing is unfinished unless source inspection independently establishes a material defect.
@@ -181,9 +193,13 @@ Use reading_job.create to persist bounded metadata, targeted or full reading wor
 job; it does not read or complete it. Read at most ten physical pages at a time with reading_job.batch,
 then save a concise source-grounded analysis with reading_note.save. Full reading can complete only after
 every usable page of every assigned source is covered; blocked pages yield needs_repair. A reading note
-is a scoped interpretation aid, never evidence by itself. Use historiography.create only after the
+is a scoped interpretation aid, never evidence by itself. Its source identity is supplied by the tool:
+do not write or guess a source title/author inside content. If save fails on a blocked page, use the returned
+source_identity and savable_physical_pages to correct the call. Use historiography.create only after the
 named study has been read deeply enough to state its position, contribution, evidence path, limitation
-and relation to the current research question. Do not create historiography from titles or abstracts.
+and relation to the current research question. Pass the canonical_title returned by the reading tools as
+work_title. Historiography entries remain candidates until a human approves them. Do not create
+historiography from titles or abstracts.
 Write final content for a researcher as readable prose with short headings or bullet lines.
 Do not return a Python repr, JSON dump, or an object-shaped report unless the user explicitly asks for one.
 Never expose or echo internal lines beginning with TOOL_RESULT in the final answer.
@@ -236,6 +252,26 @@ def _append_run_event(connection: Any, run_id: str, event_type: str, payload: di
         (run_id, sequence, event_type, _json(payload), utc_now()),
     )
     return sequence
+
+
+def _saved_artifact_receipt(connection: Any, run_id: str) -> dict[str, Any]:
+    placeholders = ",".join("?" for _ in ARTIFACT_WRITING_TOOLS)
+    rows = connection.execute(
+        f"""SELECT tool_call_id, tool_name FROM tool_calls
+             WHERE run_id = ? AND status = 'COMPLETED'
+               AND tool_name IN ({placeholders})
+             ORDER BY created_at, tool_call_id""",
+        (run_id, *sorted(ARTIFACT_WRITING_TOOLS)),
+    ).fetchall()
+    saved = [
+        {"tool_call_id": str(row["tool_call_id"]), "tool": str(row["tool_name"])}
+        for row in rows
+    ]
+    return {
+        "artifacts_saved": bool(saved),
+        "saved_artifact_count": len(saved),
+        "saved_artifacts": saved,
+    }
 
 
 def sync_model_profiles(project_root: Path) -> list[dict[str, Any]]:
@@ -421,8 +457,35 @@ def recover_interrupted_runs(project_root: Path) -> int:
                 "UPDATE goals SET status = 'failed', completed_at = ? WHERE goal_id = ?",
                 (now, row["goal_id"]),
             )
-            _append_run_event(connection, str(row["run_id"]), "run_failed", {"error": message})
+            receipt = _saved_artifact_receipt(connection, str(row["run_id"]))
+            _append_run_event(
+                connection, str(row["run_id"]), "run_failed", {"error": message, **receipt}
+            )
     return len(rows)
+
+
+def _fail_run(project_root: Path, run_id: str, error: Exception | str) -> bool:
+    """Persist one terminal failure; repeated outer cleanup is intentionally a no-op."""
+    message, now = str(error), utc_now()
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT goal_id, status FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown run: {run_id}")
+        if row["status"] != "RUNNING":
+            return False
+        connection.execute(
+            "UPDATE runs SET status = 'FAILED', error = ?, updated_at = ?, completed_at = ? WHERE run_id = ?",
+            (message, now, now, run_id),
+        )
+        connection.execute(
+            "UPDATE goals SET status = 'failed', completed_at = ? WHERE goal_id = ?",
+            (now, row["goal_id"]),
+        )
+        receipt = _saved_artifact_receipt(connection, run_id)
+        _append_run_event(connection, run_id, "run_failed", {"error": message, **receipt})
+    return True
 
 
 def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
@@ -470,6 +533,7 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
                 item["request"] = _decode(item.pop("request_json"), {})
                 item["decision"] = _decode(item.pop("decision_json"), None)
                 run["approvals"].append(item)
+            run["artifact_receipt"] = _saved_artifact_receipt(connection, str(run["run_id"]))
     return {"thread": dict(thread), "messages": messages, "runs": runs}
 
 
@@ -645,15 +709,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
             design_context += "\n\n" + skill_context
         _advance_run(project_root, run_id, objective, profile, design_context, history)
     except Exception as error:
-        with connect(project_root) as connection:
-            connection.execute(
-                "UPDATE runs SET status = 'FAILED', error = ?, updated_at = ?, completed_at = ? WHERE run_id = ?",
-                (str(error), utc_now(), utc_now(), run_id),
-            )
-            connection.execute(
-                "UPDATE goals SET status = 'failed', completed_at = ? WHERE goal_id = ?", (utc_now(), goal_id)
-            )
-            _append_run_event(connection, run_id, "run_failed", {"error": str(error)})
+        _fail_run(project_root, run_id, error)
         raise
     return thread_view(project_root, thread_id)
 
@@ -663,6 +719,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     observations: list[dict[str, Any]] = []
     empty_content_retries = 0
     action_format_retries = 0
+    internal_transcript_retries = 0
     required_tool = _explicit_required_tool(objective)
     missing_tool_retries = 0
     for _ in range(MAX_TOOL_CALLS + 1):
@@ -671,6 +728,9 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
                 profile, objective, observations, remaining, design_context, history
             )
+        except TimeoutError as error:
+            _fail_run(project_root, run_id, error)
+            raise
         except EmptyModelContentError as error:
             if empty_content_retries:
                 raise
@@ -706,6 +766,9 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                 message = "internal TOOL_RESULT transcripts are not a researcher-readable final answer"
                 with connect(project_root) as connection:
                     _append_run_event(connection, run_id, "model_action_invalid", {"error": message})
+                if internal_transcript_retries >= 1:
+                    raise RuntimeError(message)
+                internal_transcript_retries += 1
                 observations.append({
                     "tool": "model.response",
                     "arguments": {},
@@ -833,7 +896,11 @@ def _claimed_unexecuted_write_tool(
 
 
 def _looks_like_internal_tool_transcript(text: str) -> bool:
-    return bool(re.search(r"(?m)^\s*TOOL_RESULT\s+[\[{]", text))
+    return bool(re.search(
+        r"(?is)(?:^\s*TOOL_RESULT\s+[\[{]|<\s*(?:tool_calls?|invoke)\b|"
+        r"<\s*｜｜DSML｜｜(?:tool_calls|invoke)\b)",
+        text,
+    ))
 
 
 def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict[str, Any]:
@@ -843,7 +910,8 @@ def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict
     if "source.list" not in tools:
         return {"type": "tool_call", "tool": "source.list", "arguments": {}}
     if "source.page" not in tools:
-        sources = next(item["result"] for item in observations if item["tool"] == "source.list")
+        source_index = next(item["result"] for item in observations if item["tool"] == "source.list")
+        sources = source_index.get("sources", []) if isinstance(source_index, dict) else source_index
         if sources:
             view = source_view(project_root, sources[0]["source_id"])
             if view["pages"]:
@@ -856,7 +924,8 @@ def _mock_action(project_root: Path, observations: list[dict[str, Any]]) -> dict
     if "authoring.state" not in tools:
         return {"type": "tool_call", "tool": "authoring.state", "arguments": {}}
     status = next(item["result"] for item in observations if item["tool"] == "project.status")
-    sources = next(item["result"] for item in observations if item["tool"] == "source.list")
+    source_index = next(item["result"] for item in observations if item["tool"] == "source.list")
+    sources = source_index.get("sources", []) if isinstance(source_index, dict) else source_index
     page = next((item["result"] for item in observations if item["tool"] == "source.page"), None)
     research = next(item["result"] for item in observations if item["tool"] == "research.state")
     authoring = next(item["result"] for item in observations if item["tool"] == "authoring.state")
@@ -962,8 +1031,14 @@ def _parse_action(content: str) -> dict[str, Any]:
         else:
             if not candidate[end:].strip() and isinstance(parsed, dict):
                 text = candidate
+    while wrapped := re.fullmatch(r"<json_logic>\s*(.*?)\s*</json_logic>", text, flags=re.DOTALL):
+        text = wrapped.group(1).strip()
+    if nested_tool_action := _parse_repeated_tool_call_wrappers(text):
+        return nested_tool_action
+    if re.match(r"(?is)^\s*<\s*tool_call\b", text):
+        raise ValueError("malformed or ambiguous nested tool_call wrapper")
     while wrapped := re.fullmatch(
-        r"<(json_logic|tool_call)>\s*(.*?)\s*</\1>", text, flags=re.DOTALL
+        r"<(json_logic)>\s*(.*?)\s*</\1>", text, flags=re.DOTALL
     ):
         text = wrapped.group(2).strip()
     decoder = json.JSONDecoder(strict=False)
@@ -984,6 +1059,59 @@ def _parse_action(content: str) -> dict[str, Any]:
     if not isinstance(action, dict):
         raise ValueError("agent response JSON must be an object")
     return _normalize_action(action)
+
+
+def _parse_repeated_tool_call_wrappers(text: str) -> dict[str, Any] | None:
+    """Recover one unambiguous JSON action from DeepSeek's repeated wrapper form."""
+    remainder = text.strip()
+    attributes: list[str] = []
+    while opening := re.match(r"<tool_call\b([^>]*)>\s*", remainder, flags=re.IGNORECASE):
+        attributes.append(opening.group(1))
+        remainder = remainder[opening.end():]
+    if not attributes:
+        return None
+    closing_count = 0
+    while closing := re.search(r"\s*</tool_call>\s*$", remainder, flags=re.IGNORECASE):
+        closing_count += 1
+        remainder = remainder[:closing.start()]
+    if not 1 <= closing_count <= len(attributes):
+        raise ValueError("nested tool_call wrapper has invalid closing tags")
+    try:
+        decoded_remainder = unescape(remainder.strip())
+        payload, end = json.JSONDecoder(strict=False).raw_decode(decoded_remainder)
+    except json.JSONDecodeError as error:
+        raise ValueError("nested tool_call wrapper does not contain one JSON object") from error
+    if decoded_remainder[end:].strip() or not isinstance(payload, dict):
+        raise ValueError("nested tool_call wrapper must contain exactly one JSON object")
+
+    attribute_tools = {
+        match.group(2)
+        for value in attributes
+        for match in re.finditer(
+            r"\b(?:name|tool|function)\s*=\s*(['\"])([a-z][a-z0-9_.]+)\1",
+            value,
+            flags=re.IGNORECASE,
+        )
+    }
+    if len(attribute_tools) > 1:
+        raise ValueError("nested tool_call wrappers name multiple tools")
+
+    normalized = _normalize_action(payload)
+    if normalized.get("type") == "tool_call":
+        tool = normalized.get("tool")
+        arguments = normalized.get("arguments", {})
+        if not isinstance(tool, str) or not re.fullmatch(r"[a-z][a-z0-9_.]+", tool):
+            raise ValueError("nested tool_call JSON is missing a valid tool")
+        if not isinstance(arguments, dict):
+            raise ValueError("nested tool_call arguments must be a JSON object")
+        if attribute_tools and tool not in attribute_tools:
+            raise ValueError("nested tool_call wrapper conflicts with its JSON tool")
+        return {**normalized, "arguments": arguments}
+    if normalized.get("type") == "final":
+        raise ValueError("nested tool_call wrapper cannot contain a final action")
+    if len(attribute_tools) != 1:
+        raise ValueError("nested tool_call arguments require one wrapper tool name")
+    return {"type": "tool_call", "tool": next(iter(attribute_tools)), "arguments": payload}
 
 
 def _parse_tagged_tool_action(text: str) -> dict[str, Any] | None:
@@ -1154,6 +1282,66 @@ def _read_authoring_section(project_root: Path, section_id: str) -> dict[str, An
     return dict(row)
 
 
+def _compact_source_list(project_root: Path, arguments: dict[str, Any]) -> dict[str, Any]:
+    source_ids = arguments.get("source_ids", [])
+    if not isinstance(source_ids, list) or any(not isinstance(value, str) for value in source_ids):
+        raise ValueError("source.list source_ids must be a list of exact source ids")
+    requested_ids = [value.strip() for value in source_ids if value.strip()]
+    if len(requested_ids) > SOURCE_LIST_MAX_LIMIT:
+        raise ValueError(f"source.list accepts at most {SOURCE_LIST_MAX_LIMIT} source_ids")
+    query = str(arguments.get("query", "")).strip().casefold()
+    try:
+        limit = int(arguments.get("limit", SOURCE_LIST_DEFAULT_LIMIT))
+    except (TypeError, ValueError) as error:
+        raise ValueError("source.list limit must be an integer") from error
+    if not 1 <= limit <= SOURCE_LIST_MAX_LIMIT:
+        raise ValueError(f"source.list limit must be between 1 and {SOURCE_LIST_MAX_LIMIT}")
+
+    sources = list_sources(project_root)
+    if requested_ids:
+        by_id = {str(item["source_id"]): item for item in sources}
+        missing = [source_id for source_id in requested_ids if source_id not in by_id]
+        if missing:
+            raise KeyError(f"unknown source(s): {', '.join(missing)}")
+        matched = [by_id[source_id] for source_id in requested_ids]
+    elif query:
+        matched = [
+            item for item in sources
+            if query in str(item.get("source_id", "")).casefold()
+            or query in str(item.get("title", "")).casefold()
+            or query in str(item.get("original_name", "")).casefold()
+        ]
+    else:
+        matched = sources
+    selected = matched[:limit]
+    return {
+        "sources": [
+            {
+                "source_id": item.get("source_id", ""),
+                "title": item.get("title", ""),
+                "original_name": item.get("original_name", ""),
+                "processing_state": item.get("processing_state", ""),
+                "use_state": item.get("use_state", ""),
+                "page_count": item.get("page_count", 0),
+                "citation_verification_status": item.get(
+                    "citation_verification_status", "UNVERIFIED"
+                ),
+            }
+            for item in selected
+        ],
+        "total_count": len(matched),
+        "returned_count": len(selected),
+        "has_more": len(matched) > len(selected),
+        "limit": limit,
+        "query": str(arguments.get("query", "")).strip(),
+        "requested_source_ids": requested_ids,
+        "boundary": (
+            "Compact source index only; it omits source text, byte counts and full research context. "
+            "Use source.page or bounded reading tools for source detail."
+        ),
+    }
+
+
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
     if tool_name not in allowed:
@@ -1171,7 +1359,7 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         if tool_name == "project.status":
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
-            result = list_sources(project_root)
+            result = _compact_source_list(project_root, arguments)
         elif tool_name == "source.search":
             result = _search_source_blocks(
                 project_root,
@@ -1297,7 +1485,9 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 bool(arguments.get("complete", False)),
             )
         elif tool_name == "historiography.create":
-            result = create_historiography_entry(project_root, arguments)
+            result = create_historiography_entry(
+                project_root, validate_historiography_entry_payload(project_root, arguments)
+            )
         else:
             title = str(arguments.get("title", "")).strip()
             content = str(arguments.get("content", "")).strip()

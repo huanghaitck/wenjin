@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import json
 import threading
+import time
 import unittest
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -176,6 +177,12 @@ class M5ResearchLibraryTests(unittest.TestCase):
             snapshot = json.loads(urlopen(base + "/api/snapshot", timeout=5).read())
             self.assertEqual(snapshot["library"]["library_root"], str(self.library.resolve()))
             session = post("/api/library/scan", {"source_root": str(self.materials)})
+            deadline = time.monotonic() + 5
+            while session["status"] == "scanning" and time.monotonic() < deadline:
+                time.sleep(0.02)
+                session = json.loads(urlopen(
+                    base + f"/api/library/scan?id={session['session_id']}", timeout=5
+                ).read())
             candidate = session["candidates"][0]
             result = post(
                 "/api/library/approve",

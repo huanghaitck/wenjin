@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 import pymupdf
 
-from research_workbench.db import connect
+from research_workbench.db import SCHEMA_VERSION, connect
 from research_workbench.library import approve_candidates, scan_directory, work_detail
 from research_workbench.project_library import add_library_file_to_project
 from research_workbench.research import (
@@ -268,7 +268,7 @@ class D1EndToEndDemoTests(unittest.TestCase):
         with connect(self.project) as connection:
             version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        self.assertEqual(version, 19)
+        self.assertEqual(version, SCHEMA_VERSION)
         self.assertTrue({"claims", "evidence_items", "evidence_freezes", "browser_sessions"} <= tables)
 
     def test_loopback_api_exposes_conversation_workspace_and_research_objects(self) -> None:

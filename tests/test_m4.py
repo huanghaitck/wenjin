@@ -17,8 +17,10 @@ from research_workbench.agent_runtime import (
     ModelActionFormatError,
     ModelProfile,
     SYSTEM_PROMPT,
+    _advance_run,
     _agent_research_state,
     _compact_authoring_state,
+    _compact_source_list,
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
@@ -37,7 +39,8 @@ from research_workbench.agent_runtime import (
     sync_model_profiles,
     thread_view,
 )
-from research_workbench.db import database_path
+from research_workbench.authoring import decide_historiography_entry
+from research_workbench.db import SCHEMA_VERSION, _migrate, connect, database_path
 from research_workbench.research_design import create_design_draft, decide_design
 from research_workbench.service import import_structure, initialize_project, register_source, verify_block
 from research_workbench.service import list_sources, source_view
@@ -136,6 +139,33 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         section = _read_authoring_section(self.project, detail["sections"][0]["section_id"])
         self.assertEqual(section["heading"], "第一节")
         self.assertEqual(len(section["content"]), 40000)
+
+    def test_source_list_is_bounded_compact_and_supports_exact_identity(self) -> None:
+        source_ids = [list_sources(self.project)[0]["source_id"]]
+        for index in range(25):
+            original = Path(self.temporary.name) / f"source-{index}.txt"
+            original.write_text(f"source {index}", encoding="utf-8")
+            source_ids.append(
+                register_source(self.project, original, f"Research source {index:02d}")["source_id"]
+            )
+
+        default = _compact_source_list(self.project, {})
+        self.assertEqual(default["total_count"], 26)
+        self.assertEqual(default["returned_count"], 20)
+        self.assertTrue(default["has_more"])
+        self.assertNotIn("byte_count", default["sources"][0])
+        self.assertNotIn("research_context", default["sources"][0])
+        self.assertLess(len(json.dumps(default, ensure_ascii=False)), 12000)
+
+        exact = _compact_source_list(self.project, {"source_ids": [source_ids[-1]]})
+        self.assertEqual(exact["returned_count"], 1)
+        self.assertFalse(exact["has_more"])
+        self.assertEqual(exact["sources"][0]["source_id"], source_ids[-1])
+        self.assertEqual(exact["sources"][0]["title"], "Research source 24")
+        queried = _compact_source_list(self.project, {"query": "source 24", "limit": 5})
+        self.assertEqual([item["source_id"] for item in queried["sources"]], [source_ids[-1]])
+        with self.assertRaisesRegex(KeyError, "unknown source"):
+            _compact_source_list(self.project, {"source_ids": ["SRC_missing"]})
 
     def test_profiles_and_assignment_never_persist_api_key(self) -> None:
         secret = "not-for-database"
@@ -282,6 +312,54 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             2,
         )
         self.assertIn("run_failed", [event["event_type"] for event in run["events"]])
+        self.assertFalse(run["artifact_receipt"]["artifacts_saved"])
+
+    def test_failed_final_response_reports_artifacts_already_saved_by_tools(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        actions: list[object] = [
+            {
+                "type": "tool_call", "tool": "reading_job.create",
+                "arguments": {
+                    "title": "已落盘的阅读任务", "question": "作者如何解释调查？",
+                    "mode": "targeted", "source_ids": [source_id],
+                    "stop_condition": "完成指定页面。",
+                },
+            },
+            ModelActionFormatError("Expecting ',' delimiter"),
+            ModelActionFormatError("Expecting ',' delimiter"),
+        ]
+
+        def next_action(*_args: object) -> dict[str, object]:
+            action = actions.pop(0)
+            if isinstance(action, Exception):
+                raise action
+            return action
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime._model_action", side_effect=next_action):
+                with self.assertRaisesRegex(RuntimeError, "invalid model action"):
+                    send_message(self.project, self.thread["thread_id"], "建立阅读任务后说明结果")
+
+        run = thread_view(self.project, self.thread["thread_id"])["runs"][0]
+        self.assertEqual(run["status"], "FAILED")
+        self.assertEqual(run["artifact_receipt"]["saved_artifact_count"], 1)
+        self.assertEqual(run["artifact_receipt"]["saved_artifacts"][0]["tool"], "reading_job.create")
+        failure = next(event for event in run["events"] if event["event_type"] == "run_failed")
+        self.assertTrue(failure["payload"]["artifacts_saved"])
+        self.assertEqual(failure["payload"]["saved_artifact_count"], 1)
+        with connect(self.project) as connection:
+            self.assertEqual(
+                connection.execute(
+                    "SELECT COUNT(*) FROM reading_jobs WHERE title = '已落盘的阅读任务'"
+                ).fetchone()[0],
+                1,
+            )
 
     def test_event_batch_can_mutate_only_once_per_run(self) -> None:
         environment = {
@@ -693,6 +771,8 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("sessionStorage.getItem('hrwPlanningMode')", script)
         self.assertIn("sessionStorage.setItem('hrwPlanningMode', state.planningMode)", script)
+        self.assertIn("研究产物已保存", script)
+        self.assertIn("artifact_receipt", script)
 
     def test_source_list_exposes_optional_research_context(self) -> None:
         source_id = list_sources(self.project)[0]["source_id"]
@@ -775,6 +855,179 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn('"tool":"reading_note.save"', SYSTEM_PROMPT)
         self.assertIn('"tool":"historiography.create"', SYSTEM_PROMPT)
 
+    def test_reading_tools_bind_canonical_source_identity_and_report_savable_pages(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        connection = sqlite3.connect(database_path(self.project))
+        try:
+            run_id = connection.execute("SELECT run_id FROM runs LIMIT 1").fetchone()
+            if run_id is None:
+                result = send_message(self.project, self.thread["thread_id"], "check")
+                run_id = (result["runs"][0]["run_id"],)
+            connection.execute(
+                "UPDATE pages SET use_state = 'blocked' WHERE source_id = ? AND physical_page = 2",
+                (source_id,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        reading = _execute_tool(
+            self.project, run_id[0], "reading_job.create",
+            {"title": "身份校验", "question": "如何论证？", "mode": "targeted",
+             "source_ids": [source_id], "stop_condition": "读完当前页。"},
+        )
+        batch = _execute_tool(
+            self.project, run_id[0], "reading_job.batch",
+            {"job_id": reading["job_id"], "source_id": source_id, "page_limit": 10},
+        )
+        self.assertEqual(batch["source_identity"]["source_id"], source_id)
+        self.assertEqual(batch["canonical_title"], "Test source")
+        self.assertEqual(batch["blocked_or_unusable_physical_pages"], [2])
+        with self.assertRaisesRegex(ValueError, "savable_physical_pages") as blocked:
+            _execute_tool(
+                self.project, run_id[0], "reading_note.save",
+                {"job_id": reading["job_id"], "source_id": source_id,
+                 "physical_pages": [2], "content": "分析。"},
+            )
+        self.assertIn(source_id, str(blocked.exception))
+
+        saved = _execute_tool(
+            self.project, run_id[0], "reading_note.save",
+            {"job_id": reading["job_id"], "source_id": source_id,
+             "physical_pages": [1], "content": "作者强调地方中介。", "complete": True},
+        )
+        self.assertEqual(saved["source_identity"]["canonical_title"], "Test source")
+        with connect(self.project) as project_connection:
+            content = project_connection.execute(
+                "SELECT content FROM reading_notes WHERE note_id = ?", (saved["note_id"],),
+            ).fetchone()[0]
+        self.assertTrue(content.startswith(f"[来源身份｜source_id={source_id}｜canonical_title=《Test source》]"))
+
+    def test_wrong_source_reading_note_is_rejected_and_cannot_feed_historiography(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        result = send_message(self.project, self.thread["thread_id"], "check")
+        run_id = result["runs"][0]["run_id"]
+        reading = _execute_tool(
+            self.project, run_id, "reading_job.create",
+            {"title": "身份校验", "question": "如何论证？", "mode": "targeted",
+             "source_ids": [source_id], "stop_condition": "读完当前页。"},
+        )
+        with self.assertRaisesRegex(ValueError, "source identity mismatch"):
+            _execute_tool(
+                self.project, run_id, "reading_note.save",
+                {"job_id": reading["job_id"], "source_id": source_id, "physical_pages": [1],
+                 "content": "来源题名：张晓虹的另一篇研究\n作者强调地方中介。"},
+            )
+        with connect(self.project) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM reading_notes").fetchone()[0], 0)
+        with self.assertRaisesRegex(ValueError, "no identity-consistent reading note"):
+            _execute_tool(
+                self.project, run_id, "historiography.create",
+                {"work_title": "Test source", "position": "立场", "contribution": "贡献",
+                 "limitation": "限制", "relevance": "关系", "source_refs": [source_id]},
+            )
+
+    def test_historiography_requires_human_decision_before_consumption(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        result = send_message(self.project, self.thread["thread_id"], "check")
+        run_id = result["runs"][0]["run_id"]
+        reading = _execute_tool(
+            self.project, run_id, "reading_job.create",
+            {"title": "定向阅读", "question": "如何论证？", "mode": "targeted",
+             "source_ids": [source_id], "stop_condition": "当前页。"},
+        )
+        _execute_tool(
+            self.project, run_id, "reading_note.save",
+            {"job_id": reading["job_id"], "source_id": source_id, "physical_pages": [1],
+             "content": "作者强调地方中介。", "complete": True},
+        )
+        entry = _execute_tool(
+            self.project, run_id, "historiography.create",
+            {"work_title": "Test source", "position": "立场", "contribution": "贡献",
+             "limitation": "限制", "relevance": "关系", "source_refs": [source_id]},
+        )
+        decided = decide_historiography_entry(
+            self.project, entry["entry_id"], True, "Professor", "核对来源身份和阅读札记。",
+        )
+        self.assertEqual(decided["status"], "approved")
+        self.assertEqual(decided["decision"]["reviewer"], "Professor")
+        with self.assertRaisesRegex(ValueError, "already approved"):
+            decide_historiography_entry(
+                self.project, entry["entry_id"], False, "Professor", "不能重复决定。",
+            )
+
+    def test_human_historiography_decision_quarantines_legacy_wrong_identity_note(self) -> None:
+        source_id = list_sources(self.project)[0]["source_id"]
+        result = send_message(self.project, self.thread["thread_id"], "check")
+        run_id = result["runs"][0]["run_id"]
+        reading = _execute_tool(
+            self.project, run_id, "reading_job.create",
+            {"title": "定向阅读", "question": "如何论证？", "mode": "targeted",
+             "source_ids": [source_id], "stop_condition": "当前页。"},
+        )
+        _execute_tool(
+            self.project, run_id, "reading_note.save",
+            {"job_id": reading["job_id"], "source_id": source_id, "physical_pages": [1],
+             "content": "作者强调地方中介。", "complete": True},
+        )
+        with connect(self.project) as connection:
+            connection.execute(
+                """INSERT INTO reading_notes(note_id, job_id, source_id, page_refs_json, content,
+                   qualification, created_at) VALUES ('RDN_legacy_wrong', ?, ?, '[]', ?,
+                   'READING_NOTE_NOT_EVIDENCE', '2026-01-01')""",
+                (reading["job_id"], source_id, "来源题名：张晓虹的另一篇研究\n错误旧札记。"),
+            )
+        entry = _execute_tool(
+            self.project, run_id, "historiography.create",
+            {"work_title": "Test source", "position": "立场", "contribution": "贡献",
+             "limitation": "限制", "relevance": "关系", "source_refs": [source_id]},
+        )
+        decide_historiography_entry(
+            self.project, entry["entry_id"], True, "Professor", "保留正确札记并隔离错误旧札记。",
+        )
+        with connect(self.project) as connection:
+            qualification = connection.execute(
+                "SELECT qualification FROM reading_notes WHERE note_id = 'RDN_legacy_wrong'"
+            ).fetchone()[0]
+        self.assertEqual(qualification, "QUARANTINED_SOURCE_IDENTITY_MISMATCH")
+
+    def test_current_schema_migration_does_not_commit_an_active_transaction(self) -> None:
+        connection = sqlite3.connect(database_path(self.project))
+        connection.row_factory = sqlite3.Row
+        stage = "UNCOMMITTED"
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute("UPDATE projects SET current_stage = 'UNCOMMITTED'")
+            _migrate(connection)
+            connection.rollback()
+            stage = connection.execute("SELECT current_stage FROM projects").fetchone()[0]
+        finally:
+            connection.close()
+        self.assertNotEqual(stage, "UNCOMMITTED")
+
+    def test_connect_waits_for_a_concurrent_writer_in_wal_mode(self) -> None:
+        holder = sqlite3.connect(database_path(self.project), check_same_thread=False)
+        holder.execute("BEGIN IMMEDIATE")
+        holder.execute("UPDATE projects SET current_stage = current_stage")
+        outcome: list[object] = []
+
+        def write_after_lock() -> None:
+            try:
+                with connect(self.project) as connection:
+                    outcome.append(connection.execute("PRAGMA busy_timeout").fetchone()[0])
+                    outcome.append(connection.execute("PRAGMA journal_mode").fetchone()[0])
+                    connection.execute("UPDATE projects SET current_stage = current_stage")
+            except Exception as error:
+                outcome.append(error)
+
+        worker = threading.Thread(target=write_after_lock)
+        worker.start()
+        threading.Event().wait(0.1)
+        holder.commit()
+        holder.close()
+        worker.join(timeout=3)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(outcome, [30000, "wal"])
+
     def test_schema_v2_project_migrates_on_open(self) -> None:
         connection = sqlite3.connect(database_path(self.project))
         try:
@@ -792,7 +1045,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 19)
+        self.assertEqual(version, SCHEMA_VERSION)
         self.assertIsNotNone(table)
 
     def test_openai_and_ollama_text_requests_are_explicit(self) -> None:
@@ -837,6 +1090,45 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         finally:
             release.set()
 
+    def test_provider_timeout_marks_run_failed_inside_runtime(self) -> None:
+        now = "2026-01-01T00:00:00Z"
+        with connect(self.project) as connection:
+            connection.execute(
+                "INSERT INTO goals(goal_id, thread_id, objective, status, created_at) "
+                "VALUES ('GOL_timeout', ?, 'timeout', 'active', ?)",
+                (self.thread["thread_id"], now),
+            )
+            connection.execute(
+                """INSERT INTO runs(run_id, thread_id, goal_id, status, model_snapshot_json,
+                   created_at, updated_at) VALUES ('RUN_timeout', ?, 'GOL_timeout', 'RUNNING', '{}', ?, ?)""",
+                (self.thread["thread_id"], now, now),
+            )
+        profile = ModelProfile(
+            "timeout", "openai_compatible", "remote", "https://models.invalid/v1",
+            ("text",), "env:key", "available", "secret", 0.01,
+        )
+        with patch(
+            "research_workbench.agent_runtime._model_action",
+            side_effect=TimeoutError("agent provider step exceeded 0.01 seconds"),
+        ):
+            with self.assertRaisesRegex(TimeoutError, "exceeded"):
+                _advance_run(self.project, "RUN_timeout", "timeout", profile)
+        with connect(self.project) as connection:
+            run = connection.execute(
+                "SELECT status, error, completed_at FROM runs WHERE run_id = 'RUN_timeout'"
+            ).fetchone()
+            goal = connection.execute(
+                "SELECT status FROM goals WHERE goal_id = 'GOL_timeout'"
+            ).fetchone()
+            failures = connection.execute(
+                "SELECT COUNT(*) FROM run_events WHERE run_id = 'RUN_timeout' AND event_type = 'run_failed'"
+            ).fetchone()[0]
+        self.assertEqual(run["status"], "FAILED")
+        self.assertIn("exceeded", run["error"])
+        self.assertTrue(run["completed_at"])
+        self.assertEqual(goal["status"], "failed")
+        self.assertEqual(failures, 1)
+
     def test_model_http_error_includes_safe_provider_detail(self) -> None:
         error = HTTPError(
             "https://models.invalid/chat/completions", 400, "bad request", {},
@@ -860,6 +1152,8 @@ class M4AgentWorkspaceTests(unittest.TestCase):
     def test_system_prompt_separates_processing_state_from_material_quality(self) -> None:
         self.assertIn("Never translate a blocked, pending, partial or zero-page processing state", SYSTEM_PROMPT)
         self.assertIn("page processing is unfinished", SYSTEM_PROMPT)
+        self.assertIn("compact, bounded index", SYSTEM_PROMPT)
+        self.assertIn('source_ids=["..."]', SYSTEM_PROMPT)
 
     def test_planning_context_explains_source_state_semantics(self) -> None:
         context = _planning_context(self.project)
@@ -876,6 +1170,106 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(action["arguments"]["physical_page"], 251)
         prose = '示例：<tool_call>{"type":"tool_call","tool":"source.page","arguments":{}}</tool_call>'
         self.assertEqual(_parse_action(prose), {"type": "final", "content": prose})
+
+    def test_parser_accepts_observed_deepseek_pro_repeated_tool_call_wrapper(self) -> None:
+        action = _parse_action(
+            '<tool_call type="tool_call"><tool_call name="source.page">'
+            '{"source_id":"SRC_1","physical_page":251}'
+            '</tool_call></tool_call>'
+        )
+        self.assertEqual(action, {
+            "type": "tool_call", "tool": "source.page",
+            "arguments": {"source_id": "SRC_1", "physical_page": 251},
+        })
+        full_action = _parse_action(
+            '<tool_call type="tool_call"><tool_call type="tool_call">'
+            '{"type":"tool_call","tool":"source.list","arguments":{}}'
+            '</tool_call></tool_call>'
+        )
+        self.assertEqual(full_action, {
+            "type": "tool_call", "tool": "source.list", "arguments": {},
+        })
+        truncated_outer = _parse_action(
+            '<tool_call type="tool_call"><tool_call name="source.page">'
+            '{"source_id":"SRC_1","physical_page":252}'
+            '</tool_call>'
+        )
+        self.assertEqual(truncated_outer, {
+            "type": "tool_call", "tool": "source.page",
+            "arguments": {"source_id": "SRC_1", "physical_page": 252},
+        })
+
+    def test_parser_rejects_ambiguous_repeated_tool_call_wrapper(self) -> None:
+        malformed = (
+            '<tool_call name="source.list"><tool_call name="project.status">'
+            '{"type":"tool_call","tool":"project.status","arguments":{}}'
+            '</tool_call></tool_call>'
+        )
+        with self.assertRaisesRegex(ValueError, "multiple tools"):
+            _parse_action(malformed)
+        self.assertTrue(_looks_like_internal_tool_transcript(malformed))
+        self.assertTrue(_looks_like_internal_tool_transcript("我将调用工具：\n" + malformed))
+
+    def test_nested_tool_wrapper_retries_then_executes_without_persisting_wrapper(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://models.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        responses = iter([
+            FakeResponse({"choices": [{"message": {"content": (
+                '<tool_call name="source.list"><tool_call name="project.status">'
+                '{"type":"tool_call","tool":"project.status","arguments":{}}'
+                '</tool_call></tool_call>'
+            )}}]}),
+            FakeResponse({"choices": [{"message": {"content": (
+                '<tool_call type="tool_call"><tool_call name="project.status">'
+                '{}'
+                '</tool_call></tool_call>'
+            )}}]}),
+            FakeResponse({"choices": [{"message": {"content": (
+                '{"type":"final","content":"已读取项目状态并完成检查。"}'
+            )}}]}),
+        ])
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.agent_runtime.urlopen", side_effect=lambda *_args, **_kwargs: next(responses)):
+                result = send_message(self.project, self.thread["thread_id"], "读取项目状态")
+
+        run = result["runs"][0]
+        self.assertEqual(run["status"], "COMPLETED")
+        self.assertEqual([call["tool_name"] for call in run["tool_calls"]], ["project.status"])
+        self.assertIn("model_action_invalid", [event["event_type"] for event in run["events"]])
+        assistant_text = result["messages"][-1]["content"]["text"]
+        self.assertEqual(assistant_text, "已读取项目状态并完成检查。")
+        self.assertNotIn("tool_call", assistant_text)
+
+    def test_repeated_internal_wrapper_final_fails_without_persisting_assistant_text(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://models.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+        }
+        internal = (
+            '我将调用工具：<tool_call name="source.list">'
+            '{"type":"tool_call","tool":"source.list","arguments":{}}'
+            '</tool_call>'
+        )
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch(
+                "research_workbench.agent_runtime._model_action",
+                return_value={"type": "final", "content": internal},
+            ) as model_action:
+                with self.assertRaisesRegex(RuntimeError, "internal TOOL_RESULT transcripts"):
+                    send_message(self.project, self.thread["thread_id"], "读取来源")
+
+        self.assertEqual(model_action.call_count, 2)
+        thread = thread_view(self.project, self.thread["thread_id"])
+        run = thread["runs"][0]
+        self.assertEqual(run["status"], "FAILED")
+        self.assertEqual([message["role"] for message in thread["messages"]], ["user"])
+        self.assertNotIn(internal, json.dumps(thread, ensure_ascii=False))
 
     def test_parser_accepts_deepseek_pro_tagged_tool_action(self) -> None:
         action = _parse_action(

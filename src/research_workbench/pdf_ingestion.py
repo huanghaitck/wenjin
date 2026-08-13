@@ -14,6 +14,9 @@ from .service import import_structure
 
 SENTENCE_ENDINGS = ("。", "！", "？", "；", "：", ".", "!", "?", ";", ":", "”", "’", '"', "'")
 PRINTED_PAGE = re.compile(r"^(?:\d{1,4}|[ivxlcdmIVXLCDM]{1,12})$")
+PRINTED_PAGE_WRAPPER = re.compile(
+    r"^[\s·•.．—–_-]*(\d{1,4}|[ivxlcdmIVXLCDM]{1,12})[\s·•.．—–_-]*$"
+)
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -63,7 +66,10 @@ def _extract_raw_blocks(page: fitz.Page) -> list[dict[str, Any]]:
             if line_text.strip():
                 lines.append(line_text.rstrip())
             sizes.extend(float(span.get("size", 0.0)) for span in line.get("spans", []) if span.get("text"))
-        text = "\n".join(lines).strip()
+        # Some embedded Chinese journal fonts expose word/field separators as
+        # C0 control characters.  Keep line breaks, but normalize those
+        # separators before the text can reach Markdown or a reading model.
+        text = "\n".join(lines).replace("\x08", " ").replace("\x1b", " ").strip()
         if not text:
             continue
         raw.append({
@@ -74,16 +80,71 @@ def _extract_raw_blocks(page: fitz.Page) -> list[dict[str, Any]]:
     return raw
 
 
+def _reading_order(raw: list[dict[str, Any]], width: float, height: float) -> list[dict[str, Any]]:
+    """Return a conservative visual reading order for ordinary two-column journal pages."""
+    key = lambda item: (item["bbox"][1], item["bbox"][0])
+
+    def order_segment(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        left = [item for item in items if item["bbox"][2] <= width * 0.49]
+        right = [item for item in items if item["bbox"][0] >= width * 0.51]
+        if len(left) < 2 or len(right) < 2:
+            return sorted(items, key=key)
+        paired: set[int] = set()
+        for left_item in left:
+            for right_item in right:
+                overlap = min(left_item["bbox"][3], right_item["bbox"][3]) - max(
+                    left_item["bbox"][1], right_item["bbox"][1]
+                )
+                shorter = min(
+                    left_item["bbox"][3] - left_item["bbox"][1],
+                    right_item["bbox"][3] - right_item["bbox"][1],
+                )
+                if shorter > 0 and overlap / shorter >= 0.35:
+                    paired.update((id(left_item), id(right_item)))
+        if len(paired) < 4:
+            return sorted(items, key=key)
+        left_side = [item for item in items if (item["bbox"][0] + item["bbox"][2]) / 2 < width * 0.5]
+        right_side = [item for item in items if item not in left_side]
+        return sorted(left_side, key=key) + sorted(right_side, key=key)
+
+    marginal_numbers = [
+        item for item in raw
+        if PRINTED_PAGE_WRAPPER.fullmatch(item["text"].strip())
+        and (item["bbox"][3] <= height * 0.06 or item["bbox"][1] >= height * 0.94)
+    ]
+    content = [item for item in raw if item not in marginal_numbers]
+    spanning = [
+        item for item in content
+        if item["bbox"][0] < width * 0.25 and item["bbox"][2] > width * 0.75
+    ]
+    narrow = [item for item in content if item not in spanning]
+    ordered: list[dict[str, Any]] = []
+    remaining = sorted(narrow, key=key)
+    for separator in sorted(spanning, key=key):
+        separator_center = (separator["bbox"][1] + separator["bbox"][3]) / 2
+        segment = [item for item in remaining if (item["bbox"][1] + item["bbox"][3]) / 2 < separator_center]
+        ordered.extend(order_segment(segment))
+        remaining = [item for item in remaining if item not in segment]
+        ordered.append(separator)
+    ordered.extend(order_segment(remaining))
+    ordered.extend(sorted(marginal_numbers, key=key))
+    return ordered
+
+
 def _classify_blocks(raw: list[dict[str, Any]], width: float, height: float) -> list[dict[str, Any]]:
     page_font = median([block["font_size"] for block in raw if block["font_size"] > 0]) if raw else 0.0
     blocks: list[dict[str, Any]] = []
     for index, item in enumerate(raw, start=1):
         region = _normalized_region(item["bbox"], width, height)
         text = item["text"]
-        if region["y1"] <= 0.09:
-            block_type = "page_number" if PRINTED_PAGE.fullmatch(text.strip()) else "header"
-        elif region["y0"] >= 0.91:
-            block_type = "page_number" if PRINTED_PAGE.fullmatch(text.strip()) else "footer"
+        region_width = region["x1"] - region["x0"]
+        page_number = PRINTED_PAGE_WRAPPER.fullmatch(text.strip())
+        if page_number and (region["y1"] <= 0.06 or region["y0"] >= 0.94):
+            block_type = "page_number"
+        elif region["y1"] <= 0.06 and region_width >= 0.6:
+            block_type = "header"
+        elif region["y0"] >= 0.94 and region_width >= 0.6:
+            block_type = "footer"
         elif page_font and item["font_size"] >= page_font * 1.3 and len(text) <= 160:
             block_type = "heading"
         elif page_font and region["y0"] >= 0.68 and item["font_size"] <= page_font * 0.86:
@@ -103,9 +164,12 @@ def _classify_blocks(raw: list[dict[str, Any]], width: float, height: float) -> 
 def _printed_page(blocks: list[dict[str, Any]]) -> str | None:
     candidates = []
     for block in blocks:
-        if block["type"] not in {"header", "footer", "page_number"}:
+        if block["type"] != "page_number":
             continue
-        candidates.extend(line.strip() for line in block["text"].splitlines() if PRINTED_PAGE.fullmatch(line.strip()))
+        for line in block["text"].splitlines():
+            match = PRINTED_PAGE_WRAPPER.fullmatch(line.strip())
+            if match:
+                candidates.append(match.group(1))
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -114,16 +178,29 @@ def _corrupt_text(text: str) -> bool:
 
 
 def _fragmented_layout(blocks: list[dict[str, Any]]) -> bool:
-    regions = [block["region"] for block in blocks]
-    for index, left in enumerate(regions):
-        left_area = max(0.0, left["x1"] - left["x0"]) * max(0.0, left["y1"] - left["y0"])
-        if not left_area:
+    for index, left_block in enumerate(blocks):
+        left = left_block["region"]
+        left_width = max(0.0, left["x1"] - left["x0"])
+        left_height = max(0.0, left["y1"] - left["y0"])
+        if not left_width or not left_height:
             continue
-        for right in regions[index + 1:]:
-            right_area = max(0.0, right["x1"] - right["x0"]) * max(0.0, right["y1"] - right["y0"])
+        for right_block in blocks[index + 1:]:
+            right = right_block["region"]
+            right_width = max(0.0, right["x1"] - right["x0"])
+            right_height = max(0.0, right["y1"] - right["y0"])
             overlap_width = max(0.0, min(left["x1"], right["x1"]) - max(left["x0"], right["x0"]))
             overlap_height = max(0.0, min(left["y1"], right["y1"]) - max(left["y0"], right["y0"]))
-            if right_area and overlap_width * overlap_height / min(left_area, right_area) >= 0.15:
+            # Adjacent PDF text lines often have slightly overlapping bounding boxes,
+            # especially in Chinese journals.  They are still in a safe reading order.
+            # A fragmented layer must overlap substantially in both dimensions, as a
+            # duplicated OCR fragment or text block placed on top of another would.
+            width_ratio = overlap_width / min(left_width, right_width) if right_width else 0.0
+            height_ratio = overlap_height / min(left_height, right_height) if right_height else 0.0
+            if (
+                width_ratio >= 0.35
+                and height_ratio >= 0.8
+                and min(len(left_block["text"].strip()), len(right_block["text"].strip())) >= 12
+            ):
                 return True
     return False
 
@@ -218,7 +295,7 @@ def ingest_pdf(project_root: Path, source_id: str, render_scale: float = 1.5) ->
             pixmap = pdf_page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale), alpha=False)
             pixmap.save(image_path)
 
-            raw_blocks = _extract_raw_blocks(pdf_page)
+            raw_blocks = _reading_order(_extract_raw_blocks(pdf_page), width, height)
             blocks = _classify_blocks(raw_blocks, width, height)
             for block in blocks:
                 block["id"] = f"{page_local_id}_{block['id']}"
@@ -329,7 +406,7 @@ def ingest_pdf(project_root: Path, source_id: str, render_scale: float = 1.5) ->
         )
         + "\n",
     )
-    receipt = import_structure(project_root, source_id, packet_path)
+    receipt = import_structure(project_root, source_id, packet_path, replace_machine_structure=True)
     with connect(project_root) as connection:
         append_audit(connection, "pdf_ingested", "source", source_id, {
             "pages": len(pages),

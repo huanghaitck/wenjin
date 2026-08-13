@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -9,8 +10,9 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 21
 DATABASE_NAME = "project.sqlite3"
+SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 
 def utc_now() -> str:
@@ -864,6 +866,60 @@ CREATE INDEX IF NOT EXISTS idx_retrieval_result_decisions_result
 ON retrieval_result_decisions(result_id, decided_at);
 """
 
+MIGRATION_20 = """
+PRAGMA foreign_keys = OFF;
+CREATE TABLE IF NOT EXISTS style_profiles_v20 (
+    profile_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    owner_label TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    manuscript_id TEXT REFERENCES manuscripts(manuscript_id),
+    section_id TEXT REFERENCES manuscript_sections(section_id),
+    source_version_id TEXT REFERENCES section_versions(version_id),
+    sample_sha256 TEXT NOT NULL,
+    features_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_by TEXT,
+    decision_reason TEXT,
+    decided_at TEXT
+);
+INSERT OR IGNORE INTO style_profiles_v20
+SELECT * FROM style_profiles;
+CREATE TABLE IF NOT EXISTS style_profile_samples_v20 (
+    sample_id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES style_profiles_v20(profile_id),
+    manuscript_id TEXT REFERENCES manuscripts(manuscript_id),
+    source_version_ids_json TEXT NOT NULL,
+    sample_sha256 TEXT NOT NULL,
+    character_count INTEGER NOT NULL,
+    features_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    sample_role TEXT NOT NULL DEFAULT 'manuscript',
+    source_id TEXT REFERENCES sources(source_id),
+    source_version_id TEXT REFERENCES source_versions(source_version_id),
+    UNIQUE(profile_id, sample_sha256)
+);
+INSERT OR IGNORE INTO style_profile_samples_v20(
+    sample_id, profile_id, manuscript_id, source_version_ids_json, sample_sha256,
+    character_count, features_json, created_at, sample_role
+)
+SELECT sample_id, profile_id, manuscript_id, source_version_ids_json, sample_sha256,
+       character_count, features_json, created_at, 'manuscript'
+FROM style_profile_samples;
+DROP TABLE style_profile_samples;
+DROP TABLE style_profiles;
+ALTER TABLE style_profiles_v20 RENAME TO style_profiles;
+ALTER TABLE style_profile_samples_v20 RENAME TO style_profile_samples;
+CREATE INDEX IF NOT EXISTS idx_style_profiles_status
+ON style_profiles(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_style_profile_samples_profile
+ON style_profile_samples(profile_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_style_profile_samples_source
+ON style_profile_samples(source_id, source_version_id);
+PRAGMA foreign_keys = ON;
+"""
+
 CITATION_METADATA_COLUMNS = (
     "translator", "journal", "volume", "issue", "page_range",
 )
@@ -915,8 +971,184 @@ def _restore_locally_repaired_blocks(connection: sqlite3.Connection) -> None:
     )
 
 
+READING_PAGE_REF_KEYS = {"source_version_id", "page_id", "physical_page", "block_id"}
+
+
+def _reading_ref_migration_audit(
+    connection: sqlite3.Connection,
+    event_type: str,
+    note_id: str,
+    payload: dict[str, Any],
+) -> None:
+    existing = connection.execute(
+        """SELECT 1 FROM audit_events
+           WHERE event_type = ? AND entity_type = 'reading_note' AND entity_id = ? LIMIT 1""",
+        (event_type, note_id),
+    ).fetchone()
+    if existing is None:
+        append_audit(connection, event_type, "reading_note", note_id, payload)
+
+
+def _compact_reading_note_page_refs(connection: sqlite3.Connection) -> None:
+    """Compact legacy block-expanded locators without changing questionable rows."""
+    rows = connection.execute(
+        "SELECT note_id, source_id, page_refs_json FROM reading_notes ORDER BY created_at, note_id"
+    ).fetchall()
+    for row in rows:
+        note_id, source_id = str(row["note_id"]), str(row["source_id"])
+
+        def skip(reason: str) -> None:
+            _reading_ref_migration_audit(
+                connection,
+                "reading_note_page_refs_compaction_skipped",
+                note_id,
+                {"reason": reason, "source_id": source_id},
+            )
+
+        try:
+            refs = json.loads(row["page_refs_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            skip("invalid_json")
+            continue
+        if not isinstance(refs, list) or not refs:
+            skip("page_refs_must_be_a_nonempty_list")
+            continue
+
+        versions = connection.execute(
+            """SELECT source_version_id FROM source_versions
+               WHERE source_id = ? ORDER BY created_at, source_version_id""",
+            (source_id,),
+        ).fetchall()
+        if len(versions) != 1:
+            skip("source_requires_one_exact_version")
+            continue
+        source_version_id = str(versions[0]["source_version_id"])
+
+        pages: dict[str, dict[str, Any]] = {}
+        page_order: list[str] = []
+        invalid_reason = ""
+        for ref in refs:
+            if not isinstance(ref, dict):
+                invalid_reason = "page_ref_must_be_an_object"
+                break
+            if not set(ref) <= READING_PAGE_REF_KEYS:
+                invalid_reason = "page_ref_has_unknown_fields"
+                break
+            page_id = ref.get("page_id")
+            physical_page = ref.get("physical_page")
+            block_id = ref.get("block_id")
+            if (
+                not isinstance(page_id, str) or not page_id
+                or not isinstance(physical_page, int) or isinstance(physical_page, bool)
+                or not isinstance(block_id, str) or not block_id
+            ):
+                invalid_reason = "page_ref_has_invalid_fields"
+                break
+            declared_version = ref.get("source_version_id")
+            if declared_version is not None and declared_version != source_version_id:
+                invalid_reason = "page_ref_has_foreign_source_version"
+                break
+            page = connection.execute(
+                "SELECT source_id, physical_page FROM pages WHERE page_id = ?",
+                (page_id,),
+            ).fetchone()
+            if (
+                page is None or str(page["source_id"]) != source_id
+                or int(page["physical_page"]) != physical_page
+            ):
+                invalid_reason = "page_ref_has_foreign_or_inconsistent_page"
+                break
+            block = connection.execute(
+                "SELECT page_id, use_state FROM blocks WHERE block_id = ?",
+                (block_id,),
+            ).fetchone()
+            if block is None or str(block["page_id"]) != page_id:
+                invalid_reason = "page_ref_has_foreign_or_inconsistent_block"
+                break
+            if page_id not in pages:
+                pages[page_id] = {
+                    "physical_page": physical_page,
+                    "usable_block_ids": [],
+                }
+                page_order.append(page_id)
+            if str(block["use_state"]) == "research_usable":
+                pages[page_id]["usable_block_ids"].append(block_id)
+        if invalid_reason:
+            skip(invalid_reason)
+            continue
+
+        compact_refs: list[dict[str, Any]] = []
+        for page_id in sorted(page_order, key=lambda value: (pages[value]["physical_page"], value)):
+            usable_blocks = pages[page_id]["usable_block_ids"]
+            representative_block_id = usable_blocks[0] if usable_blocks else ""
+            if not representative_block_id:
+                current_block = connection.execute(
+                    """SELECT block_id FROM blocks
+                       WHERE page_id = ? AND use_state = 'research_usable'
+                       ORDER BY block_order, block_id LIMIT 1""",
+                    (page_id,),
+                ).fetchone()
+                if current_block is None:
+                    invalid_reason = "page_has_no_representative_research_usable_block"
+                    break
+                representative_block_id = str(current_block["block_id"])
+            compact_refs.append({
+                "source_version_id": source_version_id,
+                "page_id": page_id,
+                "physical_page": pages[page_id]["physical_page"],
+                "block_id": representative_block_id,
+            })
+        if invalid_reason:
+            skip(invalid_reason)
+            continue
+
+        compact_json = json.dumps(compact_refs, ensure_ascii=False, sort_keys=True)
+        if compact_json == row["page_refs_json"]:
+            continue
+        connection.execute(
+            "UPDATE reading_notes SET page_refs_json = ? WHERE note_id = ?",
+            (compact_json, note_id),
+        )
+        _reading_ref_migration_audit(
+            connection,
+            "reading_note_page_refs_compacted",
+            note_id,
+            {
+                "old_ref_count": len(refs),
+                "new_ref_count": len(compact_refs),
+                "source_id": source_id,
+                "source_version_id": source_version_id,
+            },
+        )
+
+
 def database_path(project_root: Path) -> Path:
     return project_root / DATABASE_NAME
+
+
+def _expected_schema_tables() -> set[str]:
+    scripts = (
+        SCHEMA, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6,
+        MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11,
+        MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_19, MIGRATION_20,
+    )
+    return {
+        match.group(1)
+        for script in scripts
+        for match in re.finditer(
+            r"CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z_][A-Za-z0-9_]*)",
+            script,
+            flags=re.IGNORECASE,
+        )
+    } - {"style_profiles_v20", "style_profile_samples_v20"}
+
+
+def _schema_tables_are_complete(connection: sqlite3.Connection) -> bool:
+    actual = {
+        str(row[0])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+    }
+    return _expected_schema_tables() <= actual
 
 
 def _migrate(connection: sqlite3.Connection) -> None:
@@ -924,6 +1156,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
     version = int(row["version"] or 0)
     if version > SCHEMA_VERSION:
         raise RuntimeError(f"project schema {version} is newer than supported schema {SCHEMA_VERSION}")
+    if version == SCHEMA_VERSION and _schema_tables_are_complete(connection):
+        # Opening a current project is the common path, including bounded reader calls.
+        # Avoid replaying every CREATE script because executescript ends the caller's
+        # transaction and needlessly competes for SQLite's single writer lock.
+        _ensure_citation_metadata_columns(connection)
+        _ensure_event_comparison_columns(connection)
+        return
     if version < 2:
         connection.executescript(MIGRATION_2)
         connection.execute(
@@ -1055,6 +1294,20 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (19, utc_now()),
         )
+        version = 19
+    if version < 20:
+        connection.executescript(MIGRATION_20)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (20, utc_now()),
+        )
+        version = 20
+    if version < 21:
+        _compact_reading_note_page_refs(connection)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (21, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -1088,6 +1341,10 @@ def _migrate(connection: sqlite3.Connection) -> None:
     connection.executescript(MIGRATION_15)
     connection.executescript(MIGRATION_16)
     connection.executescript(MIGRATION_19)
+    if connection.execute(
+        "SELECT 1 FROM pragma_table_info('style_profile_samples') WHERE name = 'sample_role'"
+    ).fetchone() is None:
+        connection.executescript(MIGRATION_20)
     _ensure_citation_metadata_columns(connection)
     _ensure_event_comparison_columns(connection)
 
@@ -1097,8 +1354,10 @@ def connect(project_root: Path) -> Iterator[sqlite3.Connection]:
     path = database_path(project_root)
     if not path.is_file():
         raise FileNotFoundError(f"project database does not exist: {path}")
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA journal_mode = WAL")
     connection.execute("PRAGMA foreign_keys = ON")
     try:
         _migrate(connection)
@@ -1113,8 +1372,11 @@ def connect(project_root: Path) -> Iterator[sqlite3.Connection]:
 
 def initialize_database(project_root: Path, project_id: str, title: str) -> None:
     path = database_path(project_root)
-    connection = sqlite3.connect(path)
+    connection = sqlite3.connect(path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000)
     try:
+        connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(SCHEMA)
         connection.executescript(MIGRATION_4)
         connection.executescript(MIGRATION_5)
@@ -1128,6 +1390,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_15)
         connection.executescript(MIGRATION_16)
         connection.executescript(MIGRATION_19)
+        connection.executescript(MIGRATION_20)
         _ensure_citation_metadata_columns(connection)
         _ensure_event_comparison_columns(connection)
         now = utc_now()

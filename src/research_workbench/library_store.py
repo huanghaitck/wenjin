@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,8 +10,10 @@ from pathlib import Path
 from .db import utc_now
 
 
-LIBRARY_SCHEMA_VERSION = 1
+LIBRARY_SCHEMA_VERSION = 2
 LIBRARY_DATABASE_NAME = "library.sqlite3"
+_INITIALIZE_LOCK = threading.Lock()
+_INITIALIZED_PATHS: set[Path] = set()
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -76,7 +79,10 @@ CREATE TABLE scan_sessions (
     skill_sha256 TEXT NOT NULL,
     status TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    approved_at TEXT
+    approved_at TEXT,
+    processed_count INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '',
+    completed_at TEXT
 );
 
 CREATE TABLE scan_candidates (
@@ -160,26 +166,63 @@ def library_database_path(library_root: Path) -> Path:
 
 def initialize_library(library_root: Path) -> None:
     library_root.mkdir(parents=True, exist_ok=True)
-    path = library_database_path(library_root)
-    if path.exists():
-        return
-    connection = sqlite3.connect(path)
-    try:
-        connection.executescript(SCHEMA)
-        connection.execute(
-            "INSERT INTO library_meta(version, applied_at) VALUES (?, ?)",
-            (LIBRARY_SCHEMA_VERSION, utc_now()),
-        )
-        connection.commit()
-    finally:
-        connection.close()
+    path = library_database_path(library_root).resolve()
+    with _INITIALIZE_LOCK:
+        if path in _INITIALIZED_PATHS:
+            return
+        connection = sqlite3.connect(path, timeout=10)
+        try:
+            connection.execute("PRAGMA busy_timeout = 10000")
+            connection.execute("PRAGMA journal_mode = WAL")
+            connection.execute("PRAGMA foreign_keys = ON")
+            exists = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_meta'"
+            ).fetchone()
+            if exists is None:
+                connection.executescript(SCHEMA)
+                connection.execute(
+                    "INSERT INTO library_meta(version, applied_at) VALUES (?, ?)",
+                    (LIBRARY_SCHEMA_VERSION, utc_now()),
+                )
+            else:
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(scan_sessions)").fetchall()
+                }
+                if "processed_count" not in columns:
+                    connection.execute(
+                        "ALTER TABLE scan_sessions ADD COLUMN processed_count INTEGER NOT NULL DEFAULT 0"
+                    )
+                if "error" not in columns:
+                    connection.execute(
+                        "ALTER TABLE scan_sessions ADD COLUMN error TEXT NOT NULL DEFAULT ''"
+                    )
+                if "completed_at" not in columns:
+                    connection.execute("ALTER TABLE scan_sessions ADD COLUMN completed_at TEXT")
+                current_version = connection.execute(
+                    "SELECT version FROM library_meta LIMIT 1"
+                ).fetchone()
+                if current_version is None:
+                    connection.execute(
+                        "INSERT INTO library_meta(version, applied_at) VALUES (?, ?)",
+                        (LIBRARY_SCHEMA_VERSION, utc_now()),
+                    )
+                elif current_version[0] != LIBRARY_SCHEMA_VERSION:
+                    connection.execute(
+                        "UPDATE library_meta SET version = ?, applied_at = ?",
+                        (LIBRARY_SCHEMA_VERSION, utc_now()),
+                    )
+            connection.commit()
+            _INITIALIZED_PATHS.add(path)
+        finally:
+            connection.close()
 
 
 @contextmanager
 def connect_library(library_root: Path) -> Iterator[sqlite3.Connection]:
     initialize_library(library_root)
-    connection = sqlite3.connect(library_database_path(library_root))
+    connection = sqlite3.connect(library_database_path(library_root), timeout=10)
     connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA busy_timeout = 10000")
     connection.execute("PRAGMA foreign_keys = ON")
     try:
         yield connection

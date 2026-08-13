@@ -6,7 +6,9 @@ import os
 import re
 import ssl
 import statistics
+import unicodedata
 import uuid
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
@@ -170,7 +172,10 @@ def import_manuscript(project_root: Path, title: str, markdown: str) -> dict[str
 
 
 def _markers(text: str) -> list[str]:
-    patterns = [r"“[^”]+”", r"\[\^[^\]]+\]", r"\b\d+(?:[.,:]\d+)*\b", r"(?:SRC|EVI|CLM|FRZ)_[A-Za-z0-9_]+"]
+    patterns = [
+        r"“[^”]+”", r"\[\^[^\]]+\]", r"\[(?:EVID|CITE):[^\]\r\n]+\]",
+        r"(?<![A-Za-z0-9_])\d+(?:[.,:]\d+)*(?![A-Za-z0-9_])", r"(?:SRC|EVI|CLM|FRZ)_[A-Za-z0-9_]+",
+    ]
     found: list[str] = []
     for pattern in patterns:
         found.extend(re.findall(pattern, text))
@@ -183,6 +188,151 @@ def _historical_markers(text: str) -> list[str]:
         found.extend(value.strip() for value in re.findall(pattern, text) if value.strip())
     found.extend(value for value in HISTORICAL_QUALIFIERS if value in text)
     return list(dict.fromkeys(found))
+
+
+def _is_complete_markdown_table(text: str) -> bool:
+    """Accept one complete, rectangular Markdown table and no surrounding prose."""
+    lines = text.replace("\r\n", "\n").strip().splitlines()
+    if len(lines) < 3:
+        return False
+    rows: list[list[str]] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            return False
+        rows.append([cell.strip() for cell in stripped[1:-1].split("|")])
+    width = len(rows[0])
+    if width < 2 or any(len(row) != width for row in rows):
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in rows[1])
+
+
+def _direct_quote_contents(text: str) -> list[str]:
+    quotes: list[str] = []
+    for pattern in (r"“([^”]{12,})”", r"„([^“”\"]{12,})[“”\"]", r"«([^»]{12,})»", r'"([^"\n]{12,})"'):
+        quotes.extend(re.findall(pattern, text))
+    return quotes
+
+
+def _approved_freeze_evidence_scope(project_root: Path, freeze_id: str,
+                                    evidence_ids: list[str] | None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    if not freeze_id.strip():
+        raise ValueError("selection evidence supplement requires an approved evidence freeze")
+    selected_ids = list(dict.fromkeys(
+        str(value).strip() for value in (evidence_ids or []) if str(value).strip()
+    ))
+    if not selected_ids:
+        raise ValueError("selection evidence supplement requires at least one selected frozen evidence item")
+    freeze = freeze_detail(project_root, freeze_id)
+    if freeze["status"] != "approved":
+        raise ValueError("selection evidence supplement requires an approved evidence freeze")
+    frozen_by_id: dict[str, dict[str, Any]] = {}
+    for claim in freeze["payload"].get("claims", []):
+        for evidence in claim.get("evidence", []):
+            evidence_id = str(evidence.get("evidence_id", "")).strip()
+            if evidence_id:
+                frozen_by_id.setdefault(evidence_id, evidence)
+    unknown = [value for value in selected_ids if value not in frozen_by_id]
+    if unknown:
+        raise ValueError(f"evidence is not part of the approved freeze: {unknown[0]}")
+    return freeze, {value: frozen_by_id[value] for value in selected_ids}
+
+
+def _selection_evidence_supplement_validation(original: str, replacement: str,
+                                               selected_evidence: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    before_tokens = re.findall(r"\[EVID:([^\]\r\n]*)\]", original)
+    after_tokens = re.findall(r"\[EVID:([^\]\r\n]*)\]", replacement)
+    before = Counter(value for value in before_tokens if re.fullmatch(r"[A-Za-z0-9_]+", value))
+    after = Counter(value for value in after_tokens if re.fullmatch(r"[A-Za-z0-9_]+", value))
+    added = [
+        evidence_id for evidence_id, count in after.items()
+        for _ in range(max(0, count - before[evidence_id]))
+    ]
+    allowed = set(selected_evidence)
+    invalid = [evidence_id for evidence_id in added if evidence_id not in allowed]
+    malformed_added = list((Counter(after_tokens) - Counter(before_tokens)).elements())
+    malformed_added = [value for value in malformed_added if not re.fullmatch(r"[A-Za-z0-9_]+", value)]
+    new_citations = list((
+        Counter(re.findall(r"\[CITE:[^\]\r\n]+\]", replacement))
+        - Counter(re.findall(r"\[CITE:[^\]\r\n]+\]", original))
+    ).elements())
+    protected_pattern = (r"\[EVID:[^\]\r\n]+\]|\[CITE:[^\]\r\n]+\]|\[\^[^\]]+\]|"
+                         r"(?<![A-Za-z0-9_])\d+(?:[.,:]\d+)*(?![A-Za-z0-9_])")
+    original_markers = Counter(re.findall(protected_pattern, original))
+    replacement_markers = Counter(re.findall(protected_pattern, replacement))
+    missing_protected = list((original_markers - replacement_markers).elements())
+    original_quotes = Counter(_direct_quote_contents(original))
+    replacement_quotes = Counter(_direct_quote_contents(replacement))
+    new_quotes = list((replacement_quotes - original_quotes).elements())
+    allowed_quotes = {
+        re.sub(r"\s+", " ", str(evidence.get("quote", ""))).strip()
+        for evidence in selected_evidence.values()
+    }
+    altered_quotes = [
+        quote for quote in new_quotes
+        if re.sub(r"\s+", " ", quote).strip() not in allowed_quotes
+    ]
+    return {
+        "supplemental_evidence_linked": bool(added),
+        "new_evidence_ids": list(dict.fromkeys(added)),
+        "invalid_new_evidence_ids": list(dict.fromkeys(invalid)),
+        "malformed_new_evidence_markers": list(dict.fromkeys(malformed_added)),
+        "new_citation_markers": list(dict.fromkeys(new_citations)),
+        "selection_missing_protected_counts": missing_protected,
+        "altered_supplemental_quotes": list(dict.fromkeys(altered_quotes)),
+        "supplemental_evidence_valid": bool(
+            added and not invalid and not malformed_added and not new_citations
+            and not missing_protected and not altered_quotes
+        ),
+    }
+
+
+def _frozen_evidence_fingerprint(evidence_by_id: dict[str, dict[str, Any]]) -> str:
+    payload = [evidence_by_id[evidence_id] for evidence_id in evidence_by_id]
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _validated_writing_selection(base_content: str, base_version_id: str,
+                                 requested_base_version_id: str,
+                                 selection: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate an exact, version-bound selection without guessing its location."""
+    if not requested_base_version_id or requested_base_version_id != base_version_id:
+        raise ValueError("selected section version is stale; reload the manuscript and select the text again")
+    if not isinstance(selection, dict):
+        raise ValueError("selection-only revision requires a text selection")
+    try:
+        start, end = int(selection["start"]), int(selection["end"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("selection requires exact start and end offsets") from exc
+    selected_text = selection.get("text")
+    selection_hash = str(selection.get("sha256", "")).strip().lower()
+    node_ids = selection.get("node_ids")
+    selection_kind = str(selection.get("kind", "text")).strip() or "text"
+    if selection_kind not in {"text", "table"}:
+        raise ValueError("selection kind must be text or table")
+    if (not isinstance(selected_text, str) or not selected_text or start < 0
+            or end <= start or end > len(base_content)):
+        raise ValueError("selection range is empty or outside the current section")
+    if not isinstance(node_ids, list) or not node_ids or any(
+        not isinstance(value, str) or not value.strip() for value in node_ids
+    ):
+        raise ValueError("selection requires its paragraph node IDs")
+    if base_content[start:end] != selected_text:
+        raise ValueError("selected text no longer matches the current section; select it again")
+    expected_hash = hashlib.sha256(selected_text.encode("utf-8")).hexdigest()
+    if selection_hash != expected_hash:
+        raise ValueError("selection fingerprint does not match the selected text")
+    if base_content.count(selected_text) != 1:
+        raise ValueError("selected text is not unique in the current section; select a larger unique passage")
+    if selection_kind == "table":
+        if len(node_ids) != 1 or not _is_complete_markdown_table(selected_text):
+            raise ValueError("table selection must contain exactly one complete Markdown table")
+    return {
+        "start": start, "end": end, "text": selected_text, "sha256": expected_hash,
+        "node_ids": list(dict.fromkeys(value.strip() for value in node_ids)), "kind": selection_kind,
+    }
 
 
 def _style_features(text: str) -> dict[str, Any]:
@@ -228,6 +378,64 @@ def _manuscript_style_sample(project_root: Path, manuscript_id: str) -> dict[str
     }
 
 
+def _external_style_sample(project_root: Path, source_id: str) -> dict[str, Any]:
+    verified_states = {"human_spot_checked", "human_verified", "human_repaired"}
+    with connect(project_root) as connection:
+        source = connection.execute(
+            """SELECT s.source_id, s.title, s.use_state, m.author, m.verification_status
+               FROM sources s LEFT JOIN source_citation_metadata m ON m.source_id = s.source_id
+               WHERE s.source_id = ?""", (source_id,),
+        ).fetchone()
+        if source is None:
+            raise KeyError(f"unknown project source: {source_id}")
+        if source["verification_status"] != "HUMAN_VERIFIED":
+            raise ValueError("external style sample requires HUMAN_VERIFIED bibliography")
+        version = connection.execute(
+            "SELECT * FROM source_versions WHERE source_id = ? ORDER BY created_at DESC LIMIT 1",
+            (source_id,),
+        ).fetchone()
+        pages = connection.execute(
+            """SELECT page_id, physical_page, verification_state, use_state
+               FROM pages WHERE source_id = ? ORDER BY physical_page""", (source_id,),
+        ).fetchall()
+        if version is None or not pages:
+            raise ValueError("external style sample requires a processed exact source version")
+        if source["use_state"] != "research_usable" or any(
+            page["use_state"] != "research_usable" or page["verification_state"] not in verified_states
+            for page in pages
+        ):
+            raise ValueError("external style sample requires every page to be human verified and research usable")
+        page_ids = [page["page_id"] for page in pages]
+        placeholders = ",".join("?" for _ in page_ids)
+        blocks = connection.execute(
+            f"""SELECT page_id, block_order, COALESCE(human_text, machine_text) AS text,
+                       verification_state, use_state
+                FROM blocks WHERE page_id IN ({placeholders})
+                ORDER BY page_id, block_order""", page_ids,
+        ).fetchall()
+        if not blocks or any(
+            block["use_state"] != "research_usable"
+            or block["verification_state"] not in {"human_verified", "human_repaired"}
+            for block in blocks
+        ):
+            raise ValueError("external style sample requires every text block to be human verified and research usable")
+        open_anomaly = connection.execute(
+            "SELECT 1 FROM anomalies WHERE source_id = ? AND status = 'open' LIMIT 1", (source_id,),
+        ).fetchone()
+        if open_anomaly is not None:
+            raise ValueError("external style sample cannot contain open source, page, block, or relation anomalies")
+    content = "\n\n".join(str(block["text"]).strip() for block in blocks if str(block["text"]).strip())
+    if len(content) < 800:
+        raise ValueError("external style sample is too short; use a verified full article with at least 800 characters")
+    return {
+        "sample_role": "external_verified_article", "source_id": source_id,
+        "source_version_id": version["source_version_id"], "source_version_ids": [version["source_version_id"]],
+        "content": content, "sample_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "features": _style_features(content), "title": source["title"],
+        "author": str(source["author"]).strip(),
+    }
+
+
 def _aggregate_style_features(samples: list[dict[str, Any]]) -> dict[str, Any]:
     features = [sample["features"] for sample in samples]
     qualifiers = set(features[0]["observed_qualifiers"]) if features else set()
@@ -267,8 +475,8 @@ def create_style_profile(project_root: Path, manuscript_id: str, name: str,
         )
         connection.execute(
             """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
-               source_version_ids_json, sample_sha256, character_count, features_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at, sample_role)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manuscript')""",
             (sample_id, profile_id, manuscript_id, _json(sample["source_version_ids"]),
              sample["sample_sha256"], len(sample["content"]), _json(sample["features"]), now),
         )
@@ -277,10 +485,43 @@ def create_style_profile(project_root: Path, manuscript_id: str, name: str,
     return style_profile_detail(project_root, profile_id)
 
 
+def create_external_style_profile(project_root: Path, source_id: str, name: str,
+                                  owner_label: str, scope: str = "historical_articles") -> dict[str, Any]:
+    name, owner_label, scope = name.strip(), owner_label.strip(), scope.strip()
+    if not name or not owner_label:
+        raise ValueError("external style profile requires a name and identified author")
+    sample = _external_style_sample(project_root, source_id)
+    if re.sub(r"\s+", "", owner_label).casefold() != re.sub(r"\s+", "", sample["author"]).casefold():
+        raise ValueError("external style profile author must match HUMAN_VERIFIED bibliography")
+    profile_id, sample_id, now = _id("STY"), _id("STS"), utc_now()
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO style_profiles(profile_id, name, owner_label, scope, manuscript_id, section_id,
+               source_version_id, sample_sha256, features_json, status, created_at)
+               VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, 'OBSERVED_ONCE', ?)""",
+            (profile_id, name, owner_label, scope or "historical_articles",
+             sample["sample_sha256"], _json(sample["features"]), now),
+        )
+        connection.execute(
+            """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at,
+               sample_role, source_id, source_version_id)
+               VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'external_verified_article', ?, ?)""",
+            (sample_id, profile_id, _json(sample["source_version_ids"]), sample["sample_sha256"],
+             len(sample["content"]), _json(sample["features"]), now, source_id, sample["source_version_id"]),
+        )
+        append_audit(connection, "external_style_profile_created", "style_profile", profile_id, {
+            "source_id": source_id, "source_version_id": sample["source_version_id"], "sample_id": sample_id,
+        })
+    return style_profile_detail(project_root, profile_id)
+
+
 def add_style_profile_sample(project_root: Path, profile_id: str, manuscript_id: str) -> dict[str, Any]:
     profile = style_profile_detail(project_root, profile_id)
     if profile["status"] == "REJECTED":
         raise ValueError("cannot add samples to a rejected style profile")
+    if any(sample.get("sample_role") == "external_verified_article" for sample in profile["samples"]):
+        raise ValueError("research manuscripts and external author style sources must remain separate profiles")
     sample, sample_id, now = _manuscript_style_sample(project_root, manuscript_id), _id("STS"), utc_now()
     if any(item["sample_sha256"] == sample["sample_sha256"] for item in profile["samples"]):
         raise ValueError("this manuscript version is already part of the style profile")
@@ -294,8 +535,8 @@ def add_style_profile_sample(project_root: Path, profile_id: str, manuscript_id:
     with connect(project_root) as connection:
         connection.execute(
             """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
-               source_version_ids_json, sample_sha256, character_count, features_json, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at, sample_role)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manuscript')""",
             (sample_id, profile_id, manuscript_id, _json(sample["source_version_ids"]),
              sample["sample_sha256"], len(sample["content"]), _json(sample["features"]), now),
         )
@@ -309,13 +550,53 @@ def add_style_profile_sample(project_root: Path, profile_id: str, manuscript_id:
     return style_profile_detail(project_root, profile_id)
 
 
+def add_external_style_profile_sample(project_root: Path, profile_id: str, source_id: str) -> dict[str, Any]:
+    profile = style_profile_detail(project_root, profile_id)
+    if profile["status"] == "REJECTED":
+        raise ValueError("cannot add samples to a rejected style profile")
+    if any(sample.get("sample_role") != "external_verified_article" for sample in profile["samples"]):
+        raise ValueError("research manuscripts and external author style sources must remain separate profiles")
+    sample, sample_id, now = _external_style_sample(project_root, source_id), _id("STS"), utc_now()
+    if re.sub(r"\s+", "", profile["owner_label"]).casefold() != re.sub(r"\s+", "", sample["author"]).casefold():
+        raise ValueError("all external style samples must have the same HUMAN_VERIFIED author")
+    if any(item.get("source_id") == source_id for item in profile["samples"]):
+        raise ValueError("this external article is already part of the style profile")
+    samples = profile["samples"] + [{
+        "sample_id": sample_id, "manuscript_id": None, "sample_role": sample["sample_role"],
+        "source_id": source_id, "source_version_id": sample["source_version_id"],
+        "source_version_ids": sample["source_version_ids"], "sample_sha256": sample["sample_sha256"],
+        "character_count": len(sample["content"]), "features": sample["features"], "created_at": now,
+    }]
+    aggregate = _aggregate_style_features(samples)
+    status = "REVIEW_READY" if len(samples) >= 3 else ("RECURRING" if len(samples) >= 2 else "OBSERVED_ONCE")
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO style_profile_samples(sample_id, profile_id, manuscript_id,
+               source_version_ids_json, sample_sha256, character_count, features_json, created_at,
+               sample_role, source_id, source_version_id)
+               VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 'external_verified_article', ?, ?)""",
+            (sample_id, profile_id, _json(sample["source_version_ids"]), sample["sample_sha256"],
+             len(sample["content"]), _json(sample["features"]), now, source_id, sample["source_version_id"]),
+        )
+        connection.execute(
+            """UPDATE style_profiles SET features_json = ?, status = ?, decided_by = NULL,
+               decision_reason = NULL, decided_at = NULL WHERE profile_id = ?""",
+            (_json(aggregate), status, profile_id),
+        )
+        append_audit(connection, "external_style_profile_sample_added", "style_profile", profile_id, {
+            "source_id": source_id, "source_version_id": sample["source_version_id"],
+            "sample_id": sample_id, "sample_count": len(samples),
+        })
+    return style_profile_detail(project_root, profile_id)
+
+
 def decide_style_profile(project_root: Path, profile_id: str, approved: bool,
                          reviewer: str, reason: str) -> dict[str, Any]:
     reviewer, reason = reviewer.strip(), reason.strip()
     if not reviewer or not reason:
         raise ValueError("reviewer and decision reason are required")
     profile = style_profile_detail(project_root, profile_id)
-    if profile["status"] not in {"OBSERVED_ONCE", "RECURRING", "AUTHOR_APPROVED"}:
+    if profile["status"] not in {"OBSERVED_ONCE", "RECURRING", "REVIEW_READY", "AUTHOR_APPROVED"}:
         raise ValueError(f"style profile is already {profile['status']}")
     status = ("STABLE_PROFILE" if len(profile["samples"]) >= 3 else "AUTHOR_APPROVED") if approved else "REJECTED"
     now = utc_now()
@@ -345,6 +626,11 @@ def style_profile_detail(project_root: Path, profile_id: str) -> dict[str, Any]:
         sample["source_version_ids"] = json.loads(sample.pop("source_version_ids_json"))
         sample["features"] = json.loads(sample.pop("features_json"))
         result["samples"].append(sample)
+    result["minimum_sample_count"] = 3
+    result["recommended_sample_count"] = 5
+    result["sample_count_warning"] = (
+        "建议补足至少 5 篇同一作者的已核全文论文" if len(result["samples"]) < 5 else "已达到建议样本数"
+    )
     return result
 
 
@@ -357,7 +643,7 @@ def list_style_profiles(project_root: Path) -> list[dict[str, Any]]:
 def _validate_markers(content: str, markers: list[str], evidence_contract: dict[str, Any] | None = None) -> dict[str, Any]:
     missing = [marker for marker in markers if marker not in content]
     result: dict[str, Any] = {"valid": not missing, "missing_markers": missing}
-    if evidence_contract:
+    if evidence_contract and "evidence_ids" in evidence_contract:
         allowed_ids = set(evidence_contract["evidence_ids"])
         marker_tokens = re.findall(r"\[EVID:([^\]\r\n]*)\]", content)
         malformed_markers = [token for token in marker_tokens if not re.fullmatch(r"[A-Za-z0-9_]+", token)]
@@ -383,7 +669,157 @@ def _validate_markers(content: str, markers: list[str], evidence_contract: dict[
         result["valid"] = bool(
             result["valid"] and cited_ids and not invalid_ids and not malformed_markers and not altered_quotes
         )
+    citation_contract = (evidence_contract or {}).get("citation_markers", [])
+    required_historiography_entries = (
+        (evidence_contract or {}).get("required_historiography_entries", {})
+    )
+    cited_markers = re.findall(r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)\]", content)
+    malformed_citations = re.findall(r"\[CITE:([^\]\r\n]*)\]", content)
+    malformed_citations = [
+        value for value in malformed_citations
+        if not re.fullmatch(r"[A-Za-z0-9_]+@[A-Za-z0-9_:]+", value)
+    ]
+    if cited_markers or malformed_citations or citation_contract:
+        allowed = set(citation_contract)
+        invalid_citations = [f"[CITE:{source_id}@{page_id}]" for source_id, page_id in cited_markers
+                             if f"[CITE:{source_id}@{page_id}]" not in allowed]
+        result.update({
+            "cited_historiography_markers": list(dict.fromkeys(
+                f"[CITE:{source_id}@{page_id}]" for source_id, page_id in cited_markers
+            )),
+            "invalid_citation_markers": list(dict.fromkeys(invalid_citations)),
+            "malformed_citation_markers": list(dict.fromkeys(malformed_citations)),
+        })
+        result["valid"] = bool(result["valid"] and not invalid_citations and not malformed_citations)
+    if required_historiography_entries:
+        cited_sources = {source_id for source_id, _page_id in cited_markers}
+        missing_entry_ids = [
+            entry_id for entry_id, source_ids in required_historiography_entries.items()
+            if not cited_sources.intersection(source_ids)
+        ]
+        result.update({
+            "required_historiography_entry_ids": list(required_historiography_entries),
+            "missing_historiography_entry_ids": missing_entry_ids,
+            "historiography_coverage_valid": not missing_entry_ids,
+        })
+        result["valid"] = bool(result["valid"] and not missing_entry_ids)
     return result
+
+
+def _selected_historiography_context(project_root: Path, entry_ids: list[str],
+                                      explicit_page_refs: list[str] | None) -> dict[str, Any]:
+    selected_ids = list(dict.fromkeys(str(value).strip() for value in entry_ids if str(value).strip()))
+    if not selected_ids:
+        raise ValueError("historiography selection requires at least one entry id")
+    with connect(project_root) as connection:
+        placeholders = ",".join("?" for _ in selected_ids)
+        rows = [dict(row) for row in connection.execute(
+            f"SELECT * FROM historiography_entries WHERE entry_id IN ({placeholders})", selected_ids,
+        )]
+        by_id = {row["entry_id"]: row for row in rows}
+        missing = [entry_id for entry_id in selected_ids if entry_id not in by_id]
+        if missing:
+            raise KeyError(f"unknown historiography entry: {missing[0]}")
+        entries = [by_id[entry_id] for entry_id in selected_ids]
+        unapproved = [row["entry_id"] for row in entries if str(row["status"]).lower() != "approved"]
+        if unapproved:
+            raise ValueError(f"historiography entry is not approved: {unapproved[0]}")
+        for row in entries:
+            row["source_refs"] = list(dict.fromkeys(json.loads(row["source_refs_json"])))
+        source_ids = list(dict.fromkeys(
+            source_id for row in entries for source_id in row["source_refs"]
+        ))
+        if not source_ids:
+            raise ValueError("approved historiography entries must retain project source references")
+        source_placeholders = ",".join("?" for _ in source_ids)
+        source_rows = {
+            row["source_id"]: dict(row) for row in connection.execute(
+                f"""SELECT s.source_id, s.title, m.verification_status
+                    FROM sources s LEFT JOIN source_citation_metadata m ON m.source_id = s.source_id
+                    WHERE s.source_id IN ({source_placeholders})""", source_ids,
+            )
+        }
+        absent_sources = [source_id for source_id in source_ids if source_id not in source_rows]
+        if absent_sources:
+            raise ValueError(f"historiography source does not belong to this project: {absent_sources[0]}")
+        unverified_sources = [
+            source_id for source_id in source_ids
+            if source_rows[source_id].get("verification_status") != "HUMAN_VERIFIED"
+        ]
+        if unverified_sources:
+            raise ValueError(f"historiography source bibliography is not HUMAN_VERIFIED: {unverified_sources[0]}")
+
+        note_rows = [dict(row) for row in connection.execute(
+            f"""SELECT note_id, source_id, page_refs_json, content, created_at
+                FROM reading_notes WHERE source_id IN ({source_placeholders})
+                  AND qualification = 'READING_NOTE_NOT_EVIDENCE'
+                ORDER BY created_at DESC""", source_ids,
+        )]
+        notes_by_source: dict[str, list[dict[str, Any]]] = {source_id: [] for source_id in source_ids}
+        for note in note_rows:
+            if len(notes_by_source[note["source_id"]]) >= 2:
+                continue
+            note["page_refs"] = json.loads(note.pop("page_refs_json"))
+            note["content"] = note["content"][:600]
+            notes_by_source[note["source_id"]].append(note)
+
+        requested_pairs: list[tuple[str, str]] = []
+        if explicit_page_refs is not None:
+            for value in explicit_page_refs:
+                token = str(value).strip()
+                match = re.fullmatch(r"(?:\[CITE:)?([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)\]?", token)
+                if not match:
+                    raise ValueError(f"invalid historiography page ref: {token}")
+                requested_pairs.append(match.groups())
+        else:
+            for source_id, notes in notes_by_source.items():
+                page_ids = list(dict.fromkeys(
+                    str(ref.get("page_id", "")) for note in notes for ref in note["page_refs"]
+                    if str(ref.get("page_id", "")).strip()
+                ))
+                requested_pairs.extend((source_id, page_id) for page_id in page_ids[:5])
+        requested_pairs = list(dict.fromkeys(requested_pairs))
+        foreign_refs = [source_id for source_id, _ in requested_pairs if source_id not in source_ids]
+        if foreign_refs:
+            raise ValueError(f"historiography page ref is outside selected sources: {foreign_refs[0]}")
+        page_rows = {
+            (row["source_id"], row["page_id"]): dict(row) for row in connection.execute(
+                f"""SELECT source_id, page_id, physical_page, printed_page, verification_state, use_state
+                    FROM pages WHERE source_id IN ({source_placeholders})""", source_ids,
+            )
+        }
+    allowed_pages: list[dict[str, Any]] = []
+    verified_states = {"human_spot_checked", "human_verified", "human_repaired"}
+    for pair in requested_pairs:
+        page = page_rows.get(pair)
+        if page is None:
+            raise ValueError(f"historiography page ref does not exist: {pair[0]}@{pair[1]}")
+        if page["use_state"] != "research_usable" or page["verification_state"] not in verified_states:
+            raise ValueError(f"historiography page is not human-verified research usable: {pair[0]}@{pair[1]}")
+        if not str(page["printed_page"] or "").strip():
+            raise ValueError(f"historiography page has no printed_page: {pair[0]}@{pair[1]}")
+        allowed_pages.append({
+            **page, "marker": f"[CITE:{pair[0]}@{pair[1]}]",
+            "source_title": source_rows[pair[0]]["title"],
+        })
+    missing_page_sources = [
+        source_id for source_id in source_ids
+        if not any(page["source_id"] == source_id for page in allowed_pages)
+    ]
+    if missing_page_sources:
+        raise ValueError(
+            "approved historiography source needs a verified reading-note page or explicit page ref: "
+            + missing_page_sources[0]
+        )
+    return {
+        "entry_ids": selected_ids, "entries": entries, "source_ids": source_ids,
+        "entry_source_ids": {
+            entry["entry_id"]: entry["source_refs"] for entry in entries
+        },
+        "reading_notes": [note for source_id in source_ids for note in notes_by_source[source_id]],
+        "allowed_pages": allowed_pages,
+        "citation_markers": [page["marker"] for page in allowed_pages],
+    }
 
 
 def _prose_risk_warnings(content: str) -> list[str]:
@@ -403,6 +839,18 @@ def _requested_character_budget(instruction: str) -> tuple[int, int] | None:
         target = int(match.group(1))
         return (max(1, int(target * 0.8)), int(target * 1.2))
     return None
+
+
+def _character_budget_is_strict(instruction: str) -> bool:
+    """Only explicit hard wording lets a length preference override human approval."""
+    budget_number = re.search(r"\d{3,5}", instruction)
+    if budget_number is None:
+        return False
+    start = max(instruction.rfind(mark, 0, budget_number.start()) for mark in "。！？\n") + 1
+    ends = [instruction.find(mark, budget_number.end()) for mark in "。！？\n"]
+    end = min((value for value in ends if value >= 0), default=len(instruction))
+    budget_clause = instruction[start:end]
+    return bool(re.search(r"(?:严格|必须|务必|不得少于|不得超过|不多于|不少于)", budget_clause))
 
 
 def _without_repeated_heading(content: str, heading: str) -> str:
@@ -524,7 +972,12 @@ def _secondary_review_write(prompt: str) -> str:
 def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                             instruction: str, freeze_id: str = "", writer: Writer | None = None,
                             evidence_ids: list[str] | None = None, skill_name: str = "",
-                            style_profile_id: str = "") -> dict[str, Any]:
+                            style_profile_id: str = "",
+                            historiography_entry_ids: list[str] | None = None,
+                            historiography_page_refs: list[str] | None = None,
+                            attached_refs: list[dict[str, Any]] | None = None,
+                            selection_only: bool = False, base_version_id: str = "",
+                            selection: dict[str, Any] | None = None) -> dict[str, Any]:
     operation, instruction = operation.strip(), instruction.strip()
     if operation not in OPERATIONS:
         raise ValueError(f"unsupported writing operation: {operation}")
@@ -537,6 +990,30 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     if row is None:
         raise KeyError(f"unknown manuscript section: {section_id}")
     base_content, evidence_refs = row["content"], []
+    selection_context = None
+    supplemental_freeze: dict[str, Any] | None = None
+    supplemental_evidence: dict[str, dict[str, Any]] = {}
+    if selection_only:
+        if operation != "polish":
+            raise ValueError("selection-only revision currently supports evidence-preserving polish only")
+        selection_context = _validated_writing_selection(
+            base_content, str(row["current_version_id"]), base_version_id, selection,
+        )
+        supplement_requested = bool(freeze_id.strip() or evidence_ids)
+        if supplement_requested:
+            supplemental_freeze, supplemental_evidence = _approved_freeze_evidence_scope(
+                project_root, freeze_id, evidence_ids,
+            )
+            if historiography_entry_ids:
+                raise ValueError("selection evidence supplement cannot be combined with historiography context")
+            evidence_refs = [
+                {
+                    "evidence_id": evidence_id,
+                    "page_id": evidence.get("page_id", ""),
+                    "source_version_id": evidence.get("source_version_id", ""),
+                }
+                for evidence_id, evidence in supplemental_evidence.items()
+            ]
     if operation == "polish" and base_content.strip() in {"", "待写", "（待写）", "(待写)"}:
         raise ValueError("placeholder sections require metadata_draft instead of polish")
     markers = (_historical_markers(base_content) if operation == "historical_humanize"
@@ -648,8 +1125,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         profile = None
         if style_profile_id:
             profile = style_profile_detail(project_root, style_profile_id)
-            if profile["status"] not in {"AUTHOR_APPROVED", "STABLE_PROFILE"}:
-                raise ValueError("style profile must be author approved before use")
+            if profile["status"] != "STABLE_PROFILE" or len(profile["samples"]) < 3:
+                raise ValueError("style profile must be author approved with at least three samples before use")
         style_context = _json(profile["features"]) if profile else "未选择作者画像；只使用通用史学表达规则"
         prompt = (
             "对以下中文历史学段落制作证据保真的语言修订副本。只返回修订正文。\n"
@@ -662,21 +1139,161 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         )
         fallback = base_content
     else:
-        evidence_contract = None
-        prompt = (
-            "润色以下中文历史学论文段落。不得新增、删除或强化事实，不得改变引文、数字、脚注标记和来源标识。"
-            f"只返回修改后正文。具体要求：{instruction}\n\n{base_content}"
+        evidence_contract = (
+            {
+                "selection_supplement": {
+                    "freeze_id": supplemental_freeze["freeze_id"],
+                    "evidence_ids": list(supplemental_evidence),
+                    "evidence_fingerprint": _frozen_evidence_fingerprint(supplemental_evidence),
+                }
+            }
+            if supplemental_freeze else None
         )
-        fallback = re.sub(r"[ \t]+", " ", base_content).replace(" ,", "，").replace(" .", "。")
-    proposed = (writer(prompt) if writer else (_model_write(prompt) if _model_capability()["available"] else fallback)).strip()
+        writing_input = selection_context["text"] if selection_context else base_content
+        if selection_context and selection_context["kind"] == "table":
+            scope_rule = (
+                "你只会看到作者完整选择的一张 Markdown 表。只返回一张完整 Markdown 表，不要代码围栏、"
+                "标题、说明或前后文；必须保留表头、分隔行和至少一行数据，并保持各行列数一致。"
+            )
+        else:
+            scope_rule = (
+                "你只会看到作者选中的连续段落。只返回用于替换该选区的文字，不要返回整节、标题、说明或前后文。"
+                if selection_context else "只返回修改后正文。"
+            )
+        if supplemental_freeze:
+            evidence_text = "\n".join(
+                f"- [EVID:{evidence_id}]｜关系 {evidence.get('relation', '')}｜物理页 "
+                f"{'–'.join(str(page) for page in evidence.get('physical_pages', [evidence.get('physical_page', '')]))}"
+                f"｜原文：{evidence.get('quote', '')}"
+                for evidence_id, evidence in supplemental_evidence.items()
+            )
+            if selection_context["kind"] == "table":
+                supplement_scope = (
+                    "返修下列中文历史学论文中的完整 Markdown 表。模型只获得当前完整表格和作者选择的已批准冻结证据。"
+                    "必须保留表内原有事实、数字、脚注与 EVID/CITE 标识；除表内已有事实外，只能新增冻结证据原文直接支持的事实。"
+                    "每项新增事实必须在同一单元格附对应 [EVID:证据编号]。"
+                )
+                input_label = "当前完整表格"
+            else:
+                supplement_scope = (
+                    "返修下列中文历史学论文选区。模型只获得当前选区和作者选择的已批准冻结证据。"
+                    "必须保留选区内原有事实、数字、脚注与 EVID/CITE 标识；除选区内已有事实外，只能新增冻结证据原文直接支持的事实。"
+                    "每项新增事实必须在同一句附对应 [EVID:证据编号]。"
+                )
+                input_label = "当前选区"
+            prompt = (
+                supplement_scope
+                + "只能新增下列证据编号，且必须至少新增其中一个 [EVID:证据编号]。"
+                "不得从证据推演未记载的原因、规模、连续性或影响；如使用直接引文，必须逐字复制证据原文。"
+                f"{scope_rule}具体要求：{instruction}\n\n{input_label}：\n{writing_input}"
+                f"\n\n允许补充的冻结证据：\n{evidence_text}"
+            )
+        else:
+            prompt = (
+                "润色以下中文历史学论文段落。不得新增、删除或强化事实，不得改变引文、数字、脚注标记和来源标识。"
+                f"{scope_rule}具体要求：{instruction}\n\n{writing_input}"
+            )
+        fallback = re.sub(r"[ \t]+", " ", writing_input).replace(" ,", "，").replace(" .", "。")
+    historiography_context = None
+    if historiography_entry_ids:
+        if historiography_page_refs is None and attached_refs:
+            historiography_page_refs = [
+                f"{value.get('source_id', '')}@{value.get('page_id', '')}"
+                for value in attached_refs
+                if value.get("kind") == "source_page" and value.get("source_id") and value.get("page_id")
+            ] or None
+        historiography_context = _selected_historiography_context(
+            project_root, historiography_entry_ids, historiography_page_refs,
+        )
+        entry_text = "\n".join(
+            f"- {entry['entry_id']}｜《{entry['work_title']}》｜立场：{entry['position']}｜"
+            f"贡献：{entry['contribution']}｜限制：{entry['limitation']}｜与本文关系：{entry['relevance']}"
+            for entry in historiography_context["entries"]
+        )
+        note_text = "\n".join(
+            f"- {note['source_id']}｜阅读札记（仅作解释线索，不是证据）：{note['content']}"
+            for note in historiography_context["reading_notes"]
+        ) or "- 未附加阅读札记摘要。"
+        citation_text = "\n".join(
+            f"- {page['marker']}｜{page['source_title']}｜原书页 {page['printed_page']}"
+            for page in historiography_context["allowed_pages"]
+        )
+        prompt += (
+            "\n\n人工选用的学术史材料：\n" + entry_text
+            + "\n\n有界阅读札记摘要：\n" + note_text
+            + "\n\n允许的直接学术史引证白名单：\n" + citation_text
+            + "\n只能在确实使用相应观点时原样附上上述 [CITE:来源@页面] 标识；不得输出任何其他 CITE，"
+              "每个明确选用的学术史条目都必须至少使用其对应来源的一条白名单 CITE；同一条目无须穷尽所有允许页面。"
+              "不得把阅读札记当作史料证据，也不得因为材料已收藏或读过就自动写入正文或参考文献。"
+        )
+        if selection_context:
+            prompt += (
+                "\n这是选区返修：不得为了满足学术史覆盖向选区新增原来没有的 CITE；"
+                "选区外正文将由程序原样回填，最终仍按完整章节检查学术史覆盖。"
+            )
+        evidence_contract = dict(evidence_contract or {})
+        evidence_contract["citation_markers"] = historiography_context["citation_markers"]
+        evidence_contract["required_historiography_entries"] = historiography_context["entry_source_ids"]
+    if selection_context:
+        existing_citations = re.findall(r"\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]", base_content)
+        if existing_citations:
+            evidence_contract = dict(evidence_contract or {})
+            evidence_contract["citation_markers"] = list(dict.fromkeys(
+                [*(evidence_contract.get("citation_markers") or []), *existing_citations]
+            ))
+    model_output = (writer(prompt) if writer else (_model_write(prompt) if _model_capability()["available"] else fallback)).strip()
+    proposed = (
+        base_content[:selection_context["start"]] + model_output + base_content[selection_context["end"]:]
+        if selection_context else model_output
+    ).strip()
     validation = _validate_markers(proposed, markers, evidence_contract)
+    if operation == "polish":
+        validation["no_change"] = proposed == base_content.strip()
+        validation["valid"] = bool(validation["valid"] and not validation["no_change"])
+    if selection_context:
+        replacement_prose = re.sub(
+            r"\[(?:EVID|CITE):[^\]\r\n]+\]|\[\^[^\]\r\n]+\]", "", model_output,
+        )
+        replacement_warnings = _prose_risk_warnings(replacement_prose)
+        missing_selection_markers = [
+            marker for marker in _markers(selection_context["text"]) if marker not in model_output
+        ]
+        table_structure_valid = (
+            selection_context["kind"] != "table" or _is_complete_markdown_table(model_output)
+        )
+        validation.update({
+            "selection_only": True,
+            "selection_internal_process": "internal_process" in replacement_warnings,
+            "selection_missing_markers": missing_selection_markers,
+            "selection_kind": selection_context["kind"],
+            "table_structure_valid": table_structure_valid,
+            "replacement_character_count": len(model_output),
+        })
+        validation["valid"] = bool(
+            validation["valid"] and not validation["selection_internal_process"]
+            and not missing_selection_markers and table_structure_valid
+        )
+        if supplemental_evidence:
+            supplement_validation = _selection_evidence_supplement_validation(
+                selection_context["text"], model_output, supplemental_evidence,
+            )
+            validation.update(supplement_validation)
+            validation["valid"] = bool(
+                validation["valid"] and supplement_validation["supplemental_evidence_valid"]
+            )
+    if validation.get("invalid_citation_markers") or validation.get("malformed_citation_markers"):
+        invalid = validation.get("invalid_citation_markers") or validation.get("malformed_citation_markers")
+        raise ValueError("writing model returned a CITE outside the approved historiography whitelist: " + invalid[0])
     validation["prose_risk_warnings"] = _prose_risk_warnings(proposed)
     budget = _requested_character_budget(instruction)
     if budget:
         validation["requested_character_budget"] = {"min": budget[0], "max": budget[1]}
-        validation["actual_character_count"] = len(proposed)
+        validation["actual_character_count"] = len(model_output) if selection_context else len(proposed)
         validation["character_budget_status"] = (
-            "PASS" if budget[0] <= len(proposed) <= budget[1] else "OUT_OF_RANGE"
+            "PASS" if budget[0] <= validation["actual_character_count"] <= budget[1] else "OUT_OF_RANGE"
+        )
+        validation["character_budget_enforcement"] = (
+            "STRICT" if _character_budget_is_strict(instruction) else "ADVISORY"
         )
     if operation == "historical_humanize":
         before = [value.strip() for value in re.split(r"\n\s*\n", base_content) if value.strip()]
@@ -696,7 +1313,16 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         "skill": ({"name": selected_skill["name"], "sha256": selected_skill["sha256"]}
                   if operation == "historical_humanize" else None),
         "style_profile_id": style_profile_id,
+        "historiography_context": historiography_context,
+        "selection": selection_context,
     }
+    if selection_context:
+        with connect(project_root) as connection:
+            latest = connection.execute(
+                "SELECT current_version_id FROM manuscript_sections WHERE section_id = ?", (section_id,),
+            ).fetchone()
+        if latest is None or latest["current_version_id"] != row["current_version_id"]:
+            raise ValueError("selected section version changed while the model was writing; select the text again")
     with connect(project_root) as connection:
         connection.execute(
             """INSERT INTO writing_proposals(proposal_id, section_id, base_version_id, operation,
@@ -719,25 +1345,98 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
     if proposal["status"] != "pending":
         raise ValueError(f"writing proposal is already {proposal['status']}")
     final_content = (edited_content if edited_content is not None else proposal["proposed_content"]).strip()
+    if approved and proposal["model_snapshot"].get("selection"):
+        with connect(project_root) as connection:
+            current = connection.execute(
+                "SELECT current_version_id FROM manuscript_sections WHERE section_id = ?",
+                (proposal["section_id"],),
+            ).fetchone()
+        if current is None or current["current_version_id"] != proposal["base_version_id"]:
+            raise ValueError("writing proposal is based on a stale section version; create a new selection proposal")
     with connect(project_root) as connection:
         heading_row = connection.execute(
             "SELECT heading FROM manuscript_sections WHERE section_id = ?", (proposal["section_id"],)
         ).fetchone()
     if heading_row is not None:
         final_content = _without_repeated_heading(final_content, heading_row["heading"])
+    budget_content = final_content
     contract = proposal["model_snapshot"].get("evidence_contract")
+    supplemental_evidence: dict[str, dict[str, Any]] = {}
+    supplemental_contract = (contract or {}).get("selection_supplement")
+    if approved and supplemental_contract:
+        _freeze, supplemental_evidence = _approved_freeze_evidence_scope(
+            project_root,
+            str(supplemental_contract.get("freeze_id", "")),
+            [str(value) for value in supplemental_contract.get("evidence_ids", [])],
+        )
+        if _frozen_evidence_fingerprint(supplemental_evidence) != supplemental_contract.get("evidence_fingerprint"):
+            raise ValueError("approved evidence freeze changed after proposal generation; create a new proposal")
     validation = _validate_markers(final_content, proposal["protected_markers"], contract)
+    if proposal["operation"] == "polish":
+        with connect(project_root) as connection:
+            base_row = connection.execute(
+                "SELECT content FROM section_versions WHERE version_id = ?",
+                (proposal["base_version_id"],),
+            ).fetchone()
+        selection = proposal["model_snapshot"].get("selection")
+        if selection and base_row is not None:
+            base_text = str(base_row["content"])
+            start, end = int(selection["start"]), int(selection["end"])
+            prefix, suffix = base_text[:start], base_text[end:]
+            if not final_content.startswith(prefix) or (suffix and not final_content.endswith(suffix)):
+                raise ValueError("selection-only approval changed text outside the selected passage")
+            replacement_end = len(final_content) - len(suffix) if suffix else len(final_content)
+            replacement = final_content[len(prefix):replacement_end]
+            budget_content = replacement
+            replacement_prose = re.sub(
+                r"\[(?:EVID|CITE):[^\]\r\n]+\]|\[\^[^\]\r\n]+\]", "", replacement,
+            )
+            missing_selection_markers = [
+                marker for marker in _markers(str(selection["text"])) if marker not in replacement
+            ]
+            table_structure_valid = (
+                selection.get("kind", "text") != "table" or _is_complete_markdown_table(replacement)
+            )
+            validation.update({
+                "selection_only": True,
+                "selection_kind": selection.get("kind", "text"),
+                "selection_internal_process": "internal_process" in _prose_risk_warnings(replacement_prose),
+                "selection_missing_markers": missing_selection_markers,
+                "table_structure_valid": table_structure_valid,
+                "replacement_character_count": len(replacement),
+            })
+            validation["valid"] = bool(
+                validation["valid"] and not validation["selection_internal_process"]
+                and not missing_selection_markers and table_structure_valid
+            )
+            if supplemental_evidence:
+                supplement_validation = _selection_evidence_supplement_validation(
+                    str(selection["text"]), replacement, supplemental_evidence,
+                )
+                validation.update(supplement_validation)
+                validation["valid"] = bool(
+                    validation["valid"] and supplement_validation["supplemental_evidence_valid"]
+                )
+        validation["no_change"] = bool(
+            base_row is not None and final_content == str(base_row["content"]).strip()
+        )
+        validation["valid"] = bool(validation["valid"] and not validation["no_change"])
     validation["decision_reason"] = reason
     prose_for_approval = re.sub(r"\[(?:EVID|CITE):[^\]]+\]", "", final_content)
     validation["prose_risk_warnings"] = _prose_risk_warnings(prose_for_approval)
     budget = _requested_character_budget(proposal["instruction"])
     if budget:
         validation["requested_character_budget"] = {"min": budget[0], "max": budget[1]}
-        validation["actual_character_count"] = len(final_content)
+        validation["actual_character_count"] = len(budget_content)
         validation["character_budget_status"] = (
-            "PASS" if budget[0] <= len(final_content) <= budget[1] else "OUT_OF_RANGE"
+            "PASS" if budget[0] <= len(budget_content) <= budget[1] else "OUT_OF_RANGE"
+        )
+        validation["character_budget_enforcement"] = (
+            "STRICT" if _character_budget_is_strict(proposal["instruction"]) else "ADVISORY"
         )
     if approved and not validation["valid"]:
+        if validation.get("selection_internal_process"):
+            raise ValueError("writing proposal still contains research-process prose: internal_process")
         if validation["missing_markers"]:
             raise ValueError("writing proposal removed protected markers: " + ", ".join(validation["missing_markers"]))
         raise ValueError("writing proposal violates its evidence contract")
@@ -750,11 +1449,12 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
             "writing proposal still contains research-process prose: "
             + ", ".join(blocking_prose)
         )
-    if approved and validation.get("character_budget_status") == "OUT_OF_RANGE":
+    if (approved and validation.get("character_budget_status") == "OUT_OF_RANGE"
+            and validation.get("character_budget_enforcement") == "STRICT"):
         requested = validation["requested_character_budget"]
         raise ValueError(
             f"writing proposal is outside the requested character budget "
-            f"({len(final_content)} not in {requested['min']}–{requested['max']})"
+            f"({validation['actual_character_count']} not in {requested['min']}–{requested['max']})"
         )
     now = utc_now()
     with connect(project_root) as connection:
@@ -862,6 +1562,191 @@ def list_manuscripts(project_root: Path) -> list[dict[str, Any]]:
     return [manuscript_detail(project_root, manuscript_id) for manuscript_id in ids]
 
 
+def _reading_source_identity(connection: Any, source_id: str) -> dict[str, str]:
+    row = connection.execute(
+        """SELECT s.source_id, s.title AS project_title, s.original_name,
+                  COALESCE(m.title, '') AS citation_title,
+                  COALESCE(m.author, '') AS canonical_author,
+                  COALESCE(m.verification_status, 'UNVERIFIED') AS citation_verification_status
+           FROM sources s LEFT JOIN source_citation_metadata m ON m.source_id = s.source_id
+           WHERE s.source_id = ?""",
+        (source_id,),
+    ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown source: {source_id}")
+    canonical_title = (
+        str(row["citation_title"]).strip()
+        if row["citation_verification_status"] == "HUMAN_VERIFIED"
+        and str(row["citation_title"]).strip()
+        else str(row["project_title"]).strip()
+    )
+    return {
+        "source_id": str(row["source_id"]),
+        "canonical_title": canonical_title,
+        "canonical_author": str(row["canonical_author"]).strip(),
+        "original_name": str(row["original_name"]),
+        "citation_verification_status": str(row["citation_verification_status"]),
+    }
+
+
+def _normalized_title(value: str) -> str:
+    return re.sub(
+        r"[\W_]+", "", unicodedata.normalize("NFKC", value), flags=re.UNICODE,
+    ).casefold()
+
+
+def _historiography_title_segments(value: str) -> list[str]:
+    normalized = unicodedata.normalize("NFKC", value)
+    return [
+        match.group(1).strip()
+        for match in re.finditer(r"[《〈](.+?)[》〉]", normalized)
+        if match.group(1).strip()
+    ]
+
+
+def _historiography_declared_author(work_title: str, canonical_title: str) -> str:
+    """Return an author field only when the supplied value visibly declares one."""
+    normalized = unicodedata.normalize("NFKC", work_title).strip()
+    canonical_title = unicodedata.normalize("NFKC", canonical_title)
+    explicit = re.search(
+        r"(?:作者|责任者)\s*[:：]\s*([^,，。；;:：]+)", normalized,
+        flags=re.I,
+    )
+    if explicit:
+        return explicit.group(1).strip()
+
+    title_match = re.search(re.escape(canonical_title), normalized, flags=re.I)
+    if title_match is None:
+        return ""
+    prefix = normalized[:title_match.start()]
+    prefix = re.sub(r"^\s*\[?\d+\]?\s*", "", prefix)
+    prefix = re.sub(r"^\s*(?:18|19|20)\d{2}(?:年)?[\s._-]*", "", prefix)
+    prefix = prefix.strip(" \t\r\n_,，.。：:;；-—《〈[（(")
+    if not prefix or len(prefix) > 80:
+        return ""
+    # A title introduced as a quoted object (for example, “评《某书》”) is not
+    # a bibliographic author declaration. It must not unlock substring matching.
+    if prefix in {"评", "读", "论", "关于", "再论"}:
+        return ""
+    return prefix
+
+
+def _verified_historiography_title_matches(work_title: str,
+                                            identity: dict[str, str]) -> bool:
+    supplied = _normalized_title(work_title)
+    canonical = _normalized_title(identity["canonical_title"])
+    if supplied == canonical:
+        return True
+
+    title_segments = _historiography_title_segments(work_title)
+    exact_quoted_title = any(
+        _normalized_title(segment) == canonical
+        for segment in title_segments
+    )
+    normalized_work_title = unicodedata.normalize("NFKC", work_title)
+    review_wrapper = re.search(
+        rf"(?:^|[\s:：,，.。;；])(?:评|读|关于|论|再论)\s*[《〈]"
+        rf"\s*{re.escape(unicodedata.normalize('NFKC', identity['canonical_title']))}\s*[》〉]",
+        normalized_work_title,
+    ) is not None
+    declared_author = _historiography_declared_author(
+        work_title, identity["canonical_title"],
+    )
+    canonical_author = _normalized_title(identity["canonical_author"])
+    if declared_author and canonical_author:
+        supplied_author = _normalized_title(declared_author)
+        if supplied_author != canonical_author:
+            raise ValueError(
+                "historiography work author does not match HUMAN_VERIFIED bibliography: "
+                + _json({
+                    "source_id": identity["source_id"],
+                    "canonical_author": identity["canonical_author"],
+                    "supplied_author": declared_author,
+                })
+            )
+
+    if title_segments and not exact_quoted_title:
+        return False
+    if exact_quoted_title and not review_wrapper and canonical_author in supplied:
+        return True
+    citation_segments = [
+        _normalized_title(segment)
+        for segment in re.split(r"[,，.。;；:：\[\]()（）]+", normalized_work_title)
+        if segment.strip()
+    ]
+    if canonical_author in supplied and canonical in citation_segments:
+        return True
+    if supplied.endswith(canonical):
+        prefix = supplied[:-len(canonical)]
+        return bool(re.fullmatch(r"(?:18|19|20)\d{2}年?", prefix))
+    return False
+
+
+def _declared_reading_note_titles(content: str) -> list[str]:
+    # Only inspect explicit identity labels. A note may legitimately discuss or
+    # compare other named works in its analytical prose.
+    pattern = re.compile(
+        r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?(?:来源(?:题名)?|文献(?:题名)?|作品(?:题名)?|"
+        r"阅读对象|札记对象|题名|书名|source(?:_|\s+)title)(?:\*\*)?\s*[:：]\s*(.+?)\s*$"
+    )
+    return [
+        match.group(1).strip().strip("`*_# 《》“”\"'")
+        for match in pattern.finditer(content)
+        if match.group(1).strip()
+    ]
+
+
+def _declared_reading_note_authors(content: str) -> list[str]:
+    pattern = re.compile(
+        r"(?im)^\s*(?:[-*]\s*)?(?:\*\*)?(?:来源作者|文献作者|作品作者|责任者|"
+        r"source(?:_|\s+)author)(?:\*\*)?\s*[:：]\s*(.+?)\s*$"
+    )
+    return [
+        match.group(1).strip().strip("`*_# 《》“”\"'")
+        for match in pattern.finditer(content)
+        if match.group(1).strip()
+    ]
+
+
+def _reading_note_identity_mismatches(content: str, identity: dict[str, str]) -> list[str]:
+    canonical = _normalized_title(identity["canonical_title"])
+    mismatches = []
+    for declared in _declared_reading_note_titles(content):
+        normalized = _normalized_title(declared)
+        if normalized and canonical not in normalized and normalized not in canonical:
+            mismatches.append(f"title={declared}")
+    canonical_author = _normalized_title(identity["canonical_author"])
+    if canonical_author:
+        for declared in _declared_reading_note_authors(content):
+            normalized = _normalized_title(declared)
+            if normalized and canonical_author not in normalized and normalized not in canonical_author:
+                mismatches.append(f"author={declared}")
+    return mismatches
+
+
+def _source_page_choices(connection: Any, source_id: str) -> dict[str, list[int]]:
+    rows = connection.execute(
+        "SELECT physical_page, use_state FROM pages WHERE source_id = ? ORDER BY physical_page",
+        (source_id,),
+    ).fetchall()
+    return {
+        "savable_physical_pages": [
+            int(row["physical_page"]) for row in rows if row["use_state"] == "research_usable"
+        ],
+        "blocked_or_unusable_physical_pages": [
+            int(row["physical_page"]) for row in rows if row["use_state"] != "research_usable"
+        ],
+    }
+
+
+def _reading_identity_header(identity: dict[str, str]) -> str:
+    author = f"｜canonical_author={identity['canonical_author']}" if identity["canonical_author"] else ""
+    return (
+        f"[来源身份｜source_id={identity['source_id']}｜"
+        f"canonical_title=《{identity['canonical_title']}》{author}]"
+    )
+
+
 def create_reading_job(project_root: Path, title: str, question: str, mode: str,
                        source_ids: list[str], stop_condition: str) -> dict[str, Any]:
     if mode not in {"metadata", "targeted", "full"}:
@@ -870,11 +1755,13 @@ def create_reading_job(project_root: Path, title: str, question: str, mode: str,
         raise ValueError("reading job requires title, question, sources and stop condition")
     job_id, now = _id("RDJ"), utc_now()
     with connect(project_root) as connection:
+        source_identities = [_reading_source_identity(connection, source_id) for source_id in source_ids]
         connection.execute(
             "INSERT INTO reading_jobs(job_id, title, question, mode, source_ids_json, stop_condition, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'running', ?)",
             (job_id, title.strip(), question.strip(), mode, _json(source_ids), stop_condition.strip(), now),
         )
     return {"job_id": job_id, "title": title, "question": question, "mode": mode,
+            "source_ids": source_ids, "source_identities": source_identities,
             "stop_condition": stop_condition, "status": "running", "notes": []}
 
 
@@ -888,6 +1775,7 @@ def reading_job_batch(project_root: Path, job_id: str, source_id: str,
             raise KeyError(f"unknown reading job: {job_id}")
         if source_id not in json.loads(job["source_ids_json"]):
             raise ValueError("source is not assigned to this reading job")
+        source_identity = _reading_source_identity(connection, source_id)
         selected_pages = connection.execute(
             """SELECT page_id, physical_page, printed_page, verification_state, use_state
                FROM pages WHERE source_id = ? AND physical_page > ?
@@ -912,17 +1800,20 @@ def reading_job_batch(project_root: Path, job_id: str, source_id: str,
         usable_pages = connection.execute(
             "SELECT COUNT(*) FROM pages WHERE source_id = ? AND use_state = 'research_usable'", (source_id,)
         ).fetchone()[0]
+        page_choices = _source_page_choices(connection, source_id)
         last_page = pages[-1]["physical_page"] if pages else after_physical_page
         has_more = connection.execute(
             """SELECT 1 FROM pages WHERE source_id = ? AND physical_page > ?
                AND use_state = 'research_usable' LIMIT 1""", (source_id, last_page),
         ).fetchone() is not None
     return {
-        "job_id": job_id, "source_id": source_id, "mode": job["mode"],
+        "job_id": job_id, "source_id": source_id, "source_identity": source_identity,
+        "canonical_title": source_identity["canonical_title"], "mode": job["mode"],
         "question": job["question"], "stop_condition": job["stop_condition"],
         "pages": pages, "next_after_physical_page": last_page, "has_more": has_more,
         "total_pages": total_pages, "usable_pages": usable_pages,
         "blocked_or_unusable_pages": total_pages - usable_pages,
+        **page_choices,
     }
 
 
@@ -939,6 +1830,19 @@ def save_reading_note(project_root: Path, job_id: str, source_id: str,
         source_ids = json.loads(job["source_ids_json"])
         if source_id not in source_ids:
             raise ValueError("source is not assigned to this reading job")
+        source_identity = _reading_source_identity(connection, source_id)
+        page_choices = _source_page_choices(connection, source_id)
+        mismatches = _reading_note_identity_mismatches(content, source_identity)
+        if mismatches:
+            raise ValueError(
+                "reading note source identity mismatch: "
+                + _json({
+                    "source_identity": source_identity,
+                    "declared_titles": mismatches,
+                    **page_choices,
+                    "correction": "remove the handwritten source identity and save analysis only",
+                })
+            )
         placeholders = ",".join("?" for _ in pages)
         page_rows = connection.execute(
             f"""SELECT page_id, physical_page FROM pages
@@ -947,20 +1851,41 @@ def save_reading_note(project_root: Path, job_id: str, source_id: str,
             (source_id, *pages),
         ).fetchall()
         if [row["physical_page"] for row in page_rows] != pages:
-            raise ValueError("reading note pages must all be research usable")
+            raise ValueError(
+                "reading note pages must all be research usable: "
+                + _json({"source_identity": source_identity, "requested_physical_pages": pages,
+                         **page_choices})
+            )
+        version_rows = connection.execute(
+            """SELECT source_version_id FROM source_versions
+               WHERE source_id = ? ORDER BY created_at, source_version_id""",
+            (source_id,),
+        ).fetchall()
+        if len(version_rows) != 1:
+            raise ValueError("reading note requires one exact source version")
+        source_version_id = str(version_rows[0]["source_version_id"])
         refs = []
         for page in page_rows:
-            blocks = connection.execute(
+            block = connection.execute(
                 """SELECT block_id FROM blocks WHERE page_id = ? AND use_state = 'research_usable'
-                   ORDER BY block_order""", (page["page_id"],),
-            ).fetchall()
-            refs.extend({"page_id": page["page_id"], "physical_page": page["physical_page"],
-                         "block_id": block["block_id"]} for block in blocks)
+                   ORDER BY block_order, block_id LIMIT 1""", (page["page_id"],),
+            ).fetchone()
+            if block is None:
+                raise ValueError(
+                    f"reading note page has no representative research-usable block: {page['page_id']}"
+                )
+            refs.append({
+                "source_version_id": source_version_id,
+                "page_id": page["page_id"],
+                "physical_page": page["physical_page"],
+                "block_id": block["block_id"],
+            })
         note_id, now = _id("RDN"), utc_now()
         connection.execute(
             """INSERT INTO reading_notes(note_id, job_id, source_id, page_refs_json, content,
                qualification, created_at) VALUES (?, ?, ?, ?, ?, 'READING_NOTE_NOT_EVIDENCE', ?)""",
-            (note_id, job_id, source_id, _json(refs), content.strip(), now),
+            (note_id, job_id, source_id, _json(refs),
+             _reading_identity_header(source_identity) + "\n\n" + content.strip(), now),
         )
         status = str(job["status"])
         if complete:
@@ -998,6 +1923,7 @@ def save_reading_note(project_root: Path, job_id: str, source_id: str,
                 (status, now, job_id),
             )
     return {"note_id": note_id, "job_id": job_id, "source_id": source_id,
+            "source_identity": source_identity, "canonical_title": source_identity["canonical_title"],
             "physical_pages": pages, "qualification": "READING_NOTE_NOT_EVIDENCE",
             "status": status}
 
@@ -1011,24 +1937,128 @@ def list_reading_jobs(project_root: Path) -> list[dict[str, Any]]:
                 "SELECT * FROM reading_notes WHERE job_id = ? ORDER BY created_at", (job["job_id"],)
             )]
             for note in job["notes"]:
-                note["page_refs"] = json.loads(note["page_refs_json"])
+                note["page_refs"] = json.loads(note.pop("page_refs_json"))
     return jobs
+
+
+def _validate_historiography_sources(connection: Any, work_title: str,
+                                      source_refs: list[str]) -> str:
+    identities = [_reading_source_identity(connection, source_id) for source_id in source_refs]
+    canonical_titles = list(dict.fromkeys(identity["canonical_title"] for identity in identities))
+    if len({_normalized_title(title) for title in canonical_titles}) != 1:
+        raise ValueError("one historiography entry cannot represent multiple source titles")
+    canonical_title = canonical_titles[0]
+    verified = all(
+        identity["citation_verification_status"] == "HUMAN_VERIFIED"
+        for identity in identities
+    )
+    title_matches = (
+        all(_verified_historiography_title_matches(work_title, identity)
+            for identity in identities)
+        if verified
+        else _normalized_title(work_title) == _normalized_title(canonical_title)
+    )
+    if not title_matches:
+        raise ValueError(
+            "historiography work title does not match its bound source: "
+            + _json({"source_id": source_refs[0], "canonical_title": canonical_title,
+                     "canonical_author": identities[0]["canonical_author"] if verified else "",
+                     "supplied_work_title": work_title,
+                     "citation_verification_status": identities[0]["citation_verification_status"]})
+        )
+    for identity in identities:
+        notes = connection.execute(
+            """SELECT note_id, content, qualification FROM reading_notes
+               WHERE source_id = ? ORDER BY created_at""",
+            (identity["source_id"],),
+        ).fetchall()
+        eligible = 0
+        for note in notes:
+            mismatches = _reading_note_identity_mismatches(str(note["content"]), identity)
+            if mismatches:
+                connection.execute(
+                    "UPDATE reading_notes SET qualification = ? WHERE note_id = ?",
+                    ("QUARANTINED_SOURCE_IDENTITY_MISMATCH", note["note_id"]),
+                )
+            elif note["qualification"] == "READING_NOTE_NOT_EVIDENCE":
+                eligible += 1
+        if not eligible:
+            raise ValueError(
+                "historiography source has no identity-consistent reading note: "
+                + _json({"source_identity": identity})
+            )
+    return canonical_title
+
+
+def validate_historiography_entry_payload(project_root: Path,
+                                           payload: dict[str, Any]) -> dict[str, Any]:
+    source_refs = list(dict.fromkeys(
+        str(value).strip() for value in payload.get("source_refs", []) if str(value).strip()
+    ))
+    if not source_refs:
+        raise ValueError("historiography entry requires project source references")
+    with connect(project_root) as connection:
+        canonical_title = _validate_historiography_sources(
+            connection, str(payload.get("work_title", "")).strip(), source_refs,
+        )
+    return {**payload, "work_title": canonical_title, "source_refs": source_refs}
 
 
 def create_historiography_entry(project_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     required = ("work_title", "position", "contribution", "limitation", "relevance")
     if any(not str(payload.get(key, "")).strip() for key in required) or not payload.get("source_refs"):
         raise ValueError("historiography entry requires all fields and source references")
+    payload = validate_historiography_entry_payload(project_root, payload)
+    source_refs = list(dict.fromkeys(str(value).strip() for value in payload["source_refs"]
+                                    if str(value).strip()))
+    if not source_refs:
+        raise ValueError("historiography entry requires project source references")
     entry_id, now = _id("HIS"), utc_now()
     with connect(project_root) as connection:
         connection.execute(
             """INSERT INTO historiography_entries(entry_id, work_title, position, contribution,
                limitation, relevance, source_refs_json, status, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?)""",
-            (entry_id, *(str(payload[key]).strip() for key in required), _json(payload["source_refs"]), now),
+            (entry_id, str(payload["work_title"]).strip(),
+             *(str(payload[key]).strip() for key in required[1:]), _json(source_refs), now),
         )
-    return {"entry_id": entry_id, **{key: str(payload[key]).strip() for key in required},
-            "source_refs": payload["source_refs"], "status": "candidate", "created_at": now}
+    return {"entry_id": entry_id, "work_title": str(payload["work_title"]).strip(),
+            **{key: str(payload[key]).strip() for key in required[1:]},
+            "source_refs": source_refs, "status": "candidate", "created_at": now}
+
+
+def decide_historiography_entry(project_root: Path, entry_id: str, approved: bool,
+                                 reviewer: str, reason: str) -> dict[str, Any]:
+    reviewer, reason = reviewer.strip(), reason.strip()
+    if not reviewer or not reason:
+        raise ValueError("reviewer and decision reason are required")
+    now = utc_now()
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT * FROM historiography_entries WHERE entry_id = ?", (entry_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown historiography entry: {entry_id}")
+        if row["status"] != "candidate":
+            raise ValueError(f"historiography entry is already {row['status']}")
+        source_refs = json.loads(row["source_refs_json"])
+        if approved:
+            _validate_historiography_sources(connection, str(row["work_title"]), source_refs)
+        status = "approved" if approved else "rejected"
+        connection.execute(
+            "UPDATE historiography_entries SET status = ? WHERE entry_id = ? AND status = 'candidate'",
+            (status, entry_id),
+        )
+        append_audit(connection, "historiography_entry_decided", "historiography_entry", entry_id, {
+            "approved": approved, "status": status, "reviewer": reviewer, "reason": reason,
+        })
+        result = dict(row)
+    result["source_refs"] = json.loads(result.pop("source_refs_json"))
+    result["status"] = status
+    result["decision"] = {
+        "approved": approved, "reviewer": reviewer, "reason": reason, "decided_at": now,
+    }
+    return result
 
 
 def list_historiography(project_root: Path) -> list[dict[str, Any]]:
@@ -1125,6 +2155,372 @@ def export_manuscript(project_root: Path, manuscript_id: str, template_id: str) 
             "project_path": path.relative_to(project_root).as_posix()}
 
 
+def _manuscript_coverage_receipt(project_root: Path, manuscript_text: str) -> dict[str, Any]:
+    cited_sources = set(re.findall(r"\[CITE:([A-Za-z0-9_]+)@[A-Za-z0-9_:]+\]", manuscript_text))
+    cited_evidence_ids = set(re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", manuscript_text))
+    with connect(project_root) as connection:
+        source_rows = [dict(row) for row in connection.execute(
+            "SELECT source_id, title FROM sources ORDER BY created_at"
+        )]
+        read_sources = {
+            row[0] for row in connection.execute("SELECT DISTINCT source_id FROM reading_notes")
+        }
+        historiography_sources: set[str] = set()
+        for row in connection.execute("SELECT source_refs_json FROM historiography_entries"):
+            historiography_sources.update(json.loads(row[0]))
+        if cited_evidence_ids:
+            placeholders = ",".join("?" for _ in cited_evidence_ids)
+            cited_sources.update(
+                row[0] for row in connection.execute(
+                    f"SELECT DISTINCT source_id FROM evidence_items WHERE evidence_id IN ({placeholders})",
+                    list(cited_evidence_ids),
+                )
+            )
+    source_titles = {row["source_id"]: row["title"] for row in source_rows}
+    unused_direct = sorted((read_sources & historiography_sources) - cited_sources)
+    return {
+        "project_source_count": len(source_rows),
+        "read_source_count": len(read_sources),
+        "historiography_source_count": len(historiography_sources),
+        "manuscript_cited_source_count": len(cited_sources),
+        "read_but_unused_direct_research": [
+            {"source_id": source_id, "title": source_titles.get(source_id, source_id)}
+            for source_id in unused_direct
+        ],
+        "warning": (
+            "覆盖回执只提示材料使用分布，不设置数量阈值；收藏、读过或进入学术史条目均不自动成为正文引文或参考文献。"
+        ),
+    }
+
+
+def _review_citation_context(project_root: Path,
+                             cited_pages: set[tuple[str, str]]) -> list[dict[str, Any]]:
+    """Describe only CITE pages that actually occur in the manuscript under review."""
+    if not cited_pages:
+        return []
+    source_ids = sorted({source_id for source_id, _page_id in cited_pages})
+    placeholders = ",".join("?" for _ in source_ids)
+    verified_states = {"human_spot_checked", "human_verified", "human_repaired"}
+    with connect(project_root) as connection:
+        source_rows = {
+            row["source_id"]: dict(row) for row in connection.execute(
+                f"""SELECT s.source_id, s.title AS project_title,
+                           COALESCE(m.author, '') AS author,
+                           COALESCE(m.title, '') AS citation_title,
+                           COALESCE(m.year, '') AS year,
+                           COALESCE(m.verification_status, 'UNVERIFIED') AS bibliography_status
+                    FROM sources s LEFT JOIN source_citation_metadata m ON m.source_id = s.source_id
+                    WHERE s.source_id IN ({placeholders})""", source_ids,
+            )
+        }
+        page_rows = {
+            (row["source_id"], row["page_id"]): dict(row)
+            for row in connection.execute(
+                f"""SELECT source_id, page_id, physical_page, printed_page,
+                           verification_state, use_state
+                    FROM pages WHERE source_id IN ({placeholders})""", source_ids,
+            )
+        }
+        approved_entries_by_source: dict[str, list[dict[str, Any]]] = {
+            source_id: [] for source_id in source_ids
+        }
+        for row in connection.execute(
+            """SELECT entry_id, work_title, position, contribution, limitation,
+                      relevance, source_refs_json
+               FROM historiography_entries WHERE status = 'approved'
+               ORDER BY created_at, entry_id"""
+        ):
+            entry = dict(row)
+            refs = list(dict.fromkeys(json.loads(entry.pop("source_refs_json"))))
+            for source_id in refs:
+                if source_id in approved_entries_by_source:
+                    approved_entries_by_source[source_id].append(entry)
+    context: list[dict[str, Any]] = []
+    for source_id, page_id in sorted(cited_pages):
+        source, page = source_rows.get(source_id), page_rows.get((source_id, page_id))
+        bibliography_status = source["bibliography_status"] if source else "SOURCE_NOT_FOUND"
+        page_gate_passed = bool(
+            page
+            and str(page["printed_page"] or "").strip()
+            and page["verification_state"] in verified_states
+            and page["use_state"] == "research_usable"
+        )
+        context.append({
+            "marker": f"[CITE:{source_id}@{page_id}]", "source_id": source_id,
+            "page_id": page_id,
+            "title": ((source or {}).get("citation_title") or (source or {}).get("project_title") or ""),
+            "author": (source or {}).get("author", ""), "year": (source or {}).get("year", ""),
+            "bibliography_status": bibliography_status,
+            "printed_page": (page or {}).get("printed_page", ""),
+            "physical_page": (page or {}).get("physical_page"),
+            "page_verification_state": (page or {}).get("verification_state", "PAGE_NOT_FOUND"),
+            "page_use_state": (page or {}).get("use_state", "PAGE_NOT_FOUND"),
+            "page_gate_passed": page_gate_passed,
+            "approved_historiography": approved_entries_by_source.get(source_id, []),
+            "citation_qualification": (
+                "APPROVED_HISTORIOGRAPHY_CITABLE"
+                if bibliography_status == "HUMAN_VERIFIED" and page_gate_passed
+                and approved_entries_by_source.get(source_id)
+                else "DIRECT_PAGE_CITABLE"
+                if bibliography_status == "HUMAN_VERIFIED" and page_gate_passed
+                else "CITATION_GATE_INCOMPLETE"
+            ),
+        })
+    return context
+
+
+_REVIEW_EVIDENCE_CONTEXT_MAX_CHARS = 80_000
+
+
+def _review_evidence_context(project_root: Path, cited_evidence_ids: list[str],
+                             approved_freezes: list[dict[str, Any]]) -> str:
+    """Build a bounded ledger for only the frozen evidence used by this manuscript."""
+    cited_evidence_ids = list(dict.fromkeys(cited_evidence_ids))
+    if not cited_evidence_ids:
+        return "当前正文没有 EVID。"
+
+    cited_evidence_set = set(cited_evidence_ids)
+    selected: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    claim_hits: list[dict[str, str]] = []
+    relevant_freezes: list[dict[str, Any]] = []
+    for freeze in approved_freezes:
+        freeze_is_relevant = False
+        for claim in freeze["payload"].get("claims", []):
+            effective_boundary = str(
+                claim.get("does_not_support", "") or freeze["payload"].get("boundary", "")
+            )
+            for evidence in claim.get("evidence", []):
+                evidence_id = str(evidence.get("evidence_id", ""))
+                if evidence_id not in cited_evidence_set:
+                    continue
+                freeze_is_relevant = True
+                if evidence_id not in selected:
+                    selected[evidence_id] = (freeze, evidence)
+                claim_hits.append({
+                    "freeze_id": str(freeze["freeze_id"]),
+                    "evidence_id": evidence_id,
+                    "relation": str(evidence.get("relation", "")),
+                    "claim_id": str(claim.get("claim_id", "")),
+                    "claim_text": str(claim.get("text", "")),
+                    "boundary": effective_boundary,
+                })
+        if freeze_is_relevant:
+            relevant_freezes.append(freeze)
+
+    evidence_alias = {
+        evidence_id: f"E{index:02d}"
+        for index, evidence_id in enumerate(cited_evidence_ids, 1)
+    }
+    freeze_alias = {
+        str(freeze["freeze_id"]): f"F{index:02d}"
+        for index, freeze in enumerate(relevant_freezes, 1)
+    }
+    claim_signatures: list[tuple[str, str, str]] = []
+    for hit in claim_hits:
+        signature = (hit["claim_id"], hit["claim_text"], hit["boundary"])
+        if signature not in claim_signatures:
+            claim_signatures.append(signature)
+    claim_alias = {
+        signature: f"C{index:02d}"
+        for index, signature in enumerate(claim_signatures, 1)
+    }
+
+    anchor_ids: list[str] = []
+    for evidence_id in cited_evidence_ids:
+        if evidence_id not in selected:
+            continue
+        _freeze, evidence = selected[evidence_id]
+        anchors = list(evidence.get("block_ids", []))
+        for values in evidence.get("field_anchors", {}).values():
+            anchors.extend(values)
+        anchor_ids.extend(str(value) for value in anchors if str(value).strip())
+    anchor_ids = list(dict.fromkeys(anchor_ids))
+    anchor_alias = {
+        block_id: f"A{index:03d}" for index, block_id in enumerate(anchor_ids, 1)
+    }
+
+    with connect(project_root) as connection:
+        page_printed = {
+            row["page_id"]: str(row["printed_page"] or "").strip()
+            for row in connection.execute("SELECT page_id, printed_page FROM pages")
+        }
+    eligible_blocks: dict[str, dict[str, Any]] = {}
+    if anchor_ids:
+        placeholders = ",".join("?" for _ in anchor_ids)
+        with connect(project_root) as connection:
+            rows = [dict(row) for row in connection.execute(
+                f"""SELECT b.block_id, b.block_order,
+                           COALESCE(b.human_text, b.machine_text) AS text,
+                           b.verification_state AS block_verification_state,
+                           b.use_state AS block_use_state,
+                           p.page_id, p.physical_page, p.printed_page,
+                           p.verification_state AS page_verification_state,
+                           p.use_state AS page_use_state
+                    FROM blocks b JOIN pages p ON p.page_id = b.page_id
+                    WHERE b.block_id IN ({placeholders})""", anchor_ids,
+            )]
+        verified_blocks = {"human_verified", "human_repaired"}
+        verified_pages = {"human_spot_checked", "human_verified", "human_repaired"}
+        eligible_blocks = {
+            row["block_id"]: row for row in rows
+            if row["block_verification_state"] in verified_blocks
+            and row["block_use_state"] == "research_usable"
+            and row["page_verification_state"] in verified_pages
+            and row["page_use_state"] == "research_usable"
+        }
+
+    lines = [
+        "本稿实际引用 EVID 清单（按正文首次出现顺序；本轮只评审这些编号）：",
+        *(f"{evidence_alias[evidence_id]}=[EVID:{evidence_id}]"
+          for evidence_id in cited_evidence_ids),
+        (
+            "证据边界规则：每个 [EVID:...] 都是独立证据单元；其关联主张和单证据边界只约束该编号。"
+            "不得用某一计划、出发或途中事件的边界，否定正文另一个已经列入上述清单的 "
+            "FROZEN_APPROVED 后续事件；边界不是反证，也不表示事件之间冲突。"
+        ),
+    ]
+
+    if relevant_freezes:
+        lines.append("批准冻结包别名（仅含本稿实际 EVID 所在冻结包）：")
+        lines.extend(
+            f"{freeze_alias[str(freeze['freeze_id'])]}=批准冻结包 "
+            f"{freeze['freeze_id']}：{freeze['title']}"
+            for freeze in relevant_freezes
+        )
+    if claim_signatures:
+        lines.append(
+            "局部主张/边界定义（相同签名只列一次；后列全部来源冻结包、EVID 与关系；"
+            "定义仅通过映射约束对应 EVID，不得跨 EVID 外推）："
+        )
+        for signature in claim_signatures:
+            mappings_by_relation: dict[str, list[str]] = {}
+            for hit in claim_hits:
+                if (hit["claim_id"], hit["claim_text"], hit["boundary"]) != signature:
+                    continue
+                relation = hit["relation"] or "未登记"
+                mappings_by_relation.setdefault(relation, []).append(
+                    f"{freeze_alias[hit['freeze_id']]}:{evidence_alias[hit['evidence_id']]}"
+                )
+            mappings = ";".join(
+                f"{relation}[{','.join(values)}]"
+                for relation, values in mappings_by_relation.items()
+            )
+            claim_id, claim_text, boundary = signature
+            lines.append(
+                f"[{claim_alias[signature]}] claim_id={claim_id}｜关系映射={mappings}｜"
+                f"主张={claim_text}｜边界={boundary}"
+            )
+
+    lines.append("逐项证据记录（E/F/C/A 均按上列别名回查；只含正文实际引用 EVID）：")
+    for evidence_id in cited_evidence_ids:
+        selected_item = selected.get(evidence_id)
+        if selected_item is None:
+            lines.append(f"- MISSING_APPROVED_FREEZE｜[EVID:{evidence_id}]")
+            continue
+        freeze, evidence = selected_item
+        pages = "–".join(
+            str(value) for value in evidence.get("physical_pages", [evidence.get("physical_page", "")])
+            if str(value) != ""
+        )
+        printed_values = evidence.get("printed_pages", []) or [
+            page_printed.get(str(page_id), "") for page_id in evidence.get("page_ids", [])
+        ]
+        printed = "–".join(str(value) for value in printed_values if str(value).strip())
+        locator = f"原书页 {printed}｜物理页 {pages}" if printed else f"物理页 {pages}"
+        evidence_anchor_ids = list(evidence.get("block_ids", []))
+        for values in evidence.get("field_anchors", {}).values():
+            evidence_anchor_ids.extend(values)
+        evidence_anchor_ids = list(dict.fromkeys(
+            str(value) for value in evidence_anchor_ids if str(value).strip()
+        ))
+        quote = str(evidence.get("quote", ""))
+        quote_receipt = "见下列关联锚块完整文本" if evidence_anchor_ids else quote
+        lines.append(
+            f"[{evidence_alias[evidence_id]}]｜FROZEN_APPROVED｜"
+            f"{freeze_alias[str(freeze['freeze_id'])]}｜{evidence.get('relation', '')}｜"
+            f"{evidence.get('source_id', '')}｜"
+            f"{locator}｜{evidence.get('qualification', '')}｜"
+            f"event_date={evidence.get('event_date', '')}｜route={evidence.get('route', '')}｜"
+            f"note={evidence.get('note', '') or evidence.get('notes', '')}｜"
+            f"anchors={','.join(anchor_alias[value] for value in evidence_anchor_ids) or '未登记'}｜"
+            f"冻结引文={quote_receipt}"
+        )
+        for field_name, values in evidence.get("field_anchors", {}).items():
+            field_anchor_ids = list(dict.fromkeys(
+                str(value) for value in values if str(value).strip()
+            ))
+            lines.append(
+                f"  field:{field_name}="
+                f"{','.join(anchor_alias[value] for value in field_anchor_ids) or '未登记'}"
+            )
+
+    if eligible_blocks:
+        lines.append(
+            f"上下文无损压缩回执｜{len(claim_hits)} 条主张-证据关系按 "
+            f"{len(claim_signatures)} 个主张/边界签名归一并保留来源冻结包与关系；"
+            f"锚块按编号去重，{len(eligible_blocks)} 个合格锚块均保留全文，未截断。"
+        )
+        lines.append("关联的人工复核、research_usable 锚块原文（按页聚合；每个块全文只列一次）：")
+        previous_page_id = ""
+        for block_id in anchor_ids:
+            block = eligible_blocks.get(block_id)
+            if block is None:
+                continue
+            printed = str(block["printed_page"] or "").strip()
+            if block["page_id"] != previous_page_id:
+                locator = (
+                    f"原书页 {printed}｜物理页 {block['physical_page']}"
+                    if printed else f"物理页 {block['physical_page']}"
+                )
+                lines.append(f"[PAGE {block['page_id']}｜{locator}]")
+                previous_page_id = block["page_id"]
+            text = re.sub(r"\s+", " ", str(block["text"])).strip()
+            lines.append(f"{anchor_alias[block_id]}=[ANCHOR {block_id}] {text}")
+    ineligible = [block_id for block_id in anchor_ids if block_id not in eligible_blocks]
+    if ineligible:
+        lines.append(
+            "未进入评审上下文的锚块（当前并非人工复核且 research_usable）："
+            + "、".join(f"{anchor_alias[block_id]}={block_id}" for block_id in ineligible)
+        )
+    context = "\n".join(lines) or "当前正文所用 EVID 没有批准冻结记录。"
+    if len(context) > _REVIEW_EVIDENCE_CONTEXT_MAX_CHARS:
+        raise ValueError(
+            "review evidence context exceeds the bounded limit; split the review scope "
+            "instead of sending the full evidence package"
+        )
+    return context
+
+
+def _review_grounded_locators(text: str) -> set[str]:
+    locators: set[str] = set()
+    for match in re.finditer(
+        r"(?<!\d)((?:1[5-9]\d{2}|20\d{2}))[-/.年](\d{1,2})[-/.月](\d{1,2})日?",
+        text,
+    ):
+        year, month, day = (int(value) for value in match.groups())
+        locators.update({f"year:{year}", f"date:{year}-{month}-{day}", f"month-day:{month}-{day}"})
+    for match in re.finditer(r"(?<!\d)(\d{1,2})月(\d{1,2})日?", text):
+        locators.add(f"month-day:{int(match.group(1))}-{int(match.group(2))}")
+    for match in re.finditer(r"(?<!\d)(?:1[5-9]\d{2}|20\d{2})(?!\d)", text):
+        locators.add(f"year:{int(match.group(0))}")
+    for match in re.finditer(
+        r"(?:原书页|物理页)\s*(\d+)(?:\s*[–—-]\s*(\d+))?",
+        text,
+    ):
+        locators.add(f"page:{int(match.group(1))}")
+        if match.group(2):
+            locators.add(f"page:{int(match.group(2))}")
+    return locators
+
+
+def _assert_review_locators_grounded(report: str, prompt: str) -> None:
+    unsupported = sorted(_review_grounded_locators(report) - _review_grounded_locators(prompt))
+    if unsupported:
+        raise ValueError(
+            "review returned an ungrounded date/page locator: " + ", ".join(unsupported)
+        )
+
+
 def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: str,
                           use_secondary: bool = False, reviewer: Writer | None = None) -> dict[str, Any]:
     manuscript = manuscript_detail(project_root, manuscript_id)
@@ -1149,61 +2545,33 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
     manuscript_text = export_preview["markdown"]
     research = research_state(project_root)
     shared_design = current_shared_design(project_root)
-    cited_evidence_ids = set(re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", internal_manuscript_text))
-    cited_direct_pages = set(re.findall(
-        r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_]+)\]", internal_manuscript_text,
+    cited_evidence_ids = list(dict.fromkeys(
+        re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", internal_manuscript_text)
     ))
+    cited_direct_pages = set(re.findall(
+        r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)\]", internal_manuscript_text,
+    ))
+    citation_context = _review_citation_context(project_root, cited_direct_pages)
+    coverage_receipt = _manuscript_coverage_receipt(project_root, internal_manuscript_text)
     approved_freezes = [freeze for freeze in research["freezes"] if freeze["status"] == "approved"]
-    relevant_freezes = [
-        freeze for freeze in approved_freezes
-        if any(
-            evidence["evidence_id"] in cited_evidence_ids
-            for claim in freeze["payload"]["claims"] for evidence in claim["evidence"]
+    evidence_context = _review_evidence_context(
+        project_root, cited_evidence_ids, approved_freezes,
+    )
+    citation_lines: list[str] = []
+    for citation in citation_context:
+        citation_lines.append(
+            f"- {citation['citation_qualification']}｜{citation['marker']}｜"
+            f"{citation['title']}｜{citation['author']}｜{citation['year']}｜"
+            f"原书页 {citation['printed_page']}｜物理页 {citation['physical_page']}｜"
+            f"页状态 {citation['page_verification_state']}｜用途 {citation['page_use_state']}｜"
+            f"书目状态 {citation['bibliography_status']}"
         )
-    ] or approved_freezes
-    with connect(project_root) as connection:
-        page_printed = {
-            row["page_id"]: str(row["printed_page"] or "").strip()
-            for row in connection.execute("SELECT page_id, printed_page FROM pages")
-        }
-    evidence_lines, seen_evidence = [], set()
-    for freeze in relevant_freezes:
-        evidence_lines.append(f"批准冻结包 {freeze['freeze_id']}：{freeze['title']}")
-        for claim in freeze["payload"]["claims"]:
-            evidence_lines.append(f"主张 {claim['claim_id']}：{claim['text']}")
-            for evidence in claim["evidence"]:
-                if evidence["evidence_id"] in seen_evidence:
-                    continue
-                seen_evidence.add(evidence["evidence_id"])
-                pages = "–".join(str(value) for value in evidence.get("physical_pages", [evidence["physical_page"]]))
-                printed_values = evidence.get("printed_pages", []) or [
-                    page_printed.get(str(page_id), "") for page_id in evidence.get("page_ids", [])
-                ]
-                printed = "–".join(str(value) for value in printed_values if value)
-                locator = f"原书页 {printed}｜物理页 {pages}" if printed else f"物理页 {pages}"
-                evidence_lines.append(
-                    f"- {evidence['evidence_id']}｜{evidence['relation']}｜{evidence['source_id']}｜{locator}"
-                    f"｜FROZEN_APPROVED｜{evidence['qualification']}｜{evidence['quote']}"
-                )
-    if cited_direct_pages:
-        with connect(project_root) as connection:
-            for source_id, page_id in sorted(cited_direct_pages):
-                row = connection.execute(
-                    """SELECT p.physical_page, p.printed_page, p.verification_state, p.use_state,
-                              s.title, m.author, m.year, m.verification_status
-                       FROM pages p JOIN sources s ON s.source_id = p.source_id
-                       LEFT JOIN source_citation_metadata m ON m.source_id = p.source_id
-                       WHERE p.source_id = ? AND p.page_id = ?""",
-                    (source_id, page_id),
-                ).fetchone()
-                if row is None:
-                    continue
-                evidence_lines.append(
-                    f"- DIRECT_PAGE_CITABLE｜{source_id}｜{page_id}｜{row['title']}｜"
-                    f"{row['author']}｜{row['year']}｜原书页 {row['printed_page']}｜"
-                    f"物理页 {row['physical_page']}｜页状态 {row['verification_state']}｜"
-                    f"用途 {row['use_state']}｜书目状态 {row['verification_status']}"
-                )
+        for entry in citation["approved_historiography"]:
+            citation_lines.append(
+                f"  已批准学术史 {entry['entry_id']}｜《{entry['work_title']}》｜"
+                f"定位：{entry['position']}｜贡献：{entry['contribution']}｜"
+                f"限制：{entry['limitation']}｜与本文关系：{entry['relevance']}"
+            )
     previous_reports = ""
     if use_secondary and manuscript["review_groups"]:
         latest = next((group for group in manuscript["review_groups"] if group["is_current"]), None)
@@ -1220,8 +2588,16 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
             "引文必须使用原书印刷页；物理页只用于在 PDF 中回查，不得用物理页替换原书页。"
             "参考文献表通常不要求补写卷册总页数，不得因书目条目没有总页数而否定已核原书页。\n"
             "证据台账中的 CANDIDATE_NOT_FROZEN 只能作为有界回退线索，不能当作当前正文已经获准使用的证据。"
-            "FROZEN_APPROVED 是批准冻结证据；DIRECT_PAGE_CITABLE 是正文直接引用且已通过页面与书目门禁的原页，"
-            "两者都可支撑与其内容相符的正文事实。不要因为 DIRECT_PAGE_CITABLE 未进入冻结包就判定其未登记或不可引用。\n"
+            "FROZEN_APPROVED 是批准冻结的一手或事实证据；APPROVED_HISTORIOGRAPHY_CITABLE 是人工批准的学术史引证，"
+            "其书目已核、所引页面已人工复核且可用于研究。二者职责不同：EVID 支撑正文事实，CITE 用于学术史对话、"
+            "邻近研究或经人工批准的原页引证。不要因为 CITE 未进入冻结包，就判定它未登记、未批准或不可引用。"
+            "DIRECT_PAGE_CITABLE 表示书目与页面门禁已通过但未绑定已批准学术史卡；"
+            "CITATION_GATE_INCOMPLETE 才表示本轮确有资格缺口。评审只能按下列本稿实际 CITE 回执判断，不得拿冻结包要求替代 CITE 门禁。\n"
+            "评审报告中的日期、原书页、物理页和具体地名，只能复述下列研究设计、证据台账、"
+            "CITE 回执或正文中已经出现的定位；上下文没有支持时，不得凭模型记忆发明替代日期、页码或地名。\n"
+            "证据台账开头的 EVID 清单是本稿实际引用范围。每个 EVID 下的关联主张与单证据边界只适用于该证据；"
+            "不得用某个计划事件或出发事件的边界，否定正文另一个已引用且标为 FROZEN_APPROVED 的后续事件。"
+            "如需指出事件冲突，必须引用发生冲突的两个具体 EVID，而不能把单条边界当作冲突证据。\n"
             f"本轮角色：{role}\n职责：{REVIEW_ROLES[role]}\n"
             "请用中文依次输出：阻断问题、主要问题、次要问题、可保留之处、建议的有界回退步骤。"
             "每个问题指出具体章节或证据编号；没有证据就明确说没有。不要展示推理过程，"
@@ -1231,16 +2607,20 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
             f"模板组成：{'；'.join(template['section_rules'])}\n\n"
             f"导出门禁：{export_preview['citation_status']}｜"
             f"{'；'.join(export_preview['warnings']) or '当前未发现导出门禁'}\n\n"
+            f"材料覆盖回执（仅作警告，不设硬阈值）：\n{_json(coverage_receipt)}\n\n"
             "人工批准研究设计（这是作者的范围与方法决定，不是史料事实；不要因其缺少史料引文而否定，"
             "但可以检查正文是否越出或误用这一边界）：\n"
             f"{shared_design['title'] + chr(10) + shared_design['content'] if shared_design else '当前没有人工批准的共同计划。'}\n\n"
-            f"证据台账：\n{chr(10).join(evidence_lines) or '当前没有已登记证据。'}\n\n"
+            f"证据台账：\n{evidence_context}\n\n"
+            f"本稿实际 CITE 资格回执（只列正文已出现的 CITE）：\n"
+            f"{chr(10).join(citation_lines) or '当前正文没有 CITE。'}\n\n"
             f"期刊导出预览：\n{manuscript_text}{previous_reports}"
         )
         report = (reviewer(prompt) if reviewer else
                   (_secondary_review_write(prompt) if use_secondary else _primary_review_write(prompt))).strip()
         if len(report) < 20:
             raise ValueError(f"{role} returned an empty or unusably short review")
+        _assert_review_locators_grounded(report, prompt)
         review_id = _id("MRV")
         model_snapshot = {**capability, "model_role": "review_secondary" if use_secondary else "main_reasoning"}
         return {"review_id": review_id, "reviewer_role": role, "report": report,
@@ -1265,7 +2645,9 @@ def run_manuscript_review(project_root: Path, manuscript_id: str, template_id: s
                          {"review_group_id": group_id, "reviewer_role": report["reviewer_role"],
                           "model_role": report["model_snapshot"]["model_role"]})
     return {"review_group_id": group_id, "manuscript_id": manuscript_id, "template_id": template_id,
-            "is_current": True, "reports": reports, "created_at": now}
+            "is_current": True, "reports": reports, "coverage_receipt": coverage_receipt,
+            "citation_context": citation_context,
+            "created_at": now}
 
 
 def authoring_state(project_root: Path) -> dict[str, Any]:

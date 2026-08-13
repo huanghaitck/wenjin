@@ -155,7 +155,46 @@ def register_source(project_root: Path, source_file: Path, title: str | None = N
     }
 
 
-def import_structure(project_root: Path, source_id: str, packet_path: Path) -> dict[str, Any]:
+def _replace_machine_structure(connection: Any, source_id: str) -> bool:
+    if connection.execute("SELECT 1 FROM pages WHERE source_id = ? LIMIT 1", (source_id,)).fetchone() is None:
+        return False
+    protected_checks = (
+        ("human page review", """SELECT 1 FROM pages WHERE source_id = ? AND
+            (verification_state != 'machine_parsed' OR human_payload_json IS NOT NULL) LIMIT 1"""),
+        ("human block review", """SELECT 1 FROM blocks WHERE page_id IN
+            (SELECT page_id FROM pages WHERE source_id = ?) AND
+            (verification_state != 'machine_parsed' OR human_text IS NOT NULL) LIMIT 1"""),
+        ("human relation review", """SELECT 1 FROM page_relations WHERE source_id = ? AND
+            (verification_state != 'machine_parsed' OR human_value IS NOT NULL) LIMIT 1"""),
+        ("repair records", "SELECT 1 FROM repair_records WHERE source_id = ? LIMIT 1"),
+        ("OCR proposals", "SELECT 1 FROM ocr_proposals WHERE source_id = ? LIMIT 1"),
+        ("reading notes", "SELECT 1 FROM reading_notes WHERE source_id = ? LIMIT 1"),
+        ("evidence", "SELECT 1 FROM evidence_items WHERE source_id = ? LIMIT 1"),
+        ("research events", "SELECT 1 FROM research_event_rows WHERE source_id = ? LIMIT 1"),
+        ("historiography", """SELECT 1 FROM historiography_entries
+            WHERE instr(source_refs_json, ?) > 0 LIMIT 1"""),
+    )
+    protected = [label for label, sql in protected_checks if connection.execute(sql, (source_id,)).fetchone()]
+    if protected:
+        raise ValueError(
+            "machine structure cannot be replaced after downstream or human work: " + ", ".join(protected)
+        )
+    connection.execute("DELETE FROM anomalies WHERE source_id = ?", (source_id,))
+    connection.execute("DELETE FROM page_relations WHERE source_id = ?", (source_id,))
+    connection.execute(
+        "DELETE FROM blocks WHERE page_id IN (SELECT page_id FROM pages WHERE source_id = ?)",
+        (source_id,),
+    )
+    connection.execute("DELETE FROM pages WHERE source_id = ?", (source_id,))
+    return True
+
+
+def import_structure(
+    project_root: Path,
+    source_id: str,
+    packet_path: Path,
+    replace_machine_structure: bool = False,
+) -> dict[str, Any]:
     packet_path = packet_path.resolve()
     packet = json.loads(packet_path.read_text(encoding="utf-8"))
     if not isinstance(packet.get("pages"), list):
@@ -173,6 +212,15 @@ def import_structure(project_root: Path, source_id: str, packet_path: Path) -> d
         ).fetchone()
         if existing is not None:
             return {"receipt_id": existing["receipt_id"], "status": "already_applied"}
+
+        has_structure = connection.execute(
+            "SELECT 1 FROM pages WHERE source_id = ? LIMIT 1", (source_id,)
+        ).fetchone() is not None
+        replaced = False
+        if has_structure:
+            if not replace_machine_structure:
+                raise ValueError("source already has a structure; use explicit machine reprocessing")
+            replaced = _replace_machine_structure(connection, source_id)
 
         receipt_id = f"RCP_{uuid.uuid4().hex}"
         now = utc_now()
@@ -285,7 +333,7 @@ def import_structure(project_root: Path, source_id: str, packet_path: Path) -> d
         )
         append_audit(
             connection,
-            "structure_imported",
+            "structure_reprocessed" if replaced else "structure_imported",
             "source",
             source_id,
             {"receipt_id": receipt_id, "pages": len(packet["pages"]), "anomalies": anomaly_count},

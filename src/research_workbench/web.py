@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import secrets
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from . import authoring as authoring_module
 from .agent_runtime import (
     assign_model,
     create_thread,
@@ -20,11 +22,13 @@ from .agent_runtime import (
     thread_view,
 )
 from .authoring import (
+    add_external_style_profile_sample,
     add_style_profile_sample,
     authoring_state,
     create_historiography_entry,
     create_journal_template,
     create_reading_job,
+    create_external_style_profile,
     create_style_profile,
     create_writing_proposal,
     decide_style_profile,
@@ -46,8 +50,8 @@ from .library import (
     library_file_path,
     library_status,
     link_work_to_project,
-    scan_directory,
     scan_session,
+    start_scan_session,
     search_library, move_work_to_shelf,
     update_work,
     work_detail,
@@ -225,8 +229,15 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._json(work_detail(self.server.project_root, work_id, self.server.library_root))
                 return
             if parsed.path == "/api/library/scan":
-                session_id = parse_qs(parsed.query).get("id", [""])[0]
-                self._json(scan_session(self.server.project_root, session_id, self.server.library_root))
+                query = parse_qs(parsed.query)
+                session_id = query.get("id", [""])[0]
+                self._json(scan_session(
+                    self.server.project_root,
+                    session_id,
+                    self.server.library_root,
+                    int(query.get("page", ["1"])[0]),
+                    int(query.get("page_size", ["50"])[0]),
+                ))
                 return
             if parsed.path == "/api/library/file":
                 file_id = parse_qs(parsed.query).get("id", [""])[0]
@@ -508,7 +519,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     edited if isinstance(edited, dict) else None,
                 )
             elif parsed.path == "/api/library/scan":
-                result = scan_directory(
+                result = start_scan_session(
                     self.server.project_root,
                     Path(str(payload["source_root"])),
                     self.server.library_root,
@@ -688,11 +699,34 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/writing/propose":
                 evidence_ids = ([str(value) for value in payload["evidence_ids"]]
                                 if isinstance(payload.get("evidence_ids"), list) else None)
+                proposal_kwargs: dict[str, Any] = {
+                    "evidence_ids": evidence_ids,
+                    "skill_name": str(payload.get("skill_name", "")),
+                    "style_profile_id": str(payload.get("style_profile_id", "")),
+                }
+                # Keep the UI deployable while the authoring gate lands in parallel. Older
+                # backends ignore these new, explicit selections instead of failing the request.
+                supported = inspect.signature(create_writing_proposal).parameters
+                if "historiography_entry_ids" in supported:
+                    selected_historiography = [
+                        str(value) for value in payload.get("historiography_entry_ids", [])
+                    ]
+                    proposal_kwargs["historiography_entry_ids"] = selected_historiography or None
+                if "historiography_page_refs" in supported:
+                    selected_pages = [
+                        str(value) for value in payload.get("historiography_page_refs", [])
+                    ]
+                    proposal_kwargs["historiography_page_refs"] = selected_pages or None
+                if "selection_only" in supported:
+                    proposal_kwargs.update({
+                        "selection_only": payload.get("selection_only") is True,
+                        "base_version_id": str(payload.get("base_version_id", "")),
+                        "selection": payload.get("selection") if isinstance(payload.get("selection"), dict) else None,
+                    })
                 result = create_writing_proposal(
                     self.server.project_root, str(payload["section_id"]), str(payload["operation"]),
                     str(payload.get("instruction", "")), str(payload.get("freeze_id", "")),
-                    evidence_ids=evidence_ids, skill_name=str(payload.get("skill_name", "")),
-                    style_profile_id=str(payload.get("style_profile_id", "")),
+                    **proposal_kwargs,
                 )
             elif parsed.path == "/api/style-profile/create":
                 result = create_style_profile(
@@ -702,6 +736,15 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/style-profile/add-sample":
                 result = add_style_profile_sample(
                     self.server.project_root, str(payload["profile_id"]), str(payload["manuscript_id"]),
+                )
+            elif parsed.path == "/api/style-profile/create-external":
+                result = create_external_style_profile(
+                    self.server.project_root, str(payload["source_id"]), str(payload["name"]),
+                    str(payload["owner_label"]), str(payload.get("scope", "historical_articles")),
+                )
+            elif parsed.path == "/api/style-profile/add-external-sample":
+                result = add_external_style_profile_sample(
+                    self.server.project_root, str(payload["profile_id"]), str(payload["source_id"]),
                 )
             elif parsed.path == "/api/style-profile/decide":
                 if not isinstance(payload.get("approved"), bool):
@@ -726,6 +769,16 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 )
             elif parsed.path == "/api/historiography/create":
                 result = create_historiography_entry(self.server.project_root, payload)
+            elif parsed.path == "/api/historiography/decide":
+                decide_historiography_entry = getattr(authoring_module, "decide_historiography_entry", None)
+                if decide_historiography_entry is None:
+                    raise ValueError("historiography approval is not available in this build")
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_historiography_entry(
+                    self.server.project_root, str(payload["entry_id"]), bool(payload["approved"]),
+                    str(payload["reviewer"]), str(payload["reason"]),
+                )
             elif parsed.path == "/api/journal/create":
                 result = create_journal_template(
                     self.server.project_root, str(payload["name"]), str(payload["citation_style"]),

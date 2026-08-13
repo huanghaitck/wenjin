@@ -20,6 +20,7 @@ from research_workbench.service import (
     source_view,
     submit_page_repair,
     submit_relation_repair,
+    verify_page,
 )
 from research_workbench.web import build_server
 
@@ -62,6 +63,19 @@ def make_overlapping_text_pdf(path: Path) -> None:
     page = document.new_page(width=612, height=792)
     page.insert_textbox((72, 120, 540, 300), "First paragraph with enough text to form a block. " * 4, fontsize=12)
     page.insert_textbox((250, 140, 540, 260), "Overlapping OCR fragment that should not be trusted. " * 2, fontsize=12)
+    document.save(path)
+    document.close()
+
+
+def make_two_column_text_pdf(path: Path) -> None:
+    document = fitz.open()
+    page = document.new_page(width=480, height=720)
+    page.insert_textbox((90, 55, 390, 120), "Two-column journal article", fontsize=18, align=1)
+    for index in range(5):
+        top = 165 + index * 48
+        page.insert_textbox((20, top, 220, top + 40), f"Left column block {index + 1}. " * 3, fontsize=10)
+        page.insert_textbox((260, top, 460, top + 40), f"Right column block {index + 1}. " * 3, fontsize=10)
+    page.insert_text((420, 700), "·129·", fontsize=10)
     document.save(path)
     document.close()
 
@@ -186,6 +200,36 @@ class M2PdfIntakeTests(unittest.TestCase):
         anomaly = next(item for item in view["anomalies"] if item["anomaly_id"].endswith("FRAGMENTED_LAYOUT"))
         self.assertEqual(anomaly["scope_type"], "page")
         self.assertTrue((self.project / view["pages"][0]["machine_payload"]["image_path"]).is_file())
+
+    def test_two_column_journal_page_is_not_blocked_as_overlapping_text(self) -> None:
+        source_file = self.root / "two-column.pdf"
+        make_two_column_text_pdf(source_file)
+        source = register_source(self.project, source_file, "Two-column article")
+        ingest_pdf(self.project, source["source_id"])
+        view = source_view(self.project, source["source_id"])
+        self.assertFalse(any(
+            item["anomaly_id"].endswith("FRAGMENTED_LAYOUT") for item in view["anomalies"]
+        ))
+        self.assertNotEqual(view["source"]["use_state"], "blocked")
+        blocks = view["pages"][0]["blocks"]
+        texts = [item["effective_text"] for item in blocks]
+        self.assertLess(texts.index(next(text for text in texts if "Left column block 5" in text)),
+                        texts.index(next(text for text in texts if "Right column block 1" in text)))
+        self.assertEqual(view["pages"][0]["printed_page"], "129")
+
+    def test_machine_structure_can_be_reprocessed_but_human_work_is_preserved(self) -> None:
+        source = self.register_text_pdf(unfinished_boundary=False)
+        ingest_pdf(self.project, source["source_id"], render_scale=1.0)
+        result = ingest_pdf(self.project, source["source_id"], render_scale=1.25)
+        self.assertEqual(result["status"], "applied")
+        view = source_view(self.project, source["source_id"])
+        self.assertEqual(len(view["pages"]), 2)
+        verify_page(
+            self.project, view["pages"][0]["page_id"], "human-reviewer",
+            "Compared every extracted block on the page with the rendered original.",
+        )
+        with self.assertRaisesRegex(ValueError, "human page review"):
+            ingest_pdf(self.project, source["source_id"], render_scale=1.5)
 
     def test_loopback_workbench_serves_project_state_and_page_image(self) -> None:
         source = self.register_text_pdf(unfinished_boundary=False)

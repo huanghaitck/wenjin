@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from research_workbench.db import connect
+from research_workbench.db import SCHEMA_VERSION, connect
 from research_workbench.service import (
     correct_block,
     correct_printed_page,
@@ -403,7 +403,7 @@ class M1KernelTests(unittest.TestCase):
             use_state = connection.execute(
                 "SELECT use_state FROM blocks WHERE block_id = ?", (block_id,),
             ).fetchone()[0]
-        self.assertEqual(version, 19)
+        self.assertEqual(version, SCHEMA_VERSION)
         self.assertEqual(use_state, "research_usable")
 
     def test_user_can_reconstruct_a_missing_printed_page_label(self) -> None:

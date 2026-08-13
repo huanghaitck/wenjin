@@ -16,6 +16,7 @@ from research_workbench.authoring import (
 from research_workbench.db import connect
 from research_workbench.citations import create_note
 from research_workbench.document_model import (
+    _reference_entry,
     ensure_document,
     export_document,
     import_docx,
@@ -36,6 +37,22 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_reference_entry_does_not_repeat_responsibility_period_and_normalizes_page_range(self) -> None:
+        entry = _reference_entry(9, {
+            "author": "Сосновский, Ю. А.",
+            "title": "Экспедиция 1874-1875",
+            "type_code": "J",
+            "journal": "Известия",
+            "year": "1878",
+            "page_range": "431—441",
+        })
+
+        self.assertEqual(
+            entry,
+            "[9] Сосновский, Ю. А. Экспедиция 1874-1875[J]. Известия，1878：431－441.",
+        )
+        self.assertNotIn("А..", entry)
 
     def test_legacy_sections_become_structured_document_without_losing_text(self) -> None:
         detail = ensure_document(self.project, self.manuscript["manuscript_id"])
@@ -267,7 +284,7 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         )
         text = (self.project / exported["project_path"]).read_text(encoding="utf-8")
         self.assertIn("已有研究指出这一差异。[1]23", text)
-        self.assertIn("[1] 李四. 秦岭考察研究[J]. 唐都学刊，2024(2)：20-30.", text)
+        self.assertIn("[1] 李四. 秦岭考察研究[J]. 唐都学刊，2024(2)：20－30.", text)
 
     def test_export_preview_warns_when_research_process_labels_enter_manuscript(self) -> None:
         manuscript = import_manuscript(
@@ -306,11 +323,72 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertIn("已有研究指出这一差异。[1]23", text)
         self.assertNotIn("尚未完成逐页人工核验", "\n".join(exported["fidelity"]["warnings"]))
 
+    def test_tangdu_adjacent_same_source_cite_and_evidence_merge_without_changing_pages(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "相邻同源引证",
+            "# 正文\n\n同一论述同时经原页与冻结证据核验。"
+            "[CITE:SRC_study@PAGE_study_79][EVID:EVT_same_79] "
+            "连续两页。[EVID:EVT_same_235_236] "
+            "摘要页。[EVID:EVT_roman]",
+        )
+        with connect(self.project) as connection:
+            project_id = connection.execute("SELECT project_id FROM projects").fetchone()[0]
+            connection.execute(
+                "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("SRC_study", project_id, "研究论文", "local_file", "study.pdf",
+                 "acquired", "ready", "partial", "2026-01-01"),
+            )
+            for page_id, physical, printed in (
+                ("PAGE_study_79", 1, "79"),
+                ("PAGE_study_235", 2, "235"),
+                ("PAGE_study_236", 3, "236"),
+                ("PAGE_study_I", 4, "I"),
+            ):
+                connection.execute(
+                    """INSERT INTO pages(page_id, source_id, physical_page, printed_page, page_type,
+                       verification_state, use_state, machine_payload_json, human_payload_json)
+                       VALUES (?, 'SRC_study', ?, ?, 'content', 'human_verified',
+                               'research_usable', '{}', '{}')""",
+                    (page_id, physical, printed),
+                )
+            payload = {"claims": [{"evidence": [
+                {"evidence_id": "EVT_same_79", "source_id": "SRC_study", "printed_pages": ["79"]},
+                {"evidence_id": "EVT_same_235_236", "source_id": "SRC_study",
+                 "printed_pages": ["235", "236"]},
+                {"evidence_id": "EVT_roman", "source_id": "SRC_study", "printed_pages": ["I"]},
+            ]}]}
+            connection.execute(
+                """INSERT INTO evidence_freezes(freeze_id, title, status, payload_json, approved_by,
+                   approved_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                ("FRZ_adjacent", "相邻标记", "approved", json.dumps(payload), "tester",
+                 "2026-01-01", "2026-01-01"),
+            )
+        save_source_citation_metadata(self.project, "SRC_study", {
+            "author": "李四", "title": "秦岭考察研究", "year": "2024", "type_code": "J",
+            "journal": "唐都学刊", "issue": "2", "page_range": "20-30", "verified_by": "tester",
+        })
+
+        markdown = export_document(
+            self.project, manuscript["manuscript_id"], "markdown", "builtin-tangdu-current",
+        )
+        text = (self.project / markdown["project_path"]).read_text(encoding="utf-8")
+        self.assertIn("核验。[1]79 连续两页。[1]235－236 摘要页。[1]I", text)
+        self.assertNotIn("[1]79[1]79", text)
+
+        word = export_document(
+            self.project, manuscript["manuscript_id"], "docx", "builtin-tangdu-current",
+        )
+        document = Document(self.project / word["project_path"])
+        body = next(paragraph for paragraph in document.paragraphs if "同一论述" in paragraph.text)
+        citations = [(run.text, run.font.superscript) for run in body.runs if run.text.startswith("[1]")]
+        self.assertEqual(citations, [("[1]79", True), ("[1]235－236", True), ("[1]I", True)])
+
     def test_tangdu_superscript_range_stops_before_following_chinese_prose(self) -> None:
         from research_workbench.document_model import SEQUENTIAL_CITATION_RE
 
         for text, expected in (
             ("山路艰险。[5]235—237这使秦岭成为交通对象。", "[5]235—237"),
+            ("山路艰险。[5]235－237这使秦岭成为交通对象。", "[5]235－237"),
             ("前人已有讨论。[2]28李蕾、沈弘继续指出。", "[2]28"),
             ("目录见卷首。[1]I这意味着材料需要重读。", "[1]I"),
         ):

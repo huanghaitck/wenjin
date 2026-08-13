@@ -416,14 +416,48 @@ def _docx_table_rows(table: Table) -> list[list[str]]:
     return [row + [""] * (width - len(row)) for row in rows]
 
 
-EVIDENCE_MARKER_RE = re.compile(r"(?:\[EVID:[A-Za-z0-9_]+\])+")
 DIRECT_CITATION_MARKER_RE = re.compile(r"\[CITE:([A-Za-z0-9_]+)@([A-Za-z0-9_:]+)\]")
 REFERENCE_MARKER_RE = re.compile(
-    r"(?:\[EVID:[A-Za-z0-9_]+\])+|\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]"
+    r"(?:(?:\[EVID:[A-Za-z0-9_]+\])|(?:\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]))+"
 )
 SEQUENTIAL_CITATION_RE = re.compile(
-    r"(\[\d+\](?:原书页待核|[0-9IVXLCDMivxlcdm]+(?:[—–\-、,，][0-9IVXLCDMivxlcdm]+)*))"
+    r"(\[\d+\](?:原书页待核|[0-9IVXLCDMivxlcdm]+(?:[—–－\-、,，][0-9IVXLCDMivxlcdm]+)*))"
 )
+
+
+def _format_printed_pages(pages: list[str]) -> str:
+    values = list(dict.fromkeys(str(page).strip() for page in pages if str(page).strip()))
+    rendered: list[str] = []
+    index = 0
+    while index < len(values):
+        start = values[index]
+        if not start.isdecimal():
+            rendered.append(start)
+            index += 1
+            continue
+        end = index
+        while (
+            end + 1 < len(values)
+            and values[end + 1].isdecimal()
+            and int(values[end + 1]) == int(values[end]) + 1
+        ):
+            end += 1
+        rendered.append(f"{start}－{values[end]}" if end > index else start)
+        index = end + 1
+    return "、".join(rendered)
+
+
+def _terminated_responsibility(value: Any) -> str:
+    responsibility = str(value or "").strip()
+    return responsibility if responsibility.endswith((".", "。")) else f"{responsibility}."
+
+
+def _format_page_range(value: Any) -> str:
+    return re.sub(
+        r"(?<=[0-9IVXLCDMivxlcdm])[-—–](?=[0-9IVXLCDMivxlcdm])",
+        "－",
+        str(value or "").strip(),
+    )
 
 
 def _add_text_runs(paragraph: Any, text: str, superscript_citations: bool) -> None:
@@ -451,7 +485,8 @@ def _add_text_runs(paragraph: Any, text: str, superscript_citations: bool) -> No
 def _reference_entry(number: int, metadata: dict[str, Any]) -> str:
     author, title = metadata.get("author", ""), metadata.get("title", "")
     type_code, year = metadata.get("type_code", ""), metadata.get("year", "")
-    page_range = metadata.get("page_range", "")
+    author = _terminated_responsibility(author)
+    page_range = _format_page_range(metadata.get("page_range", ""))
     if type_code == "J":
         issue = metadata.get("issue", "")
         volume = str(metadata.get("volume", ""))
@@ -460,12 +495,12 @@ def _reference_entry(number: int, metadata: dict[str, Any]) -> str:
         else:
             year_issue = f"{year}{f'({issue})' if issue else ''}"
         journal_tail = "，".join(filter(None, (metadata.get("journal", ""), year_issue)))
-        return f"[{number}] {author}. {title}[J]. {journal_tail}{('：' + page_range) if page_range else ''}."
+        return f"[{number}] {author} {title}[J]. {journal_tail}{('：' + page_range) if page_range else ''}."
     responsibility = f"，{metadata['translator']}译" if metadata.get("translator") else ""
     edition = f"，{metadata['edition']}" if metadata.get("edition") else ""
     publication = "：".join(value for value in (metadata.get("place", ""), metadata.get("publisher", "")) if value)
     tail = "，".join(value for value in (publication, year) if value)
-    return f"[{number}] {author}. {title}{responsibility}{edition}[{type_code}]. {tail}{('：' + page_range) if page_range else ''}.".strip()
+    return f"[{number}] {author} {title}{responsibility}{edition}[{type_code}]. {tail}{('：' + page_range) if page_range else ''}.".strip()
 
 
 def _prepare_sequential_references(project_root: Path, tree: dict[str, Any],
@@ -501,55 +536,69 @@ def _prepare_sequential_references(project_root: Path, tree: dict[str, Any],
     source_numbers: dict[str, int] = {}
 
     def marker(match: re.Match[str]) -> str:
-        direct = DIRECT_CITATION_MARKER_RE.fullmatch(match.group(0))
-        if direct:
+        entries: list[dict[str, Any]] = []
+
+        def add_pages(source_id: str, printed_pages: list[str]) -> None:
+            if entries and entries[-1].get("source_id") == source_id:
+                entries[-1]["printed_pages"].extend(printed_pages)
+            else:
+                entries.append({"source_id": source_id, "printed_pages": list(printed_pages)})
+
+        for token in re.findall(
+            r"\[EVID:[A-Za-z0-9_]+\]|\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]",
+            match.group(0),
+        ):
+            direct = DIRECT_CITATION_MARKER_RE.fullmatch(token)
+            if not direct:
+                evidence_id = token[6:-1]
+                item = evidence.get(evidence_id)
+                if item is None:
+                    warnings.append(f"证据 {evidence_id} 未出现在已批准冻结包中")
+                    entries.append({"unresolved": token})
+                    continue
+                printed = item.get("printed_pages", []) or [
+                    page_printed.get(str(page_id), "") for page_id in item.get("page_ids", [])
+                ]
+                values = [str(page).strip() for page in printed if str(page).strip()]
+                if not any(str(page).strip() for page in printed):
+                    digital = [str(page) for page in item.get("physical_pages", []) if str(page).strip()]
+                    warnings.append(
+                        f"来源 {item['source_id']} 缺少原书页码；数字页 {','.join(digital) or '未知'} 仅供回查"
+                    )
+                    values.append("原书页待核")
+                add_pages(str(item["source_id"]), values)
+                continue
+
             source_id, page_id = direct.groups()
             page = pages.get((source_id, page_id))
             if page is None:
                 warnings.append(f"来源引证 {source_id} 的原页 {page_id} 不存在")
-                return match.group(0)
+                entries.append({"unresolved": token})
+                continue
             if page["use_state"] != "research_usable" or page["verification_state"] not in {
                 "human_spot_checked", "human_verified", "human_repaired",
             }:
                 warnings.append(f"来源引证 {source_id} 的原页 {page_id} 尚未完成逐页人工核验")
-                return match.group(0)
+                entries.append({"unresolved": token})
+                continue
             printed_page = str(page["printed_page"] or "").strip()
             if not printed_page:
                 warnings.append(
                     f"来源引证 {source_id} 的物理页 {page['physical_page']} 尚未确认原书页码"
                 )
-                return match.group(0)
-            if source_id not in source_numbers:
-                source_numbers[source_id] = len(source_numbers) + 1
-            return f"[{source_numbers[source_id]}]{printed_page}"
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for evidence_id in re.findall(r"\[EVID:([A-Za-z0-9_]+)\]", match.group(0)):
-            item = evidence.get(evidence_id)
-            if item is None:
-                warnings.append(f"证据 {evidence_id} 未出现在已批准冻结包中")
+                entries.append({"unresolved": token})
                 continue
-            grouped.setdefault(str(item["source_id"]), []).append(item)
+            add_pages(source_id, [printed_page])
+
         rendered: list[str] = []
-        for source_id, items in grouped.items():
+        for entry in entries:
+            if "unresolved" in entry:
+                rendered.append(entry["unresolved"])
+                continue
+            source_id, printed_pages = entry["source_id"], entry["printed_pages"]
             if source_id not in source_numbers:
                 source_numbers[source_id] = len(source_numbers) + 1
-            printed_pages = list(dict.fromkeys(
-                str(page)
-                for item in items
-                for page in (
-                    item.get("printed_pages", [])
-                    or [page_printed.get(str(page_id), "") for page_id in item.get("page_ids", [])]
-                )
-                if str(page).strip()
-            ))
-            if not printed_pages:
-                digital = list(dict.fromkeys(
-                    str(page) for item in items for page in item.get("physical_pages", []) if str(page).strip()
-                ))
-                warnings.append(f"来源 {source_id} 缺少原书页码；数字页 {','.join(digital) or '未知'} 仅供回查")
-                page_text = "原书页待核"
-            else:
-                page_text = "、".join(printed_pages)
+            page_text = _format_printed_pages(printed_pages)
             rendered.append(f"[{source_numbers[source_id]}]{page_text}")
         return "；".join(rendered) if rendered else match.group(0)
 

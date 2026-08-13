@@ -469,6 +469,9 @@ class ResearchEventTests(unittest.TestCase):
         self.assertIn("field_anchors:approved?field_anchors:undefined", script)
 
     def test_verified_local_block_can_approve_event_while_page_remains_open(self) -> None:
+        local_original = Path(self.temporary.name) / "local-source.txt"
+        local_original.write_text("separate local source", encoding="utf-8")
+        local_source = register_source(self.project, local_original, "Local partial source")
         packet = Path(self.temporary.name) / "local-page.json"
         packet.write_text(json.dumps({
             "pages": [{
@@ -480,14 +483,14 @@ class ResearchEventTests(unittest.TestCase):
                 "severity": "local", "category": "content", "message": "Other page content remains unchecked.",
             }],
         }), encoding="utf-8")
-        import_structure(self.project, self.source["source_id"], packet)
-        block_id = f"{self.source['source_id']}:B_LOCAL"
+        import_structure(self.project, local_source["source_id"], packet)
+        block_id = f"{local_source['source_id']}:B_LOCAL"
         correct_block(self.project, block_id, "Verified local text.", "Professor", "Checked against the image")
         candidate = create_event_candidates(
             self.project,
             [{
                 "case_id": "Local-partial-page",
-                "source_id": self.source["source_id"],
+                "source_id": local_source["source_id"],
                 "block_ids": [block_id],
                 "field_anchors": {"original_text": [block_id]},
             }],
@@ -502,11 +505,11 @@ class ResearchEventTests(unittest.TestCase):
         with connect(self.project) as connection:
             page_state = connection.execute(
                 "SELECT use_state FROM pages WHERE page_id = ?",
-                (f"{self.source['source_id']}:P_LOCAL",),
+                (f"{local_source['source_id']}:P_LOCAL",),
             ).fetchone()[0]
             anomaly_state = connection.execute(
                 "SELECT status FROM anomalies WHERE anomaly_id = ?",
-                (f"{self.source['source_id']}:A_LOCAL_PAGE",),
+                (f"{local_source['source_id']}:A_LOCAL_PAGE",),
             ).fetchone()[0]
         self.assertEqual(page_state, "blocked")
         self.assertEqual(anomaly_state, "open")

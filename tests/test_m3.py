@@ -11,7 +11,7 @@ from urllib.error import HTTPError
 
 import pymupdf as fitz
 
-from research_workbench.db import database_path
+from research_workbench.db import SCHEMA_VERSION, database_path
 from research_workbench.pdf_ingestion import ingest_pdf
 from research_workbench.service import (
     accept_ocr_proposal,
@@ -103,7 +103,7 @@ class M3OcrProposalTests(unittest.TestCase):
             ).fetchone()
         finally:
             connection.close()
-        self.assertEqual(version, 19)
+        self.assertEqual(version, SCHEMA_VERSION)
         self.assertIsNotNone(table)
 
     def test_pending_proposal_preserves_blocked_source_and_provenance(self) -> None:
