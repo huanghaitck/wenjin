@@ -140,6 +140,22 @@ class D2AuthoringReadingTests(unittest.TestCase):
             {"internal_process", "defensive_cluster"},
         )
 
+    def test_process_exposition_is_reported_without_blocking_source_qualification(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "秦岭材料边界", "# 摘要与关键词\n\n（待写）\n\n# 正文\n\n" +
+            "1871年至1879年，外国旅行者进入秦岭。" * 30,
+        )
+        abstract = manuscript["sections"][0]
+        proposal = create_writing_proposal(
+            self.project, abstract["section_id"], "metadata_draft", "写摘要",
+            writer=lambda prompt: (
+                "本文所用材料中，1876年的路线尚不完整，"
+                "故不列入表1，也不据此统计总频率。"
+            ),
+        )
+        self.assertTrue(proposal["validation"]["valid"])
+        self.assertEqual(proposal["validation"]["prose_risk_warnings"], ["process_exposition"])
+
     def test_approved_section_with_markdown_table_syncs_to_document(self) -> None:
         section = self.manuscript["sections"][1]
         proposal = create_writing_proposal(

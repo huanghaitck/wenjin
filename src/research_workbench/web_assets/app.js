@@ -1339,7 +1339,8 @@ function renderAuthoringControl(section, proposal) {
         problems.push(`${label}：实际 ${proposal.validation.actual_character_count}，要求 ${proposal.validation.requested_character_budget?.min}—${proposal.validation.requested_character_budget?.max}`);
       }
       const visibleWarnings=(proposal.validation.prose_risk_warnings||[]).filter((item)=>item!=='internal_process'||!proposal.proposed_content.includes('[EVID:'));
-      if(visibleWarnings.length) problems.push('语言风险提示：'+visibleWarnings.join('、'));
+      const warningLabels={internal_process:'内部工作语言',defensive_cluster:'否定式限定过密',process_exposition:'研究过程说明外露'};
+      if(visibleWarnings.length) problems.push('语言风险提示：'+visibleWarnings.map((item)=>warningLabels[item]||item).join('、'));
       const contractChecked=proposal.operation!=='section_draft'||Object.hasOwn(proposal.validation,'evidence_linked');
       const detail=!contractChecked?'旧提案未经过当前证据契约检查，不可直接批准。':(proposal.validation.valid?`证据契约检查通过；仍须人工核对解释。${problems.length?'\n'+problems.join('\n'):''}`:problems.join('\n'));
       const node=card(`${proposal.operation} · ${proposal.status}`, detail);
