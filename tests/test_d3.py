@@ -122,6 +122,32 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         self.assertEqual(len(Document(self.project / word["project_path"]).tables), 1)
         self.assertEqual(word["fidelity"]["level"], "structured_with_true_footnotes")
 
+    def test_export_does_not_repeat_an_empty_title_section(self) -> None:
+        manuscript = import_manuscript(
+            self.project,
+            "同名标题",
+            "# 同名标题\n\n# 正文\n\n正文段落。",
+        )
+
+        markdown = export_document(self.project, manuscript["manuscript_id"], "markdown")
+        markdown_text = (self.project / markdown["project_path"]).read_text(encoding="utf-8")
+        self.assertEqual(markdown_text.count("# 同名标题"), 1)
+
+        word = export_document(self.project, manuscript["manuscript_id"], "docx")
+        document = Document(self.project / word["project_path"])
+        self.assertEqual([paragraph.text for paragraph in document.paragraphs].count("同名标题"), 1)
+
+    def test_docx_export_renders_simple_markdown_bold_without_asterisks(self) -> None:
+        manuscript = import_manuscript(
+            self.project, "粗体导出", "# 英文信息\n\n**Title:** Example",
+        )
+
+        word = export_document(self.project, manuscript["manuscript_id"], "docx")
+        document = Document(self.project / word["project_path"])
+        paragraph = next(item for item in document.paragraphs if "Title:" in item.text)
+        self.assertEqual(paragraph.text, "Title: Example")
+        self.assertTrue(any(run.text == "Title:" and run.bold for run in paragraph.runs))
+
     def test_sequential_reference_export_reuses_source_number_and_reports_missing_gates(self) -> None:
         manuscript = import_manuscript(
             self.project, "顺序编码稿", "# 正文\n\n甲事。[EVID:EVT_one] 乙事。[EVID:EVT_two]",

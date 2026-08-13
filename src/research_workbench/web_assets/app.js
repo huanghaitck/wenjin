@@ -866,7 +866,11 @@ function captureDocumentSection() {
     return {
       type: node.tagName === 'BLOCKQUOTE' ? 'quote' : (node.tagName === 'LI' ? 'list_item' : (node.tagName === 'H3' ? 'subheading' : 'paragraph')),
       node_id: node.dataset.nodeId || `NOD_${crypto.randomUUID().replaceAll('-', '')}`,
-      text: (() => { const clone=node.cloneNode(true); clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove()); return clone.innerText.trim(); })(),
+      text: (() => {
+        const clone=node.cloneNode(true);
+        clone.querySelectorAll('.note-marker').forEach((marker)=>marker.remove());
+        return clone.innerText.trim().replaceAll('\\n', '\n');
+      })(),
     };
   });
   if (!section.children.length) section.children.push({type:'paragraph', node_id:`NOD_${crypto.randomUUID().replaceAll('-', '')}`, text:''});
@@ -934,9 +938,11 @@ function renderAuthoring() {
   let proposal = proposals.find((item) => item.proposal_id === state.proposalId) || proposals.find((item) => item.status === 'pending') || proposals[0];
   if (proposal) state.proposalId = proposal.proposal_id;
   $('sectionProposal').value = proposal?.proposed_content || '';
-  const templateSelect=$('exportTemplate'); const previous=templateSelect.value; templateSelect.replaceChildren();
+  const templateSelect=$('exportTemplate'); const previous=templateSelect.value||localStorage.getItem('hrw.exportTemplate'); templateSelect.replaceChildren();
   for(const template of state.snapshot.authoring?.journal_templates||[]) templateSelect.append(new Option(journalTemplateLabel(template),template.template_id));
   templateSelect.value=previous||'builtin-history-research';
+  if(!templateSelect.value) templateSelect.value='builtin-history-research';
+  templateSelect.onchange=()=>localStorage.setItem('hrw.exportTemplate',templateSelect.value);
   const text=state.document?.document ? state.document.document.children.flatMap((part)=>part.children||[]).map((node)=>node.type==='table'?(node.rows||[]).flat().join(''):node.text||'').join('') : '';
   const notes=state.document?.notes||[];
   $('manuscriptStats').textContent=state.document ? `${text.length} 字符 · ${state.document.document.children.length} 节 · ${notes.filter((note)=>note.status==='active').length} 条已批准注释 · ${notes.filter((note)=>note.pending).length} 条待审` : '尚未选择稿件';

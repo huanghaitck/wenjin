@@ -127,6 +127,18 @@ def _plain_text(tree: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _export_sections(tree: dict[str, Any]) -> list[dict[str, Any]]:
+    """Hide an empty legacy title section; the document title is already rendered separately."""
+    title = str(tree.get("title", "")).strip()
+    return [
+        section for section in tree.get("children", [])
+        if not (
+            str(section.get("heading", "")).strip() == title
+            and not any(_node_text(node).strip() for node in section.get("children", []))
+        )
+    ]
+
+
 def _validate_tree(tree: dict[str, Any]) -> None:
     if tree.get("type") != "document" or not isinstance(tree.get("children"), list):
         raise ValueError("document must be a structured document tree")
@@ -371,7 +383,7 @@ def _markdown_text(text: str, placements: list[tuple[int, dict[str, Any]]]) -> s
 def markdown_from_tree(tree: dict[str, Any], notes: list[dict[str, Any]] | None = None) -> str:
     by_node, ordered = _numbered_notes(notes or [], tree)
     lines = [f"# {tree.get('title', '未命名稿件')}", ""]
-    for section in tree.get("children", []):
+    for section in _export_sections(tree):
         lines.extend([f"## {section.get('heading', '正文')}", ""])
         for node in section.get("children", []):
             if node.get("type") == "table":
@@ -415,16 +427,25 @@ SEQUENTIAL_CITATION_RE = re.compile(
 
 
 def _add_text_runs(paragraph: Any, text: str, superscript_citations: bool) -> None:
+    def add_fragment(fragment: str) -> None:
+        cursor = 0
+        for match in re.finditer(r"\*\*(.+?)\*\*", fragment):
+            paragraph.add_run(fragment[cursor:match.start()])
+            run = paragraph.add_run(match.group(1))
+            run.bold = True
+            cursor = match.end()
+        paragraph.add_run(fragment[cursor:])
+
     if not superscript_citations:
-        paragraph.add_run(text)
+        add_fragment(text)
         return
     cursor = 0
     for match in SEQUENTIAL_CITATION_RE.finditer(text):
-        paragraph.add_run(text[cursor:match.start()])
+        add_fragment(text[cursor:match.start()])
         run = paragraph.add_run(match.group(0))
         run.font.superscript = True
         cursor = match.end()
-    paragraph.add_run(text[cursor:])
+    add_fragment(text[cursor:])
 
 
 def _reference_entry(number: int, metadata: dict[str, Any]) -> str:
@@ -817,7 +838,7 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
         title_run._element.rPr.rFonts.set(qn("w:eastAsia"), "宋体")
         title_run.font.size = Pt(18)
         title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        for section in export_tree.get("children", []):
+        for section in _export_sections(export_tree):
             document.add_heading(str(section.get("heading", "正文")), level=1)
             for node in section.get("children", []):
                 if node.get("type") == "table":

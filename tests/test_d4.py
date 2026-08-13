@@ -132,6 +132,7 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         self.assertIn("proposal.proposed_content.length", script)
         self.assertIn("child.nodeType !== Node.TEXT_NODE", script)
         self.assertIn("replaceChild(paragraph,child)", script)
+        self.assertIn("replaceAll('\\\\n', '\\n')", script)
 
     def test_nonempty_section_cannot_be_erased_by_a_blank_structured_save(self) -> None:
         tree = self.document["document"]
