@@ -911,6 +911,10 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
                                 if row_index == 0:
                                     for run in cell.paragraphs[0].runs:
                                         run.bold = True
+                        if len(rows) > 1:
+                            for cell in table.rows[0].cells:
+                                for paragraph in cell.paragraphs:
+                                    paragraph.paragraph_format.keep_with_next = True
                     continue
                 if node.get("type") == "subheading":
                     paragraph = document.add_heading(str(node.get("text", "")), level=2)
@@ -918,6 +922,8 @@ def export_document(project_root: Path, manuscript_id: str, format_name: str,
                 style = "Quote" if node.get("type") == "quote" else None
                 paragraph = document.add_paragraph(style=style)
                 text = str(node.get("text", ""))
+                if re.match(r"^表\s*\d+", text.strip()):
+                    paragraph.paragraph_format.keep_with_next = True
                 cursor = 0
                 for number, note in sorted(by_node.get(str(node.get("node_id")), []), key=lambda item: int(item[1]["anchor_offset"])):
                     offset = min(max(cursor, int(note["anchor_offset"])), len(text))

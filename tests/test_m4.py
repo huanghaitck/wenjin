@@ -20,6 +20,7 @@ from research_workbench.agent_runtime import (
     _advance_run,
     _agent_research_state,
     _compact_authoring_state,
+    _compact_reading_batch,
     _compact_source_list,
     _model_action,
     _looks_like_internal_tool_transcript,
@@ -816,6 +817,11 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             },
         )
         self.assertEqual(reading["status"], "running")
+        indexed = _agent_research_state(self.project)
+        indexed_job = next(item for item in indexed["reading_jobs"] if item["job_id"] == reading["job_id"])
+        self.assertEqual(indexed_job["source_ids"], [source_id])
+        self.assertEqual(indexed_job["note_count"], 0)
+        self.assertNotIn("notes", indexed_job)
         batch = _execute_tool(
             self.project,
             run_id[0],
@@ -823,6 +829,8 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             {"job_id": reading["job_id"], "source_id": source_id, "page_limit": 10},
         )
         self.assertTrue(batch["pages"])
+        self.assertIn("text", batch["pages"][0])
+        self.assertNotIn("blocks", batch["pages"][0])
         saved = _execute_tool(
             self.project,
             run_id[0],

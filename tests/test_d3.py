@@ -122,6 +122,7 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         docx = Document()
         docx.add_heading("导言", level=1)
         docx.add_paragraph("正文段落。")
+        docx.add_paragraph("表1　旅行比较")
         table = docx.add_table(rows=3, cols=3)
         for column, value in enumerate(("比较项", "谭卫道", "李希霍芬")):
             table.cell(0, column).text = value
@@ -130,13 +131,21 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
         docx.save(package)
         imported = import_docx(self.project, "DOCX 稿件", package.getvalue())
         self.assertEqual(imported["import_fidelity"]["level"], "limited")
-        self.assertEqual(imported["document"]["children"][0]["children"][1]["type"], "table")
+        self.assertEqual(imported["document"]["children"][0]["children"][2]["type"], "table")
         markdown = export_document(self.project, imported["manuscript_id"], "markdown")
         word = export_document(self.project, imported["manuscript_id"], "docx")
         self.assertTrue((self.project / markdown["project_path"]).is_file())
         self.assertTrue((self.project / word["project_path"]).is_file())
         self.assertIn("| 比较项 | 谭卫道 | 李希霍芬 |", (self.project / markdown["project_path"]).read_text(encoding="utf-8"))
-        self.assertEqual(len(Document(self.project / word["project_path"]).tables), 1)
+        exported_docx = Document(self.project / word["project_path"])
+        self.assertEqual(len(exported_docx.tables), 1)
+        caption = next(paragraph for paragraph in exported_docx.paragraphs if paragraph.text.startswith("表1"))
+        self.assertTrue(caption.paragraph_format.keep_with_next)
+        self.assertTrue(all(
+            paragraph.paragraph_format.keep_with_next
+            for cell in exported_docx.tables[0].rows[0].cells
+            for paragraph in cell.paragraphs
+        ))
         self.assertEqual(word["fidelity"]["level"], "structured_with_true_footnotes")
 
     def test_export_does_not_repeat_an_empty_title_section(self) -> None:

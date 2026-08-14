@@ -24,7 +24,7 @@ from .skill_registry import get_skill
 
 
 Writer = Callable[[str], str]
-OPERATIONS = {"polish", "historical_humanize", "section_draft", "metadata_draft"}
+OPERATIONS = {"polish", "expand", "historical_humanize", "section_draft", "metadata_draft"}
 HISTORICAL_QUALIFIERS = (
     "可能", "尚不足以", "不能据此", "只能说明", "未见", "尚无", "仅限于",
     "最有把握", "再进一步", "有些", "在此个案中",
@@ -1001,8 +1001,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     supplemental_freeze: dict[str, Any] | None = None
     supplemental_evidence: dict[str, dict[str, Any]] = {}
     if selection_only:
-        if operation != "polish":
-            raise ValueError("selection-only revision currently supports evidence-preserving polish only")
+        if operation not in {"polish", "expand"}:
+            raise ValueError("selection-only revision supports evidence-preserving polish or expansion only")
         selection_context = _validated_writing_selection(
             base_content, str(row["current_version_id"]), base_version_id, selection,
         )
@@ -1021,10 +1021,15 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                 }
                 for evidence_id, evidence in supplemental_evidence.items()
             ]
-    if operation == "polish" and base_content.strip() in {"", "待写", "（待写）", "(待写)"}:
-        raise ValueError("placeholder sections require metadata_draft instead of polish")
+    if operation in {"polish", "expand"} and base_content.strip() in {"", "待写", "（待写）", "(待写)"}:
+        raise ValueError("placeholder sections require metadata_draft instead of editing")
     markers = (_historical_markers(base_content) if operation == "historical_humanize"
-               else (_markers(base_content) if operation == "polish" else []))
+               else (_markers(base_content) if operation in {"polish", "expand"} else []))
+    style_profile = None
+    if style_profile_id and operation in {"polish", "expand", "historical_humanize"}:
+        style_profile = style_profile_detail(project_root, style_profile_id)
+        if style_profile["status"] != "STABLE_PROFILE" or len(style_profile["samples"]) < 3:
+            raise ValueError("style profile must be author approved with at least three samples before use")
     if operation == "section_draft":
         freeze = freeze_detail(project_root, freeze_id)
         if freeze["status"] != "approved":
@@ -1129,12 +1134,8 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
     elif operation == "historical_humanize":
         evidence_contract = None
         selected_skill = get_skill(skill_name or "historical-humanizer-zh")
-        profile = None
-        if style_profile_id:
-            profile = style_profile_detail(project_root, style_profile_id)
-            if profile["status"] != "STABLE_PROFILE" or len(profile["samples"]) < 3:
-                raise ValueError("style profile must be author approved with at least three samples before use")
-        style_context = _json(profile["features"]) if profile else "未选择作者画像；只使用通用史学表达规则"
+        style_context = (_json(style_profile["features"]) if style_profile
+                         else "未选择作者画像；只使用通用史学表达规则")
         prompt = (
             "对以下中文历史学段落制作证据保真的语言修订副本。只返回修订正文。\n"
             "硬约束：不得改变事实、归因、因果、时间顺序、论证范围、限定词、阴性结果；不得改变引文、译文、"
@@ -1198,8 +1199,16 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                 f"\n\n允许补充的冻结证据：\n{evidence_text}"
             )
         else:
-            prompt = (
+            action_contract = (
+                "扩写以下中文历史学论文章节。必须完整保留现有事实、引文、数字、脚注标记、来源标识与表格；"
+                "可以展开现有材料已经支持的行动过程、比较关系与历史解释，但不得增加原文没有的人物、日期、地点、路线、"
+                "数量、引文、来源或因果。不得用复述和同义反复凑篇幅。"
+                if operation == "expand" else
                 "润色以下中文历史学论文段落。不得新增、删除或强化事实，不得改变引文、数字、脚注标记和来源标识。"
+            )
+            prompt = (
+                action_contract
+                +
                 "除非作者明确要求压缩，不得以精简、概括或合并为目标，不得降低材料密度或删去有助于讲清历史过程的叙述。"
                 "行文先交代人物、行动、时间、地点和材料，再据此作出判断；证据能够支持的判断应直接、肯定地写出，"
                 "不要改写成连续的‘并非’‘不能’‘不足以’等预防性辩解。真正的史料限度应紧邻相关判断简洁说明，"
@@ -1207,6 +1216,12 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
                 f"{scope_rule}具体要求：{instruction}\n\n{writing_input}"
             )
         fallback = re.sub(r"[ \t]+", " ", writing_input).replace(" ,", "，").replace(" .", "。")
+    if style_profile and operation in {"polish", "expand"}:
+        prompt += (
+            "\n\n经人工批准的高层文风画像（只学习论证组织，不模仿独特措辞）：\n"
+            + _json(style_profile["features"])
+            + "\n必须让这些结构特征真实影响本次段落推进；仍以事实、引文和证据门禁为最高约束。"
+        )
     historiography_context = None
     if historiography_entry_ids:
         if historiography_page_refs is None and attached_refs:
@@ -1247,7 +1262,7 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         evidence_contract = dict(evidence_contract or {})
         evidence_contract["citation_markers"] = historiography_context["citation_markers"]
         evidence_contract["required_historiography_entries"] = historiography_context["entry_source_ids"]
-    if selection_context:
+    if operation in {"polish", "expand", "historical_humanize"}:
         existing_citations = re.findall(r"\[CITE:[A-Za-z0-9_]+@[A-Za-z0-9_:]+\]", base_content)
         if existing_citations:
             evidence_contract = dict(evidence_contract or {})
@@ -1260,7 +1275,7 @@ def create_writing_proposal(project_root: Path, section_id: str, operation: str,
         if selection_context else model_output
     ).strip()
     validation = _validate_markers(proposed, markers, evidence_contract)
-    if operation == "polish":
+    if operation in {"polish", "expand"}:
         validation["no_change"] = proposed == base_content.strip()
         validation["valid"] = bool(validation["valid"] and not validation["no_change"])
     if selection_context:
@@ -1385,7 +1400,7 @@ def decide_writing_proposal(project_root: Path, proposal_id: str, approved: bool
         if _frozen_evidence_fingerprint(supplemental_evidence) != supplemental_contract.get("evidence_fingerprint"):
             raise ValueError("approved evidence freeze changed after proposal generation; create a new proposal")
     validation = _validate_markers(final_content, proposal["protected_markers"], contract)
-    if proposal["operation"] == "polish":
+    if proposal["operation"] in {"polish", "expand"}:
         with connect(project_root) as connection:
             base_row = connection.execute(
                 "SELECT content FROM section_versions WHERE version_id = ?",

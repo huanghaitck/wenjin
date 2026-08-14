@@ -22,6 +22,7 @@ from .authoring import (
     authoring_state,
     create_historiography_entry,
     create_reading_job,
+    list_reading_jobs,
     reading_job_batch,
     save_reading_note,
     validate_historiography_entry_payload,
@@ -1342,6 +1343,31 @@ def _compact_source_list(project_root: Path, arguments: dict[str, Any]) -> dict[
     }
 
 
+def _compact_reading_batch(payload: dict[str, Any]) -> dict[str, Any]:
+    """Preserve complete page text without repeating metadata for every PDF block."""
+    compact = {key: value for key, value in payload.items() if key != "pages"}
+    compact["pages"] = [
+        {
+            "page_id": page.get("page_id", ""),
+            "physical_page": page.get("physical_page"),
+            "printed_page": page.get("printed_page"),
+            "verification_state": page.get("verification_state", ""),
+            "use_state": page.get("use_state", ""),
+            "text": "\n".join(
+                str(block.get("text", "")).strip()
+                for block in page.get("blocks", [])
+                if str(block.get("text", "")).strip()
+            ),
+        }
+        for page in payload.get("pages", [])
+    ]
+    compact["boundary"] = (
+        "Complete text for the returned pages, separated by exact page identity. "
+        "Block geometry is omitted here; use source.page for block-level evidence work."
+    )
+    return compact
+
+
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
     allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
     if tool_name not in allowed:
@@ -1465,13 +1491,13 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 str(arguments.get("stop_condition", "")),
             )
         elif tool_name == "reading_job.batch":
-            result = reading_job_batch(
+            result = _compact_reading_batch(reading_job_batch(
                 project_root,
                 str(arguments.get("job_id", "")),
                 str(arguments.get("source_id", "")),
                 int(arguments.get("after_physical_page", 0)),
                 int(arguments.get("page_limit", 5)),
-            )
+            ))
         elif tool_name == "reading_note.save":
             physical_pages = arguments.get("physical_pages", [])
             if not isinstance(physical_pages, list):
@@ -1596,6 +1622,7 @@ def _planning_context(project_root: Path) -> dict[str, Any]:
 
 def _agent_research_state(project_root: Path) -> dict[str, Any]:
     research = research_state(project_root)
+    reading_jobs = list_reading_jobs(project_root)
     return {
         "counts": {
             "claims": len(research.get("claims", [])),
@@ -1605,6 +1632,7 @@ def _agent_research_state(project_root: Path) -> dict[str, Any]:
             "artifacts": len(research.get("artifacts", [])),
             "browser_sessions": len(research.get("browser_sessions", [])),
             "memory_candidates": len(research.get("memory_candidates", [])),
+            "reading_jobs": len(reading_jobs),
         },
         "claims": [
             {"claim_id": item.get("claim_id", ""), "text": item.get("text", ""),
@@ -1617,7 +1645,22 @@ def _agent_research_state(project_root: Path) -> dict[str, Any]:
              "claim_count": len(item.get("payload", {}).get("claims", []))}
             for item in research.get("freezes", [])[:20]
         ],
-        "boundary": "Compact index only. Inspect exact sources and verified pages before using evidence.",
+        "reading_jobs": [
+            {
+                "job_id": item.get("job_id", ""),
+                "title": item.get("title", ""),
+                "mode": item.get("mode", ""),
+                "source_ids": item.get("source_ids", []),
+                "status": item.get("status", ""),
+                "stop_condition": item.get("stop_condition", ""),
+                "note_count": len(item.get("notes", [])),
+            }
+            for item in reading_jobs[:20]
+        ],
+        "boundary": (
+            "Compact index only. Reading jobs expose exact assignments but omit note and source text; "
+            "use reading_job.batch for bounded pages. Inspect exact sources and verified pages before evidence use."
+        ),
     }
 
 

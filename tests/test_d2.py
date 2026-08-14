@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import hashlib
 import json
 import sqlite3
 import threading
@@ -215,6 +216,40 @@ class D2AuthoringReadingTests(unittest.TestCase):
                 section["content"], section["current_version_id"],
             )
 
+    def test_expand_is_a_distinct_evidence_preserving_writing_operation(self) -> None:
+        section = self.manuscript["sections"][1]
+        prompts: list[str] = []
+        expanded = section["content"] + "\n\n道路条件进一步决定了既有行动如何展开。"
+        proposal = create_writing_proposal(
+            self.project, section["section_id"], "expand", "展开现有历史过程",
+            writer=lambda prompt: prompts.append(prompt) or expanded,
+        )
+        self.assertIn("扩写以下中文历史学论文章节", prompts[0])
+        self.assertTrue(proposal["validation"]["valid"])
+        self.assertFalse(proposal["validation"]["no_change"])
+        decision = decide_writing_proposal(
+            self.project, proposal["proposal_id"], True, "Professor", reason="Expanded from existing facts",
+        )
+        self.assertEqual(decision["status"], "approved")
+        current = next(
+            item for item in manuscript_detail(self.project, self.manuscript["manuscript_id"])["sections"]
+            if item["section_id"] == section["section_id"]
+        )
+        self.assertEqual(current["content"], expanded)
+        selection_text = current["content"]
+        selection = {
+            "start": 0, "end": len(selection_text), "text": selection_text,
+            "sha256": hashlib.sha256(selection_text.encode("utf-8")).hexdigest(),
+            "node_ids": ["NOD_test"], "kind": "text",
+        }
+        selected = create_writing_proposal(
+            self.project, section["section_id"], "expand", "继续展开现有论证",
+            selection_only=True, base_version_id=current["current_version_id"], selection=selection,
+            writer=lambda _prompt: selection_text + "\n\n现有关系由此更加清楚。",
+        )
+        self.assertTrue(selected["validation"]["valid"])
+        self.assertTrue(selected["validation"]["selection_only"])
+
     def test_historical_humanizer_uses_only_approved_high_level_style_profile(self) -> None:
         paragraph = ("1908年，材料称“队伍进入草原”。[^1]这一记载只能说明队伍当日的位置，"
                      "尚不足以据此判断整个考察季节的路线。随后一封书信补充了行动次序，"
@@ -241,6 +276,14 @@ class D2AuthoringReadingTests(unittest.TestCase):
         profile = decide_style_profile(
             self.project, profile["profile_id"], True, "Professor", "这是我认可的三篇完整样本",
         )
+        polish_prompts: list[str] = []
+        create_writing_proposal(
+            self.project, section["section_id"], "polish", "扩充材料叙述",
+            style_profile_id=profile["profile_id"],
+            writer=lambda prompt: polish_prompts.append(prompt) or section["content"],
+        )
+        self.assertIn("经人工批准的高层文风画像", polish_prompts[0])
+        self.assertIn(json.dumps(profile["features"], ensure_ascii=False), polish_prompts[0])
         proposal = create_writing_proposal(
             self.project, section["section_id"], "historical_humanize", "材料先行",
             style_profile_id=profile["profile_id"], writer=lambda prompt: "材料称队伍进入草原。",
@@ -658,6 +701,27 @@ class D2AuthoringReadingTests(unittest.TestCase):
         stored_refs = proposal["model_snapshot"]["historiography_context"]["reading_notes"][0]["page_refs"]
         self.assertEqual(len(stored_refs), 1)
         self.assertEqual(stored_refs[0]["source_version_id"], self.source["source_version_id"])
+
+        existing_marker = "[CITE:SRC_existing@SRC_existing:P0001]"
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE section_versions SET content = ? WHERE version_id = ?",
+                (section["content"] + existing_marker, section["current_version_id"]),
+            )
+        preserved = create_writing_proposal(
+            self.project, section["section_id"], "polish", "保留旧引文并加入学术史对话",
+            historiography_entry_ids=[entry["entry_id"]],
+            writer=lambda _prompt: section["content"] + existing_marker + "\n\n已有研究强调道路条件。" + marker,
+        )
+        self.assertTrue(preserved["validation"]["valid"])
+        self.assertEqual(preserved["validation"]["invalid_citation_markers"], [])
+        preserved_humanized = create_writing_proposal(
+            self.project, section["section_id"], "historical_humanize", "保留旧引文并加入学术史对话",
+            historiography_entry_ids=[entry["entry_id"]],
+            writer=lambda _prompt: section["content"] + existing_marker + "\n\n已有研究强调道路条件。" + marker,
+        )
+        self.assertTrue(preserved_humanized["validation"]["valid"])
+        self.assertEqual(preserved_humanized["validation"]["invalid_citation_markers"], [])
         with self.assertRaisesRegex(ValueError, "outside the approved historiography whitelist"):
             create_writing_proposal(
                 self.project, section["section_id"], "polish", "加入学术史对话",
@@ -668,7 +732,7 @@ class D2AuthoringReadingTests(unittest.TestCase):
         missing = create_writing_proposal(
             self.project, section["section_id"], "polish", "加入学术史对话",
             historiography_entry_ids=[entry["entry_id"]],
-            writer=lambda _prompt: section["content"] + "\n\n只增加文字而未落实所选研究。",
+            writer=lambda _prompt: section["content"] + existing_marker + "\n\n只增加文字而未落实所选研究。",
         )
         self.assertFalse(missing["validation"]["valid"])
         self.assertFalse(missing["validation"]["historiography_coverage_valid"])

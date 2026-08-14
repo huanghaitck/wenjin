@@ -1260,7 +1260,7 @@ function renderAuthoringControl(section, proposal) {
     }
     const form = document.createElement('section'); form.className='context-form';
     const operation = document.createElement('select'); operation.id='writingOperation';
-    operation.append(new Option('保真润色','polish'), new Option('依据已批准正文生成摘要/投稿信息','metadata_draft'), new Option('史学去模板化（证据保真）','historical_humanize'), new Option('基于冻结证据分节写作','section_draft'));
+    operation.append(new Option('保真润色','polish'), new Option('证据保真扩写','expand'), new Option('依据已批准正文生成摘要/投稿信息','metadata_draft'), new Option('史学去模板化（证据保真）','historical_humanize'), new Option('基于冻结证据分节写作','section_draft'));
     const operationLabel=document.createElement('label'); operationLabel.textContent='操作'; operationLabel.append(operation);
     const selectionOnly=document.createElement('input');selectionOnly.type='checkbox';selectionOnly.id='writingSelectionOnly';
     const selectionOnlyLabel=document.createElement('label');selectionOnlyLabel.append(selectionOnly,document.createTextNode('仅返修当前选区（保留整节其余内容）'));
