@@ -14,3 +14,6 @@ tmp/
 node_modules/
 src-tauri/target/
 src-tauri/binaries/*.exe
+.server-*
+.tmp-*
+artifacts/

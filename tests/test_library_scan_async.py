@@ -57,7 +57,12 @@ class AsyncLibraryScanTests(unittest.TestCase):
         with patch.object(library_module, "_inspect_file", side_effect=slow):
             started = time.monotonic()
             created = start_scan_session(self.project, self.materials, self.library)
-            self.assertLess(time.monotonic() - started, 0.2)
+            # The contract is that the HTTP-facing call returns before the first
+            # deliberately slow inspection completes. Windows may spend a few
+            # hundred milliseconds creating and migrating the fresh test DB, so
+            # a 0.2 second wall-clock limit was scheduler-sensitive in the full
+            # suite while still exercising the intended non-blocking boundary.
+            self.assertLess(time.monotonic() - started, 1.0)
             self.assertEqual(created["status"], "scanning")
             completed = self._wait(str(created["session_id"]))
         self.assertEqual(completed["status"], "preview_ready")

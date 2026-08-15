@@ -46,6 +46,7 @@ from .service import (
 from .vision import capability
 from .web import serve
 from .desktop_runtime import serve_desktop
+from .mcp_server import serve_stdio
 
 
 def _emit(value: Any) -> None:
@@ -53,7 +54,7 @@ def _emit(value: Any) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="hrw", description="Historical Research Workbench D1")
+    parser = argparse.ArgumentParser(prog="wenjin", description="问津 0.1 · 本地人文社会科学研究工作台")
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="initialize a research project")
@@ -210,6 +211,10 @@ def build_parser() -> argparse.ArgumentParser:
     web.add_argument("--workspace-root", type=Path)
     web.add_argument("--config-root", type=Path)
 
+    mcp = commands.add_parser("mcp-server", help="serve the current research project over MCP stdio")
+    mcp.add_argument("project_root", type=Path)
+    mcp.add_argument("--library-root", type=Path)
+
     desktop = commands.add_parser("desktop-serve", help="start a first-run desktop workspace")
     desktop.add_argument("--data-root", type=Path, required=True)
     desktop.add_argument("--host", default="127.0.0.1")
@@ -325,6 +330,9 @@ def main(argv: list[str] | None = None) -> int:
         result = link_work_to_project(args.project_root, args.work_id, args.library_root)
     elif args.command == "serve":
         serve(args.project_root, args.host, args.port, args.library_root, args.workspace_root, args.config_root)
+        return 0
+    elif args.command == "mcp-server":
+        serve_stdio(args.project_root, args.library_root)
         return 0
     elif args.command == "desktop-serve":
         serve_desktop(args.data_root, args.host, args.port, args.desktop_build)

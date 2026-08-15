@@ -1,13 +1,14 @@
 project: historical-research-workbench
-updated_at: "2026-08-12"
-current_stage: DEMO_1_END_TO_END_DOGFOOD_COMPLETE
-last_completed_stage: SKILLS_LIBRARY_TANGDU_EXPORT_AND_MEMORY_LAYERING
-active_human_gate: AUTHOR_IDENTITY_AFFILIATION_AND_SUBMISSION_METADATA
+updated_at: "2026-08-15"
+current_stage: WENJIN_0_1_RELEASE_VALIDATION
+last_completed_stage: WENJIN_0_1_BROWSER_DOGFOOD
+active_human_gate: DESKTOP_INSTALLER_AND_RELEASE_ACCEPTANCE
 
 current_demo:
-  app_version: 1.0.0.dev1
-  project_database_schema: 15
-  full_test_suite: 152_passed
+  product_name: 问津
+  app_version: 0.1.0
+  project_database_schema: 21
+  full_test_suite: pending_release_run
   home: research_dialogue
   skills_and_plugins_library: implemented_and_gui_tested
   slash_skill_invocation: implemented_and_gui_tested
@@ -19,10 +20,19 @@ current_demo:
   qinling_demo_manuscript_status: blocked_only_for_author_submission_metadata
   user_manual: docs/USER_MANUAL_ZH.md
   memory_layering_adr: docs/adr/0013-information-knowledge-and-memory-layering.md
+  v0_1_architecture_adr: docs/adr/0016-wenjin-0.1-agent-platform.md
   library_database: separate_sqlite
   project_knowledge_database: per_project_sqlite
   runtime_records_promote_automatically: false
   external_long_term_memory_auto_write: false
+  model_roles: 7
+  model_presets: [ollama, deepseek, openrouter, siliconflow, zhipu_glm, custom_openai_compatible]
+  moa: implemented_and_gui_tested
+  versioned_agent_profile: implemented_and_gui_tested
+  bibliographic_knowledge_graph: implemented_and_gui_tested
+  mcp_stdio_server: implemented_and_unit_tested
+  cli_alias: wenjin
+  chinese_english_core_ui: implemented_and_gui_tested
 
 research_design_workflow:
   status: implemented_and_real_gui_tested

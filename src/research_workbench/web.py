@@ -47,7 +47,7 @@ from .citations import create_note, decide_note, revise_note
 from .pdf_ingestion import ingest_pdf
 from .library import (
     LIBRARY_SHELVES, approve_candidates,
-    library_file_path,
+    library_file_path, library_graph,
     library_status,
     link_work_to_project,
     scan_session,
@@ -62,6 +62,7 @@ from .research import (
     add_authenticated_results, connector_capabilities, create_authenticated_search_task,
     list_retrievals, retrieval_record, route_retrieval_result, search,
 )
+from .agent_profile import public_agent_profile, save_agent_profile
 from .research_design import create_design_draft, decide_design, design_state
 from .research_events import decide_event, event_anchor_text, event_state, export_event_register
 from .scholarship import (
@@ -103,7 +104,7 @@ from .service import (
 from .vision import capability
 from .translation import capability as translation_capability, translate_evidence
 from .text_ingestion import ingest_docx_locator
-from .model_settings import SETTINGS_FILE, apply_settings, probe_role, public_settings, save_role
+from .model_settings import SETTINGS_FILE, apply_settings, probe_role, public_settings, save_moa, save_role
 from .workspace import (
     create_workspace_project,
     initialize_workspace,
@@ -136,8 +137,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            # Browser navigation and health probes may close a loopback request
+            # after receiving enough data. This is not a service failure and
+            # should not flood the desktop diagnostics log with tracebacks.
+            return
 
     def _json(self, value: Any, status: int = 200) -> None:
         self._send(status, json.dumps(value, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
@@ -155,6 +162,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "sources": list_sources(self.server.project_root),
                     "threads": list_threads(self.server.project_root),
                     "model_profiles": sync_model_profiles(self.server.project_root),
+                    "agent_profile": public_agent_profile(self.server.project_root),
                     "library": library_status(self.server.project_root, self.server.library_root),
                     "library_works": search_library(self.server.project_root, library_root=self.server.library_root),
                     "library_shelves": LIBRARY_SHELVES,
@@ -179,6 +187,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/model-settings":
                 self._json(public_settings(self.server.config_root))
+                return
+            if parsed.path == "/api/library/graph":
+                params = parse_qs(parsed.query)
+                self._json(library_graph(
+                    self.server.project_root, params.get("query", [""])[0],
+                    int(params.get("limit", ["200"])[0]), self.server.library_root,
+                ))
                 return
             if parsed.path == "/api/capabilities":
                 self._json({
@@ -436,6 +451,16 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self._json({"error": "invalid local session"}, 403)
                     return
                 result = probe_role(self.server.config_root, str(payload["role"]))
+            elif parsed.path == "/api/model-settings/moa":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                result = {"settings": save_moa(self.server.config_root, payload)}
+            elif parsed.path == "/api/agent-profile/save":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                result = {"agent_profile": save_agent_profile(self.server.project_root, payload)}
             elif parsed.path == "/api/desktop/import-path":
                 if not self.server.desktop_mode or self.headers.get("X-HRW-Session", "") != self.server.session_token:
                     self._json({"error": "desktop bridge is unavailable"}, 403)
@@ -867,7 +892,7 @@ def serve(
 ) -> None:
     server = build_server(project_root, host, port, library_root, workspace_root, config_root, desktop_mode)
     try:
-        print(f"Historical Research Workbench: http://{host}:{server.server_port}")
+        print(f"Wenjin Research Workbench: http://{host}:{server.server_port}")
         server.serve_forever()
     finally:
         server.server_close()

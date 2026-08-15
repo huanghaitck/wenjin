@@ -10,7 +10,7 @@ from pathlib import Path
 from .db import utc_now
 
 
-LIBRARY_SCHEMA_VERSION = 2
+LIBRARY_SCHEMA_VERSION = 3
 LIBRARY_DATABASE_NAME = "library.sqlite3"
 _INITIALIZE_LOCK = threading.Lock()
 _INITIALIZED_PATHS: set[Path] = set()
@@ -133,6 +133,27 @@ CREATE TABLE library_project_links (
     PRIMARY KEY(work_id, project_id)
 );
 
+CREATE TABLE knowledge_nodes (
+    node_id TEXT PRIMARY KEY,
+    node_type TEXT NOT NULL,
+    label TEXT NOT NULL,
+    normalized_label TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(node_type, normalized_label)
+);
+
+CREATE TABLE knowledge_edges (
+    edge_id TEXT PRIMARY KEY,
+    source_node_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id),
+    relation TEXT NOT NULL,
+    target_node_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id),
+    work_id TEXT REFERENCES works(work_id),
+    origin TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_node_id, relation, target_node_id, work_id)
+);
+
 CREATE VIRTUAL TABLE work_search USING fts5(
     work_id UNINDEXED,
     title,
@@ -148,6 +169,9 @@ CREATE INDEX idx_library_files_work ON library_files(work_id);
 CREATE INDEX idx_file_versions_file ON file_versions(file_id, discovered_at);
 CREATE INDEX idx_file_versions_sha ON file_versions(sha256);
 CREATE INDEX idx_scan_candidates_session ON scan_candidates(session_id, status);
+CREATE INDEX idx_knowledge_edges_work ON knowledge_edges(work_id);
+CREATE INDEX idx_knowledge_edges_source ON knowledge_edges(source_node_id);
+CREATE INDEX idx_knowledge_edges_target ON knowledge_edges(target_node_id);
 """
 
 
@@ -198,6 +222,24 @@ def initialize_library(library_root: Path) -> None:
                     )
                 if "completed_at" not in columns:
                     connection.execute("ALTER TABLE scan_sessions ADD COLUMN completed_at TEXT")
+                connection.executescript("""
+                    CREATE TABLE IF NOT EXISTS knowledge_nodes (
+                        node_id TEXT PRIMARY KEY, node_type TEXT NOT NULL, label TEXT NOT NULL,
+                        normalized_label TEXT NOT NULL, origin TEXT NOT NULL, created_at TEXT NOT NULL,
+                        UNIQUE(node_type, normalized_label)
+                    );
+                    CREATE TABLE IF NOT EXISTS knowledge_edges (
+                        edge_id TEXT PRIMARY KEY,
+                        source_node_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id),
+                        relation TEXT NOT NULL,
+                        target_node_id TEXT NOT NULL REFERENCES knowledge_nodes(node_id),
+                        work_id TEXT REFERENCES works(work_id), origin TEXT NOT NULL, created_at TEXT NOT NULL,
+                        UNIQUE(source_node_id, relation, target_node_id, work_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_knowledge_edges_work ON knowledge_edges(work_id);
+                    CREATE INDEX IF NOT EXISTS idx_knowledge_edges_source ON knowledge_edges(source_node_id);
+                    CREATE INDEX IF NOT EXISTS idx_knowledge_edges_target ON knowledge_edges(target_node_id);
+                """)
                 current_version = connection.execute(
                     "SELECT version FROM library_meta LIMIT 1"
                 ).fetchone()

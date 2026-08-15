@@ -5,7 +5,7 @@
 
 ## 1. 产品定义
 
-Historical Research Workbench 的目标形态不是 PDF 阅读器、论文生成器或固定步骤的表单系统，
+问津（内部兼容名 Historical Research Workbench）的目标形态不是 PDF 阅读器、论文生成器或固定步骤的表单系统，
 而是一个面向历史研究的、本地优先且可自选模型的 **Research Codex**。
 
 它保留 Codex 类产品的核心体验：

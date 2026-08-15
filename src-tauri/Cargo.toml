@@ -1,8 +1,8 @@
 [package]
 name = "historical-research-workbench"
-version = "1.0.0-dev.1"
-description = "Local-first historical research workbench"
-authors = ["Historical Research Workbench"]
+version = "0.1.0"
+description = "Wenjin local-first humanities and social science research workbench"
+authors = ["Wenjin contributors"]
 edition = "2021"
 
 [build-dependencies]

@@ -1,9 +1,10 @@
 const frame = document.getElementById('workbench');
 const startup = document.getElementById('startup');
-const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word']);
+const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word', 'open_data_directory', 'open_sidecar_log']);
 let workbenchOrigin = '';
 let frameRetry = 0;
 const invoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
+const showFailure=(message)=>{document.getElementById('status').textContent=message;document.querySelector('.bar').style.display='none';document.querySelector('.actions').hidden=false;};
 
 window.startWorkbench = (url) => {
   workbenchOrigin = new URL(url).origin;
@@ -13,8 +14,7 @@ window.startWorkbench = (url) => {
     if (frameRetry) {
       window.clearInterval(frameRetry);
       frameRetry = 0;
-      document.getElementById('status').textContent = '本地研究服务没有在一分钟内启动，请查看应用数据目录中的日志。';
-      document.querySelector('.bar').style.display = 'none';
+      showFailure('本地研究服务没有在一分钟内启动。可以重试，或直接打开启动日志查看原因。');
     }
   }, 60000);
 };
@@ -22,8 +22,7 @@ window.startWorkbench = (url) => {
 const waitForWorkbench = async () => {
   document.getElementById('status').textContent = '桌面桥接已启动，正在等待本地研究服务……';
   if (!invoke) {
-    document.getElementById('status').textContent = '桌面桥接没有加载，请重新安装工作台。';
-    document.querySelector('.bar').style.display = 'none';
+    showFailure('桌面桥接没有加载，请重新安装问津。');
     return;
   }
   for (let attempt = 0; attempt < 600; attempt += 1) {
@@ -34,15 +33,17 @@ const waitForWorkbench = async () => {
         return;
       }
     } catch (error) {
-      document.getElementById('status').textContent = `桌面桥接启动失败：${String(error)}`;
-      document.querySelector('.bar').style.display = 'none';
+      showFailure(`桌面桥接启动失败：${String(error)}`);
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  document.getElementById('status').textContent = '本地研究服务没有在一分钟内启动，请查看应用数据目录中的日志。';
-  document.querySelector('.bar').style.display = 'none';
+  showFailure('本地研究服务没有在一分钟内启动。可以重试，或直接打开启动日志查看原因。');
 };
+
+document.getElementById('retry').onclick=()=>window.location.reload();
+document.getElementById('openLog').onclick=()=>invoke('open_sidecar_log').catch((error)=>showFailure(`无法打开日志：${String(error)}`));
+document.getElementById('openData').onclick=()=>invoke('open_data_directory').catch((error)=>showFailure(`无法打开数据目录：${String(error)}`));
 
 waitForWorkbench();
 

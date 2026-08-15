@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 import certifi
 
 from .db import connect, utc_now
+from .agent_profile import agent_profile_prompt
 from .authoring import (
     authoring_state,
     create_historiography_entry,
@@ -33,6 +34,7 @@ from .research_events import create_event_candidates, event_coverage, event_stat
 from .scholarship import research_state
 from .service import list_sources, project_status, source_view
 from .skill_registry import get_skill
+from .model_settings import ROLES
 
 
 MAIN_ROLE = "main_reasoning"
@@ -605,6 +607,104 @@ def _resolve_skill_invocation(content: str) -> tuple[str, dict[str, Any] | None,
     return request_text, snapshot, skill_context
 
 
+def _role_profile(role: str) -> ModelProfile | None:
+    definition = ROLES.get(role)
+    if not definition:
+        return None
+    prefix = definition["prefix"]
+    provider = os.environ.get(f"{prefix}_PROVIDER", "").strip().lower()
+    model = os.environ.get(f"{prefix}_MODEL", "").strip()
+    endpoint = os.environ.get(f"{prefix}_BASE_URL", "").strip()
+    api_key = os.environ.get(f"{prefix}_API_KEY", "").strip()
+    if provider not in {"ollama", "openai_compatible"} or not model or not endpoint:
+        return None
+    if provider == "openai_compatible" and not api_key:
+        return None
+    return ModelProfile(
+        profile_id=f"role-{role}", provider=provider, model=model, endpoint=endpoint,
+        capabilities=("text",), credential_ref="environment", status="available",
+        api_key=api_key,
+        timeout_seconds=int(os.environ.get(f"{prefix}_TIMEOUT_SECONDS", "90") or "90"),
+    )
+
+
+def _plain_model_call(profile: ModelProfile, messages: list[dict[str, str]]) -> str:
+    if profile.provider == "openai_compatible":
+        endpoint = profile.endpoint.rstrip("/")
+        if not endpoint.endswith("/chat/completions"):
+            endpoint += "/chat/completions"
+        raw = _post_json(
+            endpoint, {"model": profile.model, "temperature": 0, "messages": messages},
+            {"Authorization": f"Bearer {profile.api_key}"}, profile.timeout_seconds,
+        )
+        content = raw.get("choices", [{}])[0].get("message", {}).get("content", "")
+    elif profile.provider == "ollama":
+        endpoint = profile.endpoint.rstrip("/")
+        if not endpoint.endswith("/api/chat"):
+            endpoint += "/api/chat"
+        raw = _post_json(
+            endpoint, {"model": profile.model, "stream": False, "messages": messages,
+                       "options": {"temperature": 0}}, {}, profile.timeout_seconds,
+        )
+        content = raw.get("message", {}).get("content", "")
+    else:
+        raise ValueError(f"unsupported advisory provider: {profile.provider}")
+    if not isinstance(content, str) or not content.strip():
+        raise EmptyModelContentError("advisory model returned empty content")
+    return content.strip()
+
+
+def _moa_guidance(
+    objective: str,
+    history: list[dict[str, str]],
+    observations: list[dict[str, Any]] | None = None,
+) -> list[dict[str, str]]:
+    if os.environ.get("HRW_MOA_ENABLED") != "1":
+        return []
+    roles = list(dict.fromkeys(
+        value.strip() for value in os.environ.get("HRW_MOA_REFERENCE_ROLES", "").split(",")
+        if value.strip() and value.strip() != MAIN_ROLE
+    ))
+    results: list[dict[str, str]] = []
+    for role in roles:
+        profile = _role_profile(role)
+        if profile is None:
+            results.append({"role": role, "error": "role unavailable"})
+            continue
+        messages = [{
+            "role": "system",
+            "content": (
+                "You are a private advisory model for a humanities research agent. "
+                "Analyze the request, identify evidence risks, useful research moves and competing interpretations. "
+                "Do not call tools, do not address the researcher, and do not claim that an action was executed."
+            ),
+        }]
+        messages.extend(history[-6:])
+        messages.append({"role": "user", "content": objective})
+        if observations:
+            messages.append({
+                "role": "user",
+                "content": "Current bounded tool receipts:\n" + _json(observations[-6:]),
+            })
+        try:
+            results.append({"role": role, "content": _plain_model_call(profile, messages)[:12000]})
+        except Exception as error:
+            results.append({"role": role, "error": str(error)[:500]})
+    return results
+
+
+def _format_moa_guidance(items: list[dict[str, str]]) -> str:
+    usable = [item for item in items if item.get("content")]
+    if not usable:
+        return ""
+    return (
+        "PRIVATE_MOA_ADVICE\n"
+        "These are fallible advisory views, not tool results or source evidence. Compare them, then make your own "
+        "decision. You remain the only acting model and the only model allowed to call tools.\n"
+        + "\n\n".join(f"[{item['role']}]\n{item['content']}" for item in usable)
+    )
+
+
 def send_message(project_root: Path, thread_id: str, content: str,
                  context: dict[str, Any] | None = None,
                  planning_mode: str = "guided_execution") -> dict[str, Any]:
@@ -633,6 +733,13 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "history_truncated": history_receipt["truncated"],
         "history_character_count": history_receipt["character_count"],
         "active_skill": active_skill,
+        "moa": {
+            "enabled": os.environ.get("HRW_MOA_ENABLED") == "1",
+            "reference_roles": [
+                value for value in os.environ.get("HRW_MOA_REFERENCE_ROLES", "").split(",") if value
+            ],
+            "fanout": os.environ.get("HRW_MOA_FANOUT", "user_turn"),
+        },
     }
     with connect(project_root) as connection:
         thread = connection.execute("SELECT thread_id FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
@@ -708,6 +815,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         )
         if skill_context:
             design_context += "\n\n" + skill_context
+        design_context += "\n\n" + agent_profile_prompt(project_root)
         _advance_run(project_root, run_id, objective, profile, design_context, history)
     except Exception as error:
         _fail_run(project_root, run_id, error)
@@ -718,6 +826,15 @@ def send_message(project_root: Path, thread_id: str, content: str,
 def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile,
                  design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
     observations: list[dict[str, Any]] = []
+    moa_fanout = os.environ.get("HRW_MOA_FANOUT", "user_turn")
+    moa_guidance = _moa_guidance(objective, history or [])
+    if moa_guidance:
+        with connect(project_root) as connection:
+            _append_run_event(connection, run_id, "moa_advice_ready", {
+                "reference_roles": [item["role"] for item in moa_guidance],
+                "failed_roles": [item["role"] for item in moa_guidance if item.get("error")],
+                "fanout": moa_fanout,
+            })
     empty_content_retries = 0
     action_format_retries = 0
     internal_transcript_retries = 0
@@ -725,9 +842,13 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     missing_tool_retries = 0
     for _ in range(MAX_TOOL_CALLS + 1):
         remaining = MAX_TOOL_CALLS - len(observations)
+        if observations and moa_fanout == "per_iteration":
+            moa_guidance = _moa_guidance(objective, history or [], observations)
+        private_guidance = _format_moa_guidance(moa_guidance)
         try:
             action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
-                profile, objective, observations, remaining, design_context, history
+                profile, objective, observations, remaining,
+                design_context + ("\n\n" + private_guidance if private_guidance else ""), history
             )
         except TimeoutError as error:
             _fail_run(project_root, run_id, error)

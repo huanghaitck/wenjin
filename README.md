@@ -1,10 +1,8 @@
-# Historical Research Workbench
+# 问津｜人文社会科学研究工作台
 
-Local-first, model-selectable Research Codex for auditable historical research projects.
+问津是一个本地优先、模型可选、面向人文社会科学完整研究过程的 Agent 工作台。它把研究对话、图书馆、原页清洗、联网检索、证据固定、学术史、写作、Word 往返、Skills、CLI 与 MCP 放在同一套可审计的项目数据上；研究者保留来源采用、证据冻结和正式写作的最终决定权。
 
-The product direction is a persistent Agent workspace in which conversations can use page-aware PDF,
-retrieval, evidence, scholarly dialogue, writing and memory tools without bypassing historical-source
-verification. See [the product baseline](docs/RESEARCH_CODEX_PRODUCT.md),
+0.1 的产品与实现边界见 [ADR 0016](docs/adr/0016-wenjin-0.1-agent-platform.md)。既有内部包名与数据库标识继续保留，避免破坏已有项目。另见 [the product baseline](docs/RESEARCH_CODEX_PRODUCT.md),
 [V1 architecture](docs/ARCHITECTURE_V1.md), [中文使用手册](docs/USER_MANUAL_ZH.md) and
 [roadmap](docs/ROADMAP.md).
 
@@ -20,7 +18,16 @@ conda env config vars set --prefix D:\AI_Workflows\conda-envs\historical-researc
 
 ## Current status
 
-`D5_IMPLEMENTATION_COMPLETE_TEMPLATE_RECHECK_PENDING`
+`WENJIN_0.1_INTEGRATION_AND_DESKTOP_ACCEPTANCE`
+
+当前 0.1 主线包括：
+
+- 可版本化的研究人格（Soul）与不可覆盖的证据/审批 Harness；
+- 主模型、七类辅助模型角色、Ollama 与 OpenAI 兼容服务商预设、Windows 凭据存储及可选 MoA；
+- 研究图书馆的作品/版本/文件分层、后台盘点、全文检索、书架迁移和书目知识图谱；
+- 研究对话、Skills、受控浏览器、来源原页、证据冻结、文章工作台、Word 往返和多角色评审；
+- 中英文界面切换；`wenjin`/`hrw` CLI；本地只读 MCP server；
+- Tauri 桌面壳、打包侧车健康检查、启动日志和数据目录诊断入口。
 
 M1 provides the project state kernel. M2 adds:
 
@@ -99,7 +106,13 @@ conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench pyth
 ## CLI
 
 ```powershell
-conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench hrw --help
+conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench wenjin --help
+```
+
+Expose the current project to another local MCP client:
+
+```powershell
+conda run --prefix D:\AI_Workflows\conda-envs\historical-research-workbench wenjin mcp-server D:\research\my-project --library-root D:\research\historian-library
 ```
 
 Register and process a PDF:

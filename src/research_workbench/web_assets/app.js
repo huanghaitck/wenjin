@@ -10,8 +10,21 @@ const state = {
   eventFreezeDraft: [],
   historiographyEntryIds: JSON.parse(sessionStorage.getItem('hrwHistoriographyEntryIds') || '{}'),
   planningMode: sessionStorage.getItem('hrwPlanningMode') || 'independent_planning',
+  language: localStorage.getItem('wenjinLanguage') || 'zh-CN',
+  editorZoom:Number(localStorage.getItem('wenjinEditorZoom')||1), editorDirty:false, readingMode:false,
 };
 const $ = (id) => document.getElementById(id);
+const translations={
+  'zh-CN':{nav_agent:'研究对话',nav_library:'研究图书馆',nav_article:'文章工作台',nav_skills:'技能与插件',nav_settings:'AI 与 Agent',tagline:'人文社会科学研究工作台 · 研究者保留证据与写作决定权',settings:'AI 与 Agent',settings_lead:'主模型、辅助模型、MoA、研究人格、记忆与连接器'},
+  en:{nav_agent:'Research chat',nav_library:'Research library',nav_article:'Writing studio',nav_skills:'Skills & plugins',nav_settings:'AI & Agent',tagline:'Humanities and social science research workbench · researchers retain evidentiary and writing decisions',settings:'AI & Agent',settings_lead:'Main and auxiliary models, MoA, research persona, memory, and connectors'},
+};
+function applyLanguage(){
+  const strings=translations[state.language]||translations['zh-CN'];
+  for(const node of document.querySelectorAll('[data-i18n]'))node.textContent=strings[node.dataset.i18n]||node.textContent;
+  $('brandTagline').textContent=strings.tagline;$('settingsHeading').textContent=strings.settings;$('settingsLead').textContent=strings.settings_lead;
+  $('languageToggle').textContent=state.language==='zh-CN'?'EN':'中文';
+  document.documentElement.lang=state.language;
+}
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
@@ -234,6 +247,21 @@ function renderScan() {
   next.onclick=()=>loadLibraryScan(scan.session_id,(scan.page || 1)+1).catch((error)=>notice(error.message,true));
   pages.append(previous,position,next);summary.append(pages);
   $('approveCandidates').hidden = scan.status==='scanning' || scan.status==='failed' || selectable === 0;
+}
+
+async function toggleLibraryGraph(){
+  const graph=$('libraryGraph'),list=$('workList'),button=$('showLibraryGraph');
+  if(!graph.hidden){graph.hidden=true;list.hidden=false;button.textContent='知识图谱';return;}
+  try{
+    const data=await request(`/api/library/graph?query=${encodeURIComponent($('libraryQuery').value.trim())}&limit=200`);
+    graph.replaceChildren();const byId=Object.fromEntries(data.nodes.map((node)=>[node.node_id,node]));
+    const receipt=document.createElement('p');receipt.className='boundary-note';receipt.textContent=`${data.node_count} 个节点 · ${data.edge_count} 条关系。当前图谱只收录书目、作者、年代、出版社、书架和人工标签，不把模型推断冒充事实。`;graph.append(receipt);
+    const nodes=document.createElement('section');nodes.className='graph-nodes';
+    for(const node of data.nodes){const chip=document.createElement('span');chip.className=`graph-node graph-${node.node_type}`;chip.textContent=`${node.label} · ${node.node_type}`;nodes.append(chip);}graph.append(nodes);
+    const relations=document.createElement('section');relations.className='graph-relations';
+    for(const edge of data.edges){const row=document.createElement('p');row.textContent=`${byId[edge.source_node_id]?.label||edge.source_node_id}  —${edge.relation}→  ${byId[edge.target_node_id]?.label||edge.target_node_id}`;relations.append(row);}graph.append(relations);
+    graph.hidden=false;list.hidden=true;button.textContent='返回书目';notice('知识图谱已按当前检索范围生成。');
+  }catch(error){notice(error.message,true);}
 }
 
 let libraryScanPollTimer=0;
@@ -950,6 +978,7 @@ function documentSection() {
 
 function renderDocumentCanvas() {
   const canvas = $('documentCanvas'); canvas.replaceChildren();
+  canvas.style.fontSize=`${16*state.editorZoom}px`;state.editorDirty=false;
   const section = documentSection();
   if (!section) {
     canvas.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'选择稿件章节后开始编辑。'}));
@@ -1980,37 +2009,68 @@ function renderSettings() {
   const container = $('settingsContent'); if (!container || !state.snapshot) return; container.replaceChildren();
   const project = state.snapshot.project || {}; const caps = state.capabilities || {};
   const runtime=state.snapshot.runtime||{};
-  container.append(card('版本与项目', `Historical Research Workbench ${project.app_version || '—'} · Project schema ${project.schema_version || '—'}\n客户端：${runtime.mode||'browser'}${runtime.desktop_build ? ` · build ${runtime.desktop_build}` : ''} · 原生桥接：${state.nativeBridge?`已就绪 ${state.nativeBridge}`:'不可用'}\n${project.title || ''} · ${project.project_id || ''}\n项目文件保持本地，原始材料只读。`));
-  for(const item of state.modelSettings?.roles||[]){
-    const panel=card(item.label, `${item.provider==='disabled'?'尚未启用':`${item.provider} / ${item.model}`} · 密钥：${item.has_secret?'已保存到 Windows 凭据管理器':'未保存'}`);
+  const english=state.language==='en';
+  container.append(card(english?'Version and project':'版本与项目', `Wenjin ${project.app_version || '—'} · Project schema ${project.schema_version || '—'}\n${english?'Client':'客户端'}：${runtime.mode||'browser'}${runtime.desktop_build ? ` · build ${runtime.desktop_build}` : ''} · ${english?'native bridge':'原生桥接'}：${state.nativeBridge?`${english?'ready':'已就绪'} ${state.nativeBridge}`:english?'unavailable':'不可用'}\n${project.title || ''} · ${project.project_id || ''}\n${english?'Project data remains local; original files stay read-only.':'项目文件保持本地，原始材料只读。'}`));
+
+  const profile=state.snapshot.agent_profile||{};
+  const soul=card(english?'Research persona':'研究人格（Soul）',english?'This editable profile controls collaboration and prose. It cannot override evidence, approval, privacy, or version rules.':'可编辑人格决定协作方式与文风，但不能覆盖证据、审批、隐私和版本规则。');
+  const soulForm=document.createElement('section');soulForm.className='context-form agent-profile-form';
+  const profileFields=[['display_name',english?'Name':'名称'],['description',english?'Purpose':'定位'],['address_user',english?'Address the researcher as':'如何称呼研究者'],['disciplinary_orientation',english?'Disciplinary orientation':'学科取向'],['working_style',english?'Working style':'工作方式'],['writing_style',english?'Writing style':'写作要求'],['initiative',english?'Initiative boundary':'主动性边界'],['custom_instructions',english?'Additional instructions':'研究者补充指令']];
+  for(const [key,label] of profileFields){const input=key==='display_name'||key==='address_user'?document.createElement('input'):document.createElement('textarea');input.dataset.profileField=key;input.value=profile[key]||'';const field=document.createElement('label');field.textContent=label;field.append(input);soulForm.append(field);}
+  soulForm.append(actionButton(english?'Save a versioned persona':'保存为新版人格',async()=>{try{const payload={};for(const input of soulForm.querySelectorAll('[data-profile-field]'))payload[input.dataset.profileField]=input.value;const result=await request('/api/agent-profile/save',localSessionOptions(payload));state.snapshot.agent_profile=result.agent_profile;renderSettings();notice(english?'Research persona saved and will apply to new turns.':'研究人格已保存；新对话轮次会记录并使用这一版本。');}catch(error){notice(error.message,true);}},true));
+  soul.append(soulForm,Object.assign(document.createElement('small'),{textContent:`${english?'Immutable harness':'不可覆盖的 Harness'}：${profile.harness_constitution||''}`}));container.append(soul);
+
+  const presets=state.modelSettings?.provider_presets||[];
+  const roles=state.modelSettings?.roles||[];
+  const renderRole=(item)=>{
+    const panel=card(english?(item.label_en||item.label):item.label, `${item.provider==='disabled'?(english?'Disabled':'尚未启用'):item.provider==='auto'?(english?'Automatic: follows the main model':'自动：跟随主模型'):`${item.provider} / ${item.model}`} · ${english?'credential':'密钥'}：${item.has_secret?(english?'saved in Windows Credential Manager':'已保存到 Windows 凭据管理器'):(english?'not stored':'未保存')}`);
     const form=document.createElement('section');form.className='context-form model-role-form';
     const provider=document.createElement('select');
-    provider.append(new Option('未启用','disabled'),new Option('本地 Ollama','ollama'),new Option('OpenAI 兼容接口','openai_compatible'));provider.value=item.provider;
-    const providerLabel=document.createElement('label');providerLabel.textContent='接口类型';providerLabel.append(provider);
+    if(item.kind==='auxiliary')provider.append(new Option(english?'Automatic (main model)':'自动（跟随主模型）','auto'));
+    provider.append(new Option(english?'Disabled':'未启用','disabled'),new Option('Ollama','ollama'),new Option(english?'OpenAI-compatible API':'OpenAI 兼容接口','openai_compatible'));provider.value=item.provider;
+    const providerLabel=document.createElement('label');providerLabel.textContent=english?'Interface type':'接口类型';providerLabel.append(provider);
+    const preset=document.createElement('select');preset.append(new Option(english?'Choose provider preset':'选择服务商预设',''));
+    for(const value of presets)preset.append(new Option(value.label,value.id));preset.value=item.preset_id||'';
+    const presetLabel=document.createElement('label');presetLabel.textContent=english?'Provider preset':'服务商预设';presetLabel.append(preset);
     const model=document.createElement('input');model.value=item.model;model.placeholder='例如 qwen3.5:9b 或 glm-4.6v-flash';
-    const modelLabel=document.createElement('label');modelLabel.textContent='模型名称';modelLabel.append(model);
+    const modelLabel=document.createElement('label');modelLabel.textContent=english?'Model ID':'模型名称';modelLabel.append(model);
     const baseUrl=document.createElement('input');baseUrl.value=item.base_url;baseUrl.placeholder='例如 http://127.0.0.1:11434';
-    const urlLabel=document.createElement('label');urlLabel.textContent='接口地址';urlLabel.append(baseUrl);
+    const urlLabel=document.createElement('label');urlLabel.textContent='Base URL';urlLabel.append(baseUrl);
     const apiKey=document.createElement('input');apiKey.type='password';apiKey.autocomplete='new-password';apiKey.placeholder=item.has_secret?'已安全保存；留空表示不更换':'远程接口需要，Ollama 留空';
     const keyLabel=document.createElement('label');keyLabel.textContent='API Key';keyLabel.append(apiKey);
     const timeout=document.createElement('input');timeout.type='number';timeout.min='5';timeout.max='600';timeout.value=item.timeout_seconds;
-    const timeoutLabel=document.createElement('label');timeoutLabel.textContent='超时（秒）';timeoutLabel.append(timeout);
+    const timeoutLabel=document.createElement('label');timeoutLabel.textContent=english?'Timeout (seconds)':'超时（秒）';timeoutLabel.append(timeout);
+    const contextWindow=document.createElement('input');contextWindow.type='number';contextWindow.min='0';contextWindow.value=item.context_window||0;
+    const contextLabel=document.createElement('label');contextLabel.textContent=english?'Context window (tokens, 0 = auto)':'上下文窗口（token，0 为自动）';contextLabel.append(contextWindow);
     const clear=document.createElement('input');clear.type='checkbox';clear.style.minHeight='auto';
-    const clearLabel=document.createElement('label');clearLabel.append(clear,document.createTextNode(' 清除已经保存的密钥'));
+    const clearLabel=document.createElement('label');clearLabel.append(clear,document.createTextNode(english?' Clear saved credential':' 清除已经保存的密钥'));
+    preset.onchange=()=>{const found=presets.find((value)=>value.id===preset.value);if(found){provider.value=found.provider;baseUrl.value=found.base_url;}};
     const row=document.createElement('div');row.className='row';
-    row.append(actionButton('保存并应用',async()=>{
+    row.append(actionButton(english?'Save and apply':'保存并应用',async()=>{
       try{
-        const result=await request('/api/model-settings/save',localSessionOptions({role:item.role,provider:provider.value,model:model.value,base_url:baseUrl.value,api_key:apiKey.value,clear_secret:clear.checked,timeout_seconds:Number(timeout.value)}));
+        const result=await request('/api/model-settings/save',localSessionOptions({role:item.role,provider:provider.value,model:model.value,base_url:baseUrl.value,api_key:apiKey.value,clear_secret:clear.checked,timeout_seconds:Number(timeout.value),context_window:Number(contextWindow.value),preset_id:preset.value||'custom'}));
         state.modelSettings=result.settings;await loadSnapshot();notice(`${item.label}已经保存；之后的新任务会记录实际模型快照。`);
       }catch(error){notice(error.message,true);}
-    },true),actionButton('测试连接',async()=>{
+    },true),actionButton(english?'Test connection':'测试连接',async()=>{
       try{const result=await request('/api/model-settings/probe',localSessionOptions({role:item.role}));notice(result.detail,!result.available);}catch(error){notice(error.message,true);}
     }));
-    form.append(providerLabel,modelLabel,urlLabel,keyLabel,timeoutLabel,clearLabel,row);panel.append(form);container.append(panel);
-  }
-  const models = card('当前生效快照', '主推理模型可以在研究对话中选择；视觉 OCR 与翻译是辅助角色，输出仍须人工验收。');
+    form.append(presetLabel,providerLabel,modelLabel,urlLabel,keyLabel,timeoutLabel,contextLabel,clearLabel,row);panel.append(form);return panel;
+  };
+  const main=roles.find((item)=>item.role==='main_reasoning');if(main)container.append(renderRole(main));
+  const aux=card(english?'Auxiliary model routing':'辅助模型路由',english?'Leave a task on Automatic to reuse the main model, or assign a specialist model.':'任务保持“自动”会复用主模型，也可分别指定视觉、翻译、联网、压缩、命名和评审模型。');
+  for(const item of roles.filter((value)=>value.role!=='main_reasoning')){const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=`${english?(item.label_en||item.label):item.label} · ${item.provider==='auto'?(english?'Auto':'自动'):item.model||item.provider}`;details.append(summary,renderRole(item));aux.append(details);}container.append(aux);
+
+  const moaState=state.modelSettings?.moa||{};const moa=card('MoA · Mixture of Agents',english?'Reference models advise independently; only the main model may act or call tools. A failed adviser does not abort the run.':'参考模型独立给出建议，只有主模型能够行动和调用工具；单个参考模型失败不会中断任务。');
+  const moaEnabled=document.createElement('input');moaEnabled.type='checkbox';moaEnabled.checked=Boolean(moaState.enabled);const moaEnabledLabel=document.createElement('label');moaEnabledLabel.append(moaEnabled,document.createTextNode(english?' Enable MoA':' 启用 MoA'));
+  const refs=document.createElement('section');refs.className='checkbox-grid';for(const role of roles.filter((value)=>value.kind==='auxiliary')){const box=document.createElement('input');box.type='checkbox';box.value=role.role;box.checked=(moaState.reference_roles||[]).includes(role.role);const label=document.createElement('label');label.append(box,document.createTextNode(` ${english?(role.label_en||role.label):role.label}`));refs.append(label);}
+  const fanout=document.createElement('select');fanout.append(new Option(english?'Once per user turn':'每轮用户消息一次','user_turn'),new Option(english?'Every agent iteration':'每次 Agent 循环','per_iteration'));fanout.value=moaState.fanout||'user_turn';
+  moa.append(moaEnabledLabel,refs,fanout,actionButton(english?'Save MoA preset':'保存 MoA 方案',async()=>{try{const reference_roles=[...refs.querySelectorAll('input:checked')].map((node)=>node.value);const result=await request('/api/model-settings/moa',localSessionOptions({enabled:moaEnabled.checked,reference_roles,fanout:fanout.value}));state.modelSettings=result.settings;renderSettings();notice(english?'MoA preset saved.':'MoA 方案已保存。');}catch(error){notice(error.message,true);}},true));container.append(moa);
+
+  const models = card(english?'Effective runtime':'当前生效快照', english?'Every run records the concrete models and active persona used.':'每次运行都会固定实际使用的模型与研究人格版本。');
   for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? '当前主模型' : profile.status} · ${profile.provider} / ${profile.model} · ${profile.endpoint||'本机规则'}`}));
   models.append(Object.assign(document.createElement('p'), {textContent:`视觉辅助：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : '未配置'}\n翻译辅助：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : '未配置'}`})); container.append(models);
+  const memory=card(english?'Memory layers':'记忆分层',english?'Conversation state, project knowledge, reusable historical knowledge, and engineering memory remain separate.':'对话状态、项目知识、可复用史学知识与工程记忆分开保存，不把所有信息塞进同一上下文。');
+  memory.append(Object.assign(document.createElement('p'),{textContent:english?'1. Thread memory: current discussion and run receipts\n2. Project knowledge: sources, claims, evidence, manuscripts\n3. Historical memory: only reviewed reusable findings\n4. Engineering memory: tools, failures, and runbooks':'1. 对话记忆：当前讨论与运行回执\n2. 项目知识：来源、主张、证据与稿件\n3. 史学长期记忆：仅提升经复核、可复用的研究判断\n4. 工程记忆：工具、故障与运行方法'}));container.append(memory);
   const skillItems=state.snapshot.library?.skills||[];
   const skills = card('用户可用 Skills', '只展示能产生明确研究产物的入口；具体页面只会列出与当前动作兼容的技能。');
   for (const skill of skillItems.filter((item)=>item.placement==='user_action')) skills.append(Object.assign(document.createElement('p'), {textContent:`${skill.name} · ${skill.compatible_actions.join('、')} · ${skill.sha256.slice(0,12)}…\n${skill.description}`})); container.append(skills);
@@ -2021,6 +2081,7 @@ function renderSettings() {
   container.append(card('程序级硬契约','原页锚点、来源资格、证据状态、冻结包、版本指纹和校验器由程序强制执行，不依赖模型是否记得某条 Skill。'));
   const connectors = card('研究连接器', '公开数据库可有界检索；已登录数据库只能在用户合法权限内操作。');
   for (const capability of caps.research_connectors || []) connectors.append(Object.assign(document.createElement('p'), {textContent:`${capability.provider} · ${capability.available ? '可用' : '未配置'} · ${capability.mode}${capability.missing?.length ? ` · 缺少 ${capability.missing.join('、')}` : ''}`})); container.append(connectors);
+  container.append(card('MCP 与 CLI', `${english?'This project can be exposed as a local read-only MCP server and administered from the command line.':'当前项目可以作为本地只读 MCP 服务供其他 Agent 调用，也能通过命令行管理。'}\nwenjin mcp-server "${project.project_root||'<project>'}"\nwenjin --help\n${english?'MCP tools return qualified sources, library results, manuscript structure, and project status; they do not bypass write approvals.':'MCP 工具返回来源资格、图书馆结果、稿件结构和项目状态，不绕过写入审批。'}`));
   container.append(card('隐私与人工门禁', '不保存 Cookie、密码、API Key 或未脱敏网络日志。远程模型只接收用户明确选择的页块、章节和选区。证据冻结、正文采用与记忆提升都必须由人决定。'));
 }
 
@@ -2141,6 +2202,7 @@ $('agentMode').onclick = () => setMode('agent');
 $('articleMode').onclick = () => { setMode('article'); renderAuthoring(); };
 $('skillsMode').onclick = () => setMode('skills');
 $('settingsMode').onclick = () => setMode('settings');
+$('languageToggle').onclick=()=>{state.language=state.language==='zh-CN'?'en':'zh-CN';localStorage.setItem('wenjinLanguage',state.language);applyLanguage();renderSettings();};
 $('skillQuery').oninput=renderSkillCatalog;
 $('messageInput').oninput=renderSlashMenu;
 $('openSourceRepair').onclick = async () => {
@@ -2170,7 +2232,7 @@ $('importDocx').onclick = async () => {
   } catch (error) { notice(error.message, true); }
 };
 $('saveDocument').onclick = async () => {
-  try { captureDocumentSection(); state.document = await request('/api/manuscript/document/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,document:state.document.document})}); await refreshAuthoring('结构化稿件已保存为新修订；旧修订保持不变。'); }
+  try { captureDocumentSection(); state.document = await request('/api/manuscript/document/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({manuscript_id:state.manuscriptId,document:state.document.document})}); state.editorDirty=false;await refreshAuthoring('结构化稿件已保存为新修订；旧修订保持不变。'); }
   catch (error) { notice(error.message, true); }
 };
 async function exportCurrentDocument(format) {
@@ -2233,6 +2295,10 @@ $('paragraphButton').onclick = () => document.execCommand('formatBlock', false, 
 $('quoteButton').onclick = () => document.execCommand('formatBlock', false, 'blockquote');
 $('documentCanvas').onmouseup = () => { captureWritingSelection(); currentSelectionContext(); $('writingSelectionOnly')?.dispatchEvent(new Event('change')); };
 $('documentCanvas').onkeyup = () => { captureWritingSelection(); currentSelectionContext(); $('writingSelectionOnly')?.dispatchEvent(new Event('change')); };
+$('documentCanvas').oninput=()=>{state.editorDirty=true;$('manuscriptStats').textContent=`${$('manuscriptStats').textContent.replace(/ · 有未保存修改$/,'')} · 有未保存修改`;};
+$('editorZoomOut').onclick=()=>{state.editorZoom=Math.max(.75,state.editorZoom-.1);localStorage.setItem('wenjinEditorZoom',state.editorZoom);$('documentCanvas').style.fontSize=`${16*state.editorZoom}px`;};
+$('editorZoomIn').onclick=()=>{state.editorZoom=Math.min(1.6,state.editorZoom+.1);localStorage.setItem('wenjinEditorZoom',state.editorZoom);$('documentCanvas').style.fontSize=`${16*state.editorZoom}px`;};
+$('readingMode').onclick=()=>{state.readingMode=!state.readingMode;$('documentCanvas').contentEditable=state.readingMode?'false':'true';$('articleWorkbench').classList.toggle('reading-focus',state.readingMode);$('readingMode').textContent=state.readingMode?'退出阅读':'阅读模式';};
 $('contextTabs').onclick = (event) => {
   const button = event.target.closest('button[data-context]');
   if (!button) return; state.contextMode = button.dataset.context; renderContext();
@@ -2316,6 +2382,7 @@ $('modelProfile').onchange = async (event) => {
     await refreshAgentSnapshot(); notice('主模型配置已更新；只影响之后的新 Run。');
   } catch (error) { notice(error.message, true); }
 };
+$('showLibraryGraph').onclick=toggleLibraryGraph;
 $('planningMode').onchange = (event) => {
   state.planningMode = event.target.value;
   sessionStorage.setItem('hrwPlanningMode', state.planningMode);
@@ -2377,5 +2444,6 @@ $('controlledBrowser').onclick = async () => {
 $('externalBrowser').onclick = () => { const url=$('browserAddress').value.trim(); try { new URL(url); window.open(url,'_blank','noopener'); } catch { notice('请输入完整的网址。',true); } };
 
 const initialMode = new URLSearchParams(window.location.search).get('mode');
+applyLanguage();
 setMode(['agent', 'article', 'library', 'skills', 'settings', 'browser', 'source'].includes(initialMode) ? initialMode : 'agent');
 loadSnapshot().then(async()=>{await restoreLibraryScan();notice('对话工作台已就绪。');}).catch((error) => notice(error.message, true));

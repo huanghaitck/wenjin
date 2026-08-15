@@ -15,6 +15,7 @@ from research_workbench.library import (
     _pdf_bibliography,
     approve_candidates,
     link_work_to_project,
+    library_graph,
     move_work_to_shelf,
     scan_directory,
     search_library,
@@ -127,6 +128,14 @@ class M5ResearchLibraryTests(unittest.TestCase):
         moved = move_work_to_shelf(self.project, work_id, "monographs", self.library)
         self.assertEqual(moved["shelf"], "monographs")
         self.assertEqual(moved["shelf_label"], "学术专著")
+        graph = library_graph(self.project, library_root=self.library)
+        labels = {node["label"] for node in graph["nodes"]}
+        relations = {edge["relation"] for edge in graph["edges"]}
+        self.assertIn("Imperial Archive Revised", labels)
+        self.assertIn("Professor A", labels)
+        self.assertIn("1908", labels)
+        self.assertIn("authored_by", relations)
+        self.assertIn("shelved_as", relations)
         linked = link_work_to_project(self.project, work_id, self.library)
         self.assertEqual(len(linked["project_links"]), 1)
         version = linked["files"][0]["versions"][0]

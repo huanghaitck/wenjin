@@ -408,7 +408,7 @@ class D3ResearchObjectWorkspaceTests(unittest.TestCase):
 
     def test_ui_has_four_permanent_workspaces_and_nested_repair(self) -> None:
         html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")
-        for label in ("研究对话", "研究图书馆", "文章工作台", "项目设置"):
+        for label in ("研究对话", "研究图书馆", "文章工作台", "AI 与 Agent"):
             self.assertIn(label, html)
         self.assertIn("研究者意图基线", html)
         app = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js").read_text(encoding="utf-8")

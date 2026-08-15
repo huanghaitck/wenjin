@@ -3,18 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>史学研究工作台</title>
+  <title>问津｜人文社会科学研究工作台</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
-    <div><strong>史学 Research Codex</strong><span>D5 · 原页、证据、注释与稿件版本由人工决定</span></div>
+    <div><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台 · 研究者保留证据与写作决定权</span></div>
     <div class="importer">
-      <button id="agentMode" class="mode-active">研究对话</button>
-      <button id="libraryMode">研究图书馆</button>
-      <button id="articleMode">文章工作台</button>
-      <button id="skillsMode">技能与插件</button>
-      <button id="settingsMode">项目设置</button>
+      <button id="agentMode" class="mode-active" data-i18n="nav_agent">研究对话</button>
+      <button id="libraryMode" data-i18n="nav_library">研究图书馆</button>
+      <button id="articleMode" data-i18n="nav_article">文章工作台</button>
+      <button id="skillsMode" data-i18n="nav_skills">技能与插件</button>
+      <button id="settingsMode" data-i18n="nav_settings">AI 与 Agent</button>
+      <button id="languageToggle" title="Switch language">EN</button>
     </div>
   </header>
 
@@ -41,9 +42,10 @@
     <section class="catalog-panel surface">
       <header class="agent-heading">
         <div><h1>研究图书馆</h1><p id="libraryCounts">作品、文件与精确版本分层保存</p></div>
-        <div class="library-search"><select id="libraryShelf"><option value="">全部书架</option></select><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button></div>
+        <div class="library-search"><select id="libraryShelf"><option value="">全部书架</option></select><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button><button id="showLibraryGraph">知识图谱</button></div>
       </header>
       <div id="workList" class="work-list"></div>
+      <div id="libraryGraph" class="library-graph" hidden></div>
     </section>
 
     <aside class="work-detail-panel surface">
@@ -134,6 +136,7 @@
         <label class="toolbar-select">稿件题名<input id="manuscriptTitleEdit" aria-label="稿件题名"></label>
         <button id="paragraphButton">正文</button><button id="quoteButton">引文</button>
         <button id="insertSection">在此之前新增章节</button><button id="insertSectionAfter">在此之后新增章节</button><button id="insertTable">插入表格</button><button id="insertNote">插入注释</button>
+        <button id="editorZoomOut" title="缩小正文">A−</button><button id="editorZoomIn" title="放大正文">A＋</button><button id="readingMode">阅读模式</button>
         <button id="saveDocument" class="primary-inline">保存新修订</button>
         <label class="toolbar-select">投稿模板<select id="exportTemplate"></select></label>
         <button id="exportMarkdown">导出 Markdown</button><button id="exportDocx">导出 Word</button>
@@ -173,7 +176,7 @@
   </main>
 
   <main id="settingsWorkbench" class="settings-workbench" hidden>
-    <section class="settings-main surface"><header class="agent-heading"><div><h1>项目设置</h1><p>模型、Skills、连接器、隐私和版本信息</p></div></header><div id="settingsContent" class="settings-grid"></div></section>
+    <section class="settings-main surface"><header class="agent-heading"><div><h1 id="settingsHeading">AI 与 Agent</h1><p id="settingsLead">主模型、辅助模型、MoA、研究人格、记忆与连接器</p></div></header><div id="settingsContent" class="settings-grid"></div></section>
   </main>
 
   <main id="pdfWorkbench" class="workbench" hidden>

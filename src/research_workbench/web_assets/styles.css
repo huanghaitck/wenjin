@@ -57,6 +57,9 @@ button:hover { border-color: var(--accent); }
 .toolbar-select { display: flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted); font-size: 11px; }
 .toolbar-select select { max-width: 190px; }
 .document-canvas { overflow: auto; width: min(860px, calc(100% - 30px)); min-height: calc(100% - 32px); margin: 16px auto; padding: 58px 54px; outline: none; color: #211f1b; background: #fff; border: 1px solid #d5ccbc; box-shadow: 0 10px 34px #3b302627; font: 16px/1.95 "Songti SC", "SimSun", Georgia, serif; caret-color: var(--accent); }
+.article-workbench.reading-focus { grid-template-columns: 0 minmax(700px, 1fr) 0; }
+.article-workbench.reading-focus > aside { overflow: hidden; opacity: 0; pointer-events: none; }
+.article-workbench.reading-focus .document-canvas { width: min(980px, calc(100% - 30px)); }
 .document-canvas p, .document-canvas blockquote { min-height: 1.9em; margin: 0 0 1em; }
 .document-canvas blockquote { padding-left: 18px; color: #595148; border-left: 3px solid var(--accent-soft); }
 .document-canvas table { width: 100%; margin: 1.2em 0; border-collapse: collapse; font: 14px/1.55 "Songti SC", "SimSun", serif; }
@@ -76,6 +79,17 @@ button:hover { border-color: var(--accent); }
 .catalog-panel { grid-template-rows: auto minmax(0, 1fr); }
 .catalog-panel > .agent-heading { display: grid; align-items: stretch; }
 .work-detail-panel { grid-template-rows: auto minmax(0, 1fr) auto; }
+.library-graph { overflow: auto; padding: 14px; }
+.graph-nodes { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0; }
+.graph-node { padding: 5px 8px; border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 11px; }
+.graph-work { color: #fff; background: var(--accent); }
+.graph-person { background: #e6eef4; }
+.graph-year { background: #eee7f5; }
+.graph-tag { background: #e8f1e9; }
+.graph-relations { padding: 9px 12px; border-radius: 9px; background: #faf7f0; font: 12px/1.6 ui-monospace, Consolas, monospace; }
+.graph-relations p { margin: 3px 0; }
+.agent-profile-form textarea { min-height: 76px; }
+.checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 5px; }
 .project-source-box { display: grid; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--line); background: #eee5d8; }
 .project-source-box h3 { margin: 0; font-size: 12px; }
 .project-source-box small { color: var(--muted); font-size: 9px; line-height: 1.45; }

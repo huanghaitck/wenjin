@@ -28,6 +28,24 @@ fn desktop_url(state: tauri::State<'_, StartupState>) -> Option<String> {
 }
 
 #[tauri::command]
+fn open_data_directory(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    std::process::Command::new("explorer.exe").arg(&path).spawn().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn open_sidecar_log(app: tauri::AppHandle) -> Result<(), String> {
+    let path = app.path().app_data_dir().map_err(|error| error.to_string())?.join("logs").join("sidecar.log");
+    if !path.is_file() {
+        return Err("启动日志尚未生成".into());
+    }
+    std::process::Command::new("notepad.exe").arg(&path).spawn().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 fn choose_folder() -> Option<String> {
     rfd::FileDialog::new()
         .pick_folder()
@@ -83,7 +101,7 @@ fn open_in_word(path: String) -> Result<(), String> {
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, choose_folder, choose_file, open_in_word])
+        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word])
         .setup(|app| {
             app.manage(StartupState(Mutex::new(None)));
             let data_root = app.path().app_data_dir()?;
@@ -107,11 +125,15 @@ fn main() {
             }
 
             let log_path = data_root.join("logs").join("sidecar.log");
+            if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+                let _ = writeln!(file, "\n=== Wenjin {} startup ===", env!("CARGO_PKG_VERSION"));
+            }
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = receiver.recv().await {
                     let line = match event {
                         CommandEvent::Stdout(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
                         CommandEvent::Stderr(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+                        CommandEvent::Terminated(payload) => Some(format!("sidecar terminated: {:?}", payload)),
                         _ => None,
                     };
                     if let Some(line) = line {
@@ -141,7 +163,7 @@ fn main() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("failed to build Historical Research Workbench");
+        .expect("failed to build Wenjin Research Workbench");
 
     app.run(|handle, event| {
         if let RunEvent::Exit = event {

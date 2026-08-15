@@ -49,7 +49,7 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertNotIn("api_key", text.lower())
             self.assertEqual(os.environ["HRW_AGENT_MODEL"], "local-history-model")
             self.assertEqual(os.environ["HRW_AGENT_BASE_URL"], "http://127.0.0.1:11434")
-            self.assertEqual(len(result["roles"]), 4)
+            self.assertEqual(len(result["roles"]), 7)
             self.assertEqual(public_settings(root)["credential_backend"], "windows_credential_manager")
 
     def test_word_reimport_creates_a_new_revision_without_overwriting(self) -> None:
@@ -87,6 +87,17 @@ class D5DesktopPackagingTests(unittest.TestCase):
         self.assertIn("libssl-3-x64.dll", build_script)
         self.assertIn("libcrypto-3-x64.dll", build_script)
         self.assertIn("--collect-data certifi", build_script)
+        self.assertIn("smoke_desktop_sidecar.py", build_script)
+
+    def test_desktop_failure_screen_has_real_diagnostics(self) -> None:
+        root = Path(__file__).parents[1]
+        shell = (root / "desktop-shell" / "index.html").read_text(encoding="utf-8")
+        script = (root / "desktop-shell" / "desktop.js").read_text(encoding="utf-8")
+        rust = (root / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
+        self.assertIn("打开启动日志", shell)
+        self.assertIn("open_sidecar_log", script)
+        self.assertIn("open_sidecar_log", rust)
+        self.assertIn("CommandEvent::Terminated", rust)
 
 
 if __name__ == "__main__":

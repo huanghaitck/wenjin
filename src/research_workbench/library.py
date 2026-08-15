@@ -40,6 +40,51 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _graph_node(connection: Any, node_type: str, label: str, normalized: str | None = None) -> str:
+    normalized_label = (normalized or label).strip().casefold()
+    node_id = "KGN_" + hashlib.sha256(f"{node_type}\0{normalized_label}".encode("utf-8")).hexdigest()[:24]
+    connection.execute(
+        """INSERT INTO knowledge_nodes(node_id, node_type, label, normalized_label, origin, created_at)
+           VALUES (?, ?, ?, ?, 'bibliographic_metadata', ?)
+           ON CONFLICT(node_type, normalized_label) DO UPDATE SET label = excluded.label""",
+        (node_id, node_type, label.strip(), normalized_label, utc_now()),
+    )
+    return node_id
+
+
+def _sync_work_graph(connection: Any, work_id: str) -> None:
+    work = connection.execute("SELECT * FROM works WHERE work_id = ?", (work_id,)).fetchone()
+    if work is None:
+        return
+    edition = connection.execute(
+        "SELECT publisher, publication_year FROM editions WHERE work_id = ? ORDER BY created_at LIMIT 1", (work_id,)
+    ).fetchone()
+    tags = [row[0] for row in connection.execute(
+        "SELECT t.name FROM tags t JOIN work_tags wt ON wt.tag_id = t.tag_id WHERE wt.work_id = ?", (work_id,)
+    )]
+    source = _graph_node(connection, "work", work["canonical_title"], work_id)
+    connection.execute("DELETE FROM knowledge_edges WHERE work_id = ? AND origin = 'bibliographic_metadata'", (work_id,))
+    relations: list[tuple[str, str, str]] = []
+    if work["author"].strip():
+        relations.append((source, "authored_by", _graph_node(connection, "person", work["author"])))
+    if edition and edition["publication_year"].strip():
+        relations.append((source, "published_in_year", _graph_node(connection, "year", edition["publication_year"])))
+    if edition and edition["publisher"].strip():
+        relations.append((source, "published_by", _graph_node(connection, "organization", edition["publisher"])))
+    relations.append((source, "material_type", _graph_node(connection, "material_type", work["material_type"])))
+    for tag in tags:
+        relation = "shelved_as" if tag.startswith("shelf:") else "tagged_as"
+        relations.append((source, relation, _graph_node(connection, "tag", tag)))
+    for source_id, relation, target_id in relations:
+        edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation}\0{target_id}\0{work_id}".encode("utf-8")).hexdigest()[:24]
+        connection.execute(
+            """INSERT OR IGNORE INTO knowledge_edges(
+                   edge_id, source_node_id, relation, target_node_id, work_id, origin, created_at
+               ) VALUES (?, ?, ?, ?, ?, 'bibliographic_metadata', ?)""",
+            (edge_id, source_id, relation, target_id, work_id, utc_now()),
+        )
+
+
 def _clean_title(value: str, fallback: str) -> str:
     title = " ".join(value.replace("\x00", " ").split()).strip(" -_")
     return title[:300] or fallback
@@ -365,7 +410,11 @@ def start_scan_session(
     # HTTP endpoint uses the non-blocking default.
     if compatibility_wait > 0:
         worker.join(timeout=compatibility_wait)
-    return scan_session(project_root, session["session_id"], root)
+        return scan_session(project_root, session["session_id"], root)
+    # The session row was durably committed before the worker started. Returning
+    # that receipt avoids contending with the worker's first SQLite transaction
+    # and keeps the HTTP start endpoint genuinely non-blocking.
+    return session
 
 
 def scan_directory(
@@ -559,6 +608,7 @@ def approve_candidates(
                 (candidate["candidate_id"],),
             )
             _refresh_search(connection, work_id)
+            _sync_work_graph(connection, work_id)
             approved.append({"candidate_id": candidate["candidate_id"], "work_id": work_id, "version_id": version_id})
         remaining = connection.execute(
             "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ? AND status = 'preview'", (session_id,)
@@ -604,6 +654,7 @@ def move_work_to_shelf(project_root: Path, work_id: str, shelf: str,
         )
         _add_tag(connection, work_id, f"shelf:{shelf}", "user")
         _refresh_search(connection, work_id)
+        _sync_work_graph(connection, work_id)
     return work_detail(project_root, work_id, root)
 
 
@@ -722,7 +773,45 @@ def update_work(
         for tag in tags:
             _add_tag(connection, work_id, tag, "user")
         _refresh_search(connection, work_id)
+        _sync_work_graph(connection, work_id)
     return work_detail(project_root, work_id, root)
+
+
+def library_graph(project_root: Path, query: str = "", limit: int = 200,
+                  library_root: Path | None = None) -> dict[str, Any]:
+    root = library_root_for(project_root, library_root)
+    limit = max(1, min(int(limit), 500))
+    with connect_library(root) as connection:
+        if not connection.execute("SELECT 1 FROM knowledge_nodes LIMIT 1").fetchone():
+            for row in connection.execute("SELECT work_id FROM works").fetchall():
+                _sync_work_graph(connection, row["work_id"])
+        parameters: list[Any] = []
+        clause = ""
+        if query.strip():
+            clause = "WHERE label LIKE ? OR node_type LIKE ?"
+            value = f"%{query.strip()}%"
+            parameters.extend((value, value))
+        nodes = [dict(row) for row in connection.execute(
+            f"SELECT node_id, node_type, label, origin FROM knowledge_nodes {clause} ORDER BY node_type, label LIMIT ?",
+            (*parameters, limit),
+        )]
+        node_ids = {row["node_id"] for row in nodes}
+        if not node_ids:
+            return {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0}
+        placeholders = ",".join("?" for _ in node_ids)
+        edges = [dict(row) for row in connection.execute(
+            f"""SELECT edge_id, source_node_id, relation, target_node_id, work_id, origin
+                FROM knowledge_edges WHERE source_node_id IN ({placeholders})
+                   OR target_node_id IN ({placeholders}) ORDER BY relation""",
+            (*node_ids, *node_ids),
+        )]
+        connected_ids = node_ids | {row["source_node_id"] for row in edges} | {row["target_node_id"] for row in edges}
+        placeholders = ",".join("?" for _ in connected_ids)
+        nodes = [dict(row) for row in connection.execute(
+            f"SELECT node_id, node_type, label, origin FROM knowledge_nodes WHERE node_id IN ({placeholders}) ORDER BY node_type, label",
+            tuple(connected_ids),
+        )]
+    return {"nodes": nodes, "edges": edges, "node_count": len(nodes), "edge_count": len(edges)}
 
 
 def library_file_path(project_root: Path, file_id: str, library_root: Path | None = None) -> Path:

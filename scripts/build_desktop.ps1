@@ -36,6 +36,8 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller installation failed" }
 if ($LASTEXITCODE -ne 0) { throw "Python sidecar build failed" }
 New-Item -ItemType Directory -Path (Split-Path -Parent $sidecarTarget) -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $repositoryRoot "build\sidecar-dist\hrw-sidecar.exe") -Destination $sidecarTarget -Force
+& $python (Join-Path $repositoryRoot "scripts\smoke_desktop_sidecar.py") $sidecarTarget
+if ($LASTEXITCODE -ne 0) { throw "Desktop sidecar smoke test failed" }
 
 Push-Location $repositoryRoot
 try {

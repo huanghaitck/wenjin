@@ -1,7 +1,7 @@
 {
   "name": "historical-research-workbench-desktop",
   "private": true,
-  "version": "1.0.0-dev.1",
+  "version": "0.1.0",
   "scripts": {
     "tauri": "tauri"
   },

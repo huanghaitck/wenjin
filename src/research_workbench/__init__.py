@@ -1,3 +1,3 @@
-"""Historical Research Workbench."""
+"""Wenjin humanities and social science research workbench."""
 
-__version__ = "1.0.0.dev1"
+__version__ = "0.1.0"

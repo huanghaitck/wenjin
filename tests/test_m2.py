@@ -240,7 +240,7 @@ class M2PdfIntakeTests(unittest.TestCase):
         try:
             base = f"http://127.0.0.1:{server.server_port}"
             html = urlopen(base + "/", timeout=5).read().decode("utf-8")
-            self.assertIn("史学研究工作台", html)
+            self.assertIn("问津", html)
             snapshot = json.loads(urlopen(base + "/api/snapshot", timeout=5).read())
             self.assertEqual(snapshot["sources"][0]["source_id"], source["source_id"])
             page_id = source_view(self.project, source["source_id"])["pages"][0]["page_id"]
