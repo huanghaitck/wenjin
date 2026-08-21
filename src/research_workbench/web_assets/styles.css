@@ -113,6 +113,9 @@ button:hover { border-color: var(--accent); }
 .graph-tag { background: #e8f1e9; }
 .graph-relations { padding: 9px 12px; border-radius: 9px; background: #faf7f0; font: 12px/1.6 ui-monospace, Consolas, monospace; }
 .graph-relations p { margin: 3px 0; }
+.graph-work-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+.graph-work-cards .card { margin: 0; }
+.graph-content-preview { margin: 10px 0; padding: 10px; border-left: 3px solid var(--accent); background: var(--soft); white-space: pre-wrap; line-height: 1.65; max-height: 12rem; overflow: auto; }
 .agent-profile-form textarea { min-height: 76px; }
 .checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(170px,1fr)); gap: 5px; }
 .check-label { display: flex; align-items: center; gap: 8px; min-height: 34px; color: var(--ink); }

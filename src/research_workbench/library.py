@@ -829,22 +829,47 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
         ]
         for work_id in missing_work_ids:
             _sync_work_graph(connection, work_id)
-        parameters: list[Any] = []
-        clause = "WHERE node_type = 'work'"
         if query.strip():
-            clause = "WHERE label LIKE ? OR node_type LIKE ?"
-            value = f"%{query.strip()}%"
-            parameters.extend((value, value))
-        nodes = [dict(row) for row in connection.execute(
-            f"SELECT node_id, node_type, label, origin FROM knowledge_nodes {clause} ORDER BY node_type, label LIMIT ?",
-            (*parameters, limit),
-        )]
-        node_ids = {row["node_id"] for row in nodes}
-        if not node_ids:
+            phrase = '"' + query.strip().replace('"', '""') + '"'
+            work_ids = [row["work_id"] for row in connection.execute(
+                "SELECT work_id FROM work_search WHERE work_search MATCH ? LIMIT ?", (phrase, limit)
+            ).fetchall()]
+            contains = f"%{query.strip()}%"
+            fallback = connection.execute(
+                """SELECT DISTINCT w.work_id FROM works w
+                   LEFT JOIN editions e ON e.work_id = w.work_id
+                   LEFT JOIN library_files f ON f.work_id = w.work_id
+                   LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
+                   LEFT JOIN work_tags wt ON wt.work_id = w.work_id
+                   LEFT JOIN tags t ON t.tag_id = wt.tag_id
+                   WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
+                      OR t.name LIKE ? OR v.sample_text LIKE ? LIMIT ?""",
+                (contains, contains, contains, contains, contains, limit),
+            ).fetchall()
+            work_ids.extend(row["work_id"] for row in fallback if row["work_id"] not in work_ids)
+            work_ids = work_ids[:limit]
+        else:
+            work_ids = [row["work_id"] for row in connection.execute(
+                "SELECT work_id FROM works ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ).fetchall()]
+        if not work_ids:
             return {
-                "nodes": [], "edges": [], "node_count": 0, "edge_count": 0,
-                "backfilled_work_count": len(missing_work_ids),
+                "nodes": [], "edges": [], "work_cards": [], "node_count": 0, "edge_count": 0,
+                "backfilled_work_count": len(missing_work_ids), "query": query.strip(),
             }
+        normalized_ids = [work_id.casefold() for work_id in work_ids]
+        placeholders = ",".join("?" for _ in normalized_ids)
+        if query.strip():
+            order = {work_id.casefold(): index for index, work_id in enumerate(work_ids)}
+        else:
+            order = {work_id.casefold(): index for index, work_id in enumerate(work_ids)}
+        nodes = [dict(row) for row in connection.execute(
+            f"""SELECT node_id, node_type, label, normalized_label, origin FROM knowledge_nodes
+                WHERE node_type = 'work' AND normalized_label IN ({placeholders})""",
+            tuple(normalized_ids),
+        )]
+        nodes.sort(key=lambda item: order.get(item["normalized_label"], limit))
+        node_ids = {row["node_id"] for row in nodes}
         placeholders = ",".join("?" for _ in node_ids)
         edges = [dict(row) for row in connection.execute(
             f"""SELECT edge_id, source_node_id, relation, target_node_id, work_id, origin
@@ -855,15 +880,66 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
         connected_ids = node_ids | {row["source_node_id"] for row in edges} | {row["target_node_id"] for row in edges}
         placeholders = ",".join("?" for _ in connected_ids)
         nodes = [dict(row) for row in connection.execute(
-            f"SELECT node_id, node_type, label, origin FROM knowledge_nodes WHERE node_id IN ({placeholders}) ORDER BY node_type, label",
+            f"SELECT node_id, node_type, label, normalized_label, origin FROM knowledge_nodes WHERE node_id IN ({placeholders}) ORDER BY node_type, label",
             tuple(connected_ids),
         )]
+        work_lookup = {work_id.casefold(): work_id for work_id in work_ids}
+        for node in nodes:
+            node["work_id"] = work_lookup.get(node["normalized_label"], "") if node["node_type"] == "work" else ""
+            node.pop("normalized_label", None)
+        work_cards = []
+        for work_id in work_ids:
+            work = _work_summary(connection, work_id)
+            edition = connection.execute(
+                """SELECT edition_label, publisher, publication_year FROM editions
+                   WHERE work_id = ? ORDER BY created_at LIMIT 1""", (work_id,),
+            ).fetchone()
+            current = connection.execute(
+                """SELECT v.sample_text, v.inspected_pages, v.page_count, v.format, v.text_layer,
+                          v.triage_state, v.qualification, f.file_id, f.path
+                   FROM file_versions v JOIN library_files f ON f.file_id = v.file_id
+                   WHERE f.work_id = ? AND v.is_current = 1 ORDER BY v.discovered_at DESC LIMIT 1""",
+                (work_id,),
+            ).fetchone()
+            project_link_count = connection.execute(
+                "SELECT COUNT(*) FROM library_project_links WHERE work_id = ?", (work_id,)
+            ).fetchone()[0]
+            excerpt = " ".join(str(current["sample_text"] if current else "").split())[:900]
+            work_cards.append({
+                "work_id": work_id, "title": work["canonical_title"], "author": work["author"],
+                "material_type": work["material_type"], "shelf": work["shelf"],
+                "shelf_label": work["shelf_label"], "edition": dict(edition) if edition else {},
+                "content_excerpt": excerpt, "preview_pages": int(current["inspected_pages"] or 0) if current else 0,
+                "page_count": current["page_count"] if current else None,
+                "format": current["format"] if current else "", "text_layer": current["text_layer"] if current else "",
+                "triage_state": current["triage_state"] if current else "",
+                "qualification": current["qualification"] if current else "",
+                "current_file_id": current["file_id"] if current else "",
+                "file_available": bool(current and Path(current["path"]).is_file()),
+                "project_link_count": project_link_count,
+            })
+    project_sources: dict[str, dict[str, Any]] = {}
+    if work_ids:
+        placeholders = ",".join("?" for _ in work_ids)
+        with connect(project_root) as connection:
+            for row in connection.execute(
+                f"""SELECT l.library_work_id, s.source_id, s.title, s.processing_state, s.use_state
+                    FROM source_library_links l JOIN sources s ON s.source_id = l.source_id
+                    WHERE l.library_work_id IN ({placeholders})""",
+                tuple(work_ids),
+            ).fetchall():
+                project_sources[row["library_work_id"]] = dict(row)
+    for card in work_cards:
+        card["project_source"] = project_sources.get(card["work_id"])
     return {
         "nodes": nodes,
         "edges": edges,
+        "work_cards": work_cards,
         "node_count": len(nodes),
         "edge_count": len(edges),
         "backfilled_work_count": len(missing_work_ids),
+        "query": query.strip(),
+        "preview_boundary": "bounded_intake_sample_not_evidence",
     }
 
 

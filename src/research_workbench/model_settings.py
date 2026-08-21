@@ -16,13 +16,13 @@ import certifi
 SETTINGS_FILE = "model-settings.json"
 PROVIDERS = {"auto", "disabled", "ollama", "openai_compatible"}
 ROLES = {
-    "main_reasoning": {"label": "主模型", "label_en": "Main model", "prefix": "HRW_AGENT", "kind": "main"},
-    "vision_ocr": {"label": "视觉与 OCR", "label_en": "Vision and OCR", "prefix": "HRW_OCR", "kind": "auxiliary"},
-    "translation_helper": {"label": "翻译", "label_en": "Translation", "prefix": "HRW_TRANSLATION", "kind": "auxiliary"},
-    "web_research": {"label": "联网材料整理", "label_en": "Web research", "prefix": "HRW_WEB_RESEARCH", "kind": "auxiliary"},
-    "context_compression": {"label": "上下文压缩", "label_en": "Context compression", "prefix": "HRW_COMPRESSION", "kind": "auxiliary"},
-    "title_generation": {"label": "标题与摘要命名", "label_en": "Title generation", "prefix": "HRW_TITLE", "kind": "auxiliary"},
-    "review_secondary": {"label": "交叉评审", "label_en": "Secondary review", "prefix": "HRW_REVIEW", "kind": "auxiliary"},
+    "main_reasoning": {"label": "主模型", "label_en": "Main model", "prefix": "HRW_AGENT", "kind": "main", "direct_route": True},
+    "vision_ocr": {"label": "视觉与 OCR", "label_en": "Vision and OCR", "prefix": "HRW_OCR", "kind": "auxiliary", "direct_route": True},
+    "translation_helper": {"label": "翻译", "label_en": "Translation", "prefix": "HRW_TRANSLATION", "kind": "auxiliary", "direct_route": True},
+    "web_research": {"label": "联网材料整理（预留）", "label_en": "Web research (reserved)", "prefix": "HRW_WEB_RESEARCH", "kind": "auxiliary", "direct_route": False},
+    "context_compression": {"label": "上下文压缩（预留）", "label_en": "Context compression (reserved)", "prefix": "HRW_COMPRESSION", "kind": "auxiliary", "direct_route": False},
+    "title_generation": {"label": "标题与摘要命名（预留）", "label_en": "Title generation (reserved)", "prefix": "HRW_TITLE", "kind": "auxiliary", "direct_route": False},
+    "review_secondary": {"label": "交叉评审", "label_en": "Secondary review", "prefix": "HRW_REVIEW", "kind": "auxiliary", "direct_route": True},
 }
 PROVIDER_PRESETS = [
     {"id": "ollama", "label": "Ollama", "provider": "ollama", "base_url": "http://127.0.0.1:11434"},
@@ -151,6 +151,7 @@ def public_settings(config_root: Path) -> dict[str, Any]:
         roles.append({
             "role": role, "label": definition["label"], "label_en": definition["label_en"],
             "kind": definition["kind"], "provider": item["provider"],
+            "direct_route": bool(definition.get("direct_route", False)),
             "model": item["model"], "base_url": item["base_url"],
             "timeout_seconds": item["timeout_seconds"],
             "context_window": int(item.get("context_window", 0) or 0),

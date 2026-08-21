@@ -69,6 +69,16 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertEqual(len(result["roles"]), 7)
             self.assertEqual(public_settings(root)["credential_backend"], "windows_credential_manager")
 
+    def test_model_settings_distinguish_direct_and_reserved_auxiliary_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            roles = {item["role"]: item for item in public_settings(Path(directory))["roles"]}
+        self.assertTrue(roles["vision_ocr"]["direct_route"])
+        self.assertTrue(roles["translation_helper"]["direct_route"])
+        self.assertTrue(roles["review_secondary"]["direct_route"])
+        self.assertFalse(roles["web_research"]["direct_route"])
+        self.assertFalse(roles["context_compression"]["direct_route"])
+        self.assertFalse(roles["title_generation"]["direct_route"])
+
     def test_word_reimport_creates_a_new_revision_without_overwriting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             project = Path(directory) / "project"

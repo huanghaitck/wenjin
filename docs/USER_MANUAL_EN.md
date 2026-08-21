@@ -57,7 +57,9 @@ Six editable shelves are provided:
 
 Changing a shelf does not move the original file or change citation eligibility.
 
-The **Knowledge Graph** visualizes registered works, authors, dates, publishers, shelves, and human tags. In 0.1.1 it is a bibliographic discovery graph. Model-inferred causation, interpersonal relations, and events are not automatically promoted into it.
+The **Knowledge Graph** visualizes registered works, authors, dates, publishers, shelves, and human tags. Below the graph it lists each work's edition, bounded intake preview, and project-use status. Search by title, author, publisher, tag, or a phrase in the preview. Selecting a work opens Works and versions; a work already added to the current project can open its project source pages directly.
+
+The preview comes from the limited pages inspected during intake. Use it to decide what deserves further reading or which version fits the question. It does not mean that the complete work has been read and it is not evidence. Model-inferred causation, interpersonal relations, and events are not automatically promoted into the graph.
 
 The **Source Chronicle** contains only human-approved event records that retain an exact source version and page link. It can be filtered and exported as Markdown. A chronicle is not a claim that the surviving corpus has been exhausted.
 
@@ -85,7 +87,7 @@ wenjin mcp-server C:\Research\my-project
 
 The MCP server provides bounded project status, source details, pages, library results, and manuscript structure. Formal writes remain approval-gated.
 
-Version 0.1.1 supports **domain packs**. A pack must include `wenjin-plugin.json` and may contribute a Skill, bounded MCP tools, processors, field schemas, knowledge-graph adapters, contextual panels, and local-data bindings. Only tools declared in the manifest can be called by the main Agent. The public release does not preinstall a disciplinary sample or user dataset.
+Version 0.1.1 supports **domain packs**. The working integrations are a Skill for the main Agent, manifest-allowlisted MCP tools, and local-data bindings. Schema, processor, graph-adapter, and panel entries can be recorded for development but are not automatically routed into existing workspaces. Only declared tools can be called by the main Agent. The public release does not preinstall a disciplinary sample or user dataset.
 
 Install a domain pack from a local folder or ZIP. A self-contained pack should include its MCP executable and portable configuration rather than a developer-specific Conda path. Generate a neutral project with the UI, with an explicitly authorized Agent action, or with:
 
@@ -99,7 +101,7 @@ This workspace shows software and schema versions, main and auxiliary models, Mo
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
-The **Weixin connection** uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
+The **Weixin connection** is experimental in 0.1.1. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
 The **Runtime** page can create an immediate integrity-checked backup and restore an older backup as a new project copy. Restore never overwrites the active project.
 
@@ -213,7 +215,7 @@ The main reasoning model and visual/OCR role may be configured separately.
 
 ## 5. Models, MoA, persona, and permissions
 
-Configure the main model first, then optional roles for vision/OCR, translation, web-material organization, context compression, title/abstract naming, and secondary review. Roles can be disabled, follow the main model, use local Ollama, or use an OpenAI-compatible endpoint.
+Configure the main model first. Version 0.1.1 has direct workflows for vision/OCR, translation, and secondary review. Web-material organization, context compression, and title/abstract naming are marked reserved: they are not routed automatically and currently participate only when selected as MoA advisers. Roles can be disabled, follow the main model, use local Ollama, or use an OpenAI-compatible endpoint.
 
 Provider presets fill common base URLs. **Refresh model list** reads the endpoint's current model IDs for Ollama and compatible `/models` APIs; manual entry remains available. Use **Test connection** before research work.
 

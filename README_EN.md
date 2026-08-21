@@ -16,14 +16,14 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 - A research library that separates works, editions, files, and exact byte versions.
 - Read-only folder inventory, suggested classification, and human-approved bulk registration.
 - PDF page images, text blocks, cross-page relations, printed-page mapping, and human repair.
-- Evidence, a source-linked event chronicle, and a bibliographic knowledge graph.
+- Evidence, a source-linked event chronicle, and a knowledge graph with bounded work previews and project-use status.
 - Main and auxiliary models, Ollama, OpenAI-compatible APIs, and optional Mixture of Agents.
 - Versioned research persona, Skills, MCP, CLI, and a two-way Codex bridge.
 - Sixteen bundled Historical Research Skills plus an evidence-preserving Chinese historical-prose revision Skill.
 - A structured writing studio with notes, references, DOCX import/export, and multi-role review.
-- Chinese and English interfaces, layered project knowledge, and optional local long-term-memory adapters.
+- Chinese and English core navigation, model settings, and writing templates; layered project knowledge and optional local long-term-memory adapters.
 - A neutral domain-pack SDK, local ZIP/folder installation, and user-owned local-data bindings.
-- Private research conversations through ordinary Weixin QR sign-in.
+- Experimental private research conversations through ordinary Weixin QR sign-in.
 
 ## Installation
 
@@ -57,7 +57,7 @@ Password controls, hidden credential extraction, CAPTCHA solving, and payment co
 
 ## Domain packs
 
-Wenjin core is not tied to one discipline. A domain pack may contribute research methods, schemas, processors, graph adapters, local-data bindings, Skills, and bounded Agent tools.
+Wenjin core is not tied to one discipline. In 0.1.1 a domain pack can add a specialist Skill, permission-bounded MCP tools, and local-data bindings. Schema, processor, graph-adapter, and panel entries may be declared for development, but they do not automatically change Wenjin screens yet.
 
 The public repository contains a neutral scaffold rather than a preinstalled disciplinary sample or user dataset. Install a downloaded ZIP or folder from **AI & Agent > Domain packs**. If a pack declares a user-owned SQLite, CSV, or directory source, bind it after installation. Wenjin records an identity receipt and does not copy or rewrite that database.
 
@@ -104,7 +104,7 @@ The MCP server exposes qualified project status, source pages, library results, 
 
 ## Weixin connection
 
-Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
+Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin to try the experimental private-text connection. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
 
 Version 0.1.1 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
 

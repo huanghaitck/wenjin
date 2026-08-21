@@ -24,6 +24,7 @@ from research_workbench.library import (
     work_detail,
 )
 from research_workbench.library_store import connect_library
+from research_workbench.project_library import add_library_file_to_project
 from research_workbench.service import initialize_project
 from research_workbench.skill_registry import discover_skills
 from research_workbench.web import build_server
@@ -138,6 +139,12 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertIn("1908", labels)
         self.assertIn("authored_by", relations)
         self.assertIn("shelved_as", relations)
+        self.assertEqual(len(graph["work_cards"]), 1)
+        self.assertIn("Historical archive empire chronicle page 8", graph["work_cards"][0]["content_excerpt"])
+        self.assertEqual(graph["work_cards"][0]["preview_pages"], 10)
+        self.assertIsNone(graph["work_cards"][0]["project_source"])
+        content_graph = library_graph(self.project, "chronicle page 8", library_root=self.library)
+        self.assertEqual(content_graph["work_cards"][0]["work_id"], work_id)
         with connect_library(self.library) as connection:
             work_node = connection.execute(
                 "SELECT node_id FROM knowledge_nodes WHERE node_type = 'work' AND normalized_label = ?",
@@ -155,6 +162,11 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(sum(node["node_type"] == "work" for node in focused_graph["nodes"]), 1)
         linked = link_work_to_project(self.project, work_id, self.library)
         self.assertEqual(len(linked["project_links"]), 1)
+        added = add_library_file_to_project(
+            self.project, self.library, work_id, linked["files"][0]["file_id"]
+        )
+        linked_graph = library_graph(self.project, "Imperial Archive", library_root=self.library)
+        self.assertEqual(linked_graph["work_cards"][0]["project_source"]["source_id"], added["source"]["source_id"])
         version = linked["files"][0]["versions"][0]
         self.assertEqual(version["skill_name"], "historical-material-intake")
         self.assertEqual(len(version["skill_sha256"]), 64)
