@@ -76,6 +76,9 @@ function applyLanguage(){
   for(const node of document.querySelectorAll('[data-i18n]'))node.textContent=strings[node.dataset.i18n]||node.textContent;
   $('brandTagline').textContent=strings.tagline;$('settingsHeading').textContent=strings.settings;$('settingsLead').textContent=strings.settings_lead;
   $('languageToggle').textContent=state.language==='zh-CN'?'EN':'中文';
+  $('messageInput').placeholder=state.language==='en'?'For example: inspect the current source and anomalies, then save a bounded research note.':'例如：查看当前来源和异常，并把结论保存为研究札记';
+  $('libraryQuery').placeholder=state.language==='en'?'Title, author, publisher, tag, or leading text':'题名、作者、出版社、标签或前段文本';
+  $('skillQuery').placeholder=state.language==='en'?'Search skills, artifacts, or Agent integrations':'搜索技能、产物或 Agent 程序';
   for(const node of document.querySelectorAll('[data-zh][data-en]'))node.textContent=state.language==='en'?node.dataset.en:node.dataset.zh;
   const ariaDictionary=state.language==='en'?ariaUiEnglish:ariaUiChinese;
   for(const node of document.querySelectorAll('[aria-label]')){
@@ -204,7 +207,7 @@ async function loadSnapshot(selectId = '') {
   const select = $('sourceSelect');
   select.replaceChildren();
   if (!state.snapshot.sources.length) {
-    select.append(new Option('尚无文献', ''));
+    select.append(new Option(state.language==='en'?'No source yet':'尚无文献', ''));
     state.view = null;
     render();
     return;
@@ -236,7 +239,7 @@ function renderLibraryShell() {
   $('libraryRoot').textContent = library ? `${english?'Index location: ':'索引位置：'}${library.library_root}` : (english?'Library not initialized':'图书馆尚未初始化');
   const counts = library?.counts || {};
   $('libraryCounts').textContent = english?`${counts.works || 0} works · ${counts.library_files || 0} file locations · ${counts.file_versions || 0} exact versions`:`${counts.works || 0} 部作品 · ${counts.library_files || 0} 个文件位置 · ${counts.file_versions || 0} 个精确版本`;
-  const shelfEnglish={primary_sources:'Primary sources',articles:'Articles',monographs:'Monographs',personal_writing:'Personal papers and drafts',reference_works:'Reference works and catalogs',unclassified:'Unclassified'};
+  const shelfEnglish={primary_sources:'Primary sources',academic_articles:'Articles',monographs:'Monographs',personal_manuscripts:'Personal papers and drafts',reference_works:'Reference works and catalogs',unclassified:'Unclassified'};
   const shelfSelect=$('libraryShelf');const selectedShelf=shelfSelect.value;shelfSelect.replaceChildren(new Option(english?'All shelves':'全部书架',''));
   for(const [value,label] of Object.entries(state.snapshot.library_shelves||{})) shelfSelect.append(new Option(english?(shelfEnglish[value]||value):label,value));
   shelfSelect.value=selectedShelf;
@@ -535,7 +538,7 @@ function renderAgentShell() {
   $('planningMode').value = state.planningMode;
   const projectSelect = $('projectSelect'); projectSelect.replaceChildren();
   for (const project of (state.snapshot?.workspace?.projects || [])) {
-    const option = new Option(`${project.title} · ${project.source_count} 项文献`, project.project_id);
+    const option = new Option(`${project.title} · ${project.source_count} ${state.language==='en'?'source(s)':'项文献'}`, project.project_id);
     option.selected = project.project_id === state.snapshot?.project?.project_id;
     option.disabled = !project.available; projectSelect.append(option);
   }
@@ -573,7 +576,7 @@ async function loadThread(threadId) {
 function latestRun() { return state.thread?.runs?.[0]; }
 
 function renderThread() {
-  $('threadTitle').textContent = state.thread?.thread?.title || '新建一个研究线程';
+  $('threadTitle').textContent = state.thread?.thread?.title || (state.language==='en'?'Start a research thread':'新建一个研究线程');
   const run = latestRun();
   const historyCount=run?.model_snapshot?.history_message_ids?.length||0;
   const toolFailureCount = run?.tool_calls?.filter((call) => call.status === 'FAILED').length || 0;
@@ -583,7 +586,7 @@ function renderThread() {
     : run?.status === 'COMPLETED' && toolFailureCount
       ? ` · 本轮记录 ${toolFailureCount} 次工具错误`
       : '';
-  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? '当前问题' : `沿用研究计划 · ${historyCount}条相关对话${run.model_snapshot.history_truncated?'（已裁剪）':''}`}${outcome}` : '对话与运行状态会保存在本地项目中';
+  $('runState').textContent = run ? `${run.status} · ${run.model_snapshot.provider} / ${run.model_snapshot.model} · ${run.model_snapshot.planning_mode === 'independent_planning' ? (state.language==='en'?'current question':'当前问题') : (state.language==='en'?`shared plan · ${historyCount} related message(s)${run.model_snapshot.history_truncated?' (truncated)':''}`:`沿用研究计划 · ${historyCount}条相关对话${run.model_snapshot.history_truncated?'（已裁剪）':''}`)}${outcome}` : (state.language==='en'?'Conversation and run state are stored in the local project.':'对话与运行状态会保存在本地项目中');
   const messages = $('messages'); messages.replaceChildren();
   for (const message of (state.thread?.messages || [])) {
     const card = document.createElement('article'); card.className = `message ${message.role}`;
@@ -827,7 +830,7 @@ function renderContext() {
       }
       container.append(node);
     }
-    if (!state.snapshot.sources.length) container.append(card('项目还没有文献', '从图书馆加入书籍，或在顶部导入 PDF。'));
+    if (!state.snapshot.sources.length) container.append(card(state.language==='en'?'No project source yet':'项目还没有文献', state.language==='en'?'Add a work from the library or import a PDF from the top bar.':'从图书馆加入书籍，或在顶部导入 PDF。'));
   } else if (state.contextMode === 'library') {
     for (const work of state.libraryWorks || []) {
       const node = card(work.canonical_title, `${work.author || '责任者待核'} · ${work.version_count} 个精确版本`);

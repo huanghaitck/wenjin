@@ -1,5 +1,7 @@
 # 问津｜人文社会科学研究工作台
 
+[English](README_EN.md) | 中文
+
 问津是一个本地优先、模型可选、面向人文社会科学研究过程的 Agent 工作台。它把研究对话、个人图书馆、原页清洗、联网检索、证据固定、学术史、写作、Word 往返、Skills、CLI 与 MCP 组织在同一套可审计的项目数据上。
 
 当前版本为 **0.1.1 Public Preview**，主要支持 Windows 10/11。
@@ -21,7 +23,7 @@
 
 ## 安装
 
-普通用户下载 `问津_0.1.1_x64-setup.exe` 并运行即可。安装包内包含桌面程序、Python侧车和`agent-browser 0.33.0` Windows原生运行时，运行时不需要另装Python、Node.js、PowerShell 7或Rust。Windows 10/11通常已有WebView2；缺失时普通安装包会调用微软引导程序。完整离线ZIP另含WebView2独立安装程序和`install-wenjin.cmd`，断网机器从该入口安装即可。研究浏览器优先使用系统Microsoft Edge；缺少Edge时可以在设置中指定兼容的Chrome/Chromium可执行文件。
+普通用户从[0.1.1发布页](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1)下载 `wenjin-0.1.1-x64-setup.exe` 并运行即可。安装包内包含桌面程序、Python侧车和`agent-browser 0.33.0` Windows原生运行时，运行时不需要另装Python、Node.js、PowerShell 7或Rust。Windows 10/11通常已有WebView2；缺失时普通安装包会调用微软引导程序。完整离线ZIP另含WebView2独立安装程序和`install-wenjin.cmd`，断网机器从该入口安装即可。研究浏览器优先使用系统Microsoft Edge；缺少Edge时可以在设置中指定兼容的Chrome/Chromium可执行文件。
 
 当前安装包尚未代码签名，也没有自动更新服务；Windows 可能显示未知发布者提示。请只从项目发布页或维护者提供的校验链接下载，并核对 SHA-256。
 
@@ -122,6 +124,13 @@ MCP默认提供只读项目状态、来源、页面、图书馆和稿件结构�
 - 已登录数据库不提供绕过验证码或访问控制的无人值守爬取；
 - 内置模板在正式投稿前仍应核对期刊最新版要求。
 - 微信网关当前只支持私聊文字回复，且上游iLink协议仍可能变化。
+
+## 文档
+
+- [中文使用手册](docs/USER_MANUAL_ZH.md)
+- [English User Manual](docs/USER_MANUAL_EN.md)
+- [领域包工程说明](docs/WENJIN_PLUGIN_SDK.md)
+- [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 许可证
 
