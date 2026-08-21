@@ -1,0 +1,2 @@
+evidence_id,source_id,witness_id,independence_group,content_type,locator_type,original_page,digital_page,anchor,excerpt_or_description,context_scope,material_statement,author_interpretation,researcher_inference,supports,does_not_support,contradicts,verification_status,verified_by,verified_at,notes
+E1,S1,W1,I1,TEXT,page,,,,test,paragraph,test,,,,,,CITABLE,,,invalid fixture

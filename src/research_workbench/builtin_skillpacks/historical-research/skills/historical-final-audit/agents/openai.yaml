@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史论文最终审计"
+  short_description: "投稿前独立审核事实、译文、脚注、术语、地图、论证边界和文档渲染"
+  default_prompt: "Use $historical-final-audit to perform the final evidence, citation, terminology, map, and document audit."
+policy:
+  allow_implicit_invocation: true

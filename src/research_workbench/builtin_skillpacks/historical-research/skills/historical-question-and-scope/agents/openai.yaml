@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史问题与范围"
+  short_description: "把主题和材料线索转化为可争辩问题、解释对象与明确研究边界"
+  default_prompt: "Use $historical-question-and-scope to turn this topic and corpus into a bounded historical question."
+policy:
+  allow_implicit_invocation: true

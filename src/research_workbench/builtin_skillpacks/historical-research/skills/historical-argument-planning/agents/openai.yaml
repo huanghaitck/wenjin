@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史论证规划"
+  short_description: "根据问题、学术史和证据设计中心论点、分论点、章节任务与禁写边界"
+  default_prompt: "Use $historical-argument-planning to build a source-grounded argument map and manuscript structure."
+policy:
+  allow_implicit_invocation: true

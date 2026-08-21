@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学史对话"
+  short_description: "把直接、邻近和方法研究组织为具有贡献、分歧、遮蔽和限度的学术对话"
+  default_prompt: "Use $historical-historiography to reconstruct the scholarly debate around this historical problem."
+policy:
+  allow_implicit_invocation: true

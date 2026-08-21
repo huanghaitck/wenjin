@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史解释检验"
+  short_description: "以竞争解释、反证、因果排序、尺度检查和失败条件检验历史论断"
+  default_prompt: "Use $historical-explanation-testing to stress-test this historical explanation against rivals and counterevidence."
+policy:
+  allow_implicit_invocation: true

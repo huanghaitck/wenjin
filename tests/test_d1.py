@@ -1,0 +1,312 @@
+from __future__ import annotations
+
+import json
+import tempfile
+import threading
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+from urllib.request import Request, urlopen
+
+import pymupdf
+
+from research_workbench.db import SCHEMA_VERSION, connect
+from research_workbench.library import approve_candidates, scan_directory, work_detail
+from research_workbench.project_library import add_library_file_to_project
+from research_workbench.research import (
+    add_authenticated_results, create_authenticated_search_task, route_retrieval_result, search,
+)
+from research_workbench.scholarship import (
+    approve_freeze,
+    create_browser_session,
+    create_claim,
+    create_evidence,
+    create_freeze,
+    create_memory_candidate,
+    decide_memory_candidate,
+    draft_from_freeze,
+    export_artifact,
+    launch_controlled_browser,
+    review_artifact,
+)
+from research_workbench.service import (
+    import_structure, initialize_project, list_anomalies, register_source, reject_source_identity,
+    submit_block_repair, verify_page,
+)
+from research_workbench.workspace import (
+    create_workspace_project,
+    initialize_workspace,
+    select_workspace_project,
+    workspace_view,
+)
+from research_workbench.translation import translate_evidence
+from research_workbench.web import build_server
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class D1EndToEndDemoTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.project = self.root / "project"
+        initialize_project(self.project, "D1 demo")
+        source_file = self.root / "source.pdf"
+        source_file.write_bytes(b"%PDF-1.4\nD1 fixture\n%%EOF\n")
+        self.source = register_source(self.project, source_file, "Expedition source")
+        import_structure(self.project, self.source["source_id"], FIXTURES / "m1_structure.json")
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_workspace_creates_and_switches_projects(self) -> None:
+        workspace = self.root / "workspace"
+        initialize_workspace(workspace, self.project)
+        created = create_workspace_project(workspace, "蒙古知识史")
+        view = workspace_view(workspace)
+        self.assertEqual(len(view["projects"]), 2)
+        self.assertEqual(view["current_project"], created["project_root"])
+        selected = select_workspace_project(workspace, self.source_project_id())
+        self.assertEqual(selected, self.project.resolve())
+
+    def source_project_id(self) -> str:
+        with connect(self.project) as connection:
+            return connection.execute("SELECT project_id FROM projects").fetchone()[0]
+
+    def test_retrieval_is_reproducible_and_stays_discovered(self) -> None:
+        payload = {"message": {"items": [{
+            "DOI": "10.1000/example", "title": ["Imperial Expedition"],
+            "author": [{"family": "Smith", "given": "A"}],
+            "published": {"date-parts": [[1908]]}, "container-title": ["History Review"],
+            "URL": "https://doi.org/10.1000/example",
+        }]}}
+        result = search(self.project, "crossref", "imperial expedition", 5, lambda url, headers: payload)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["results"][0]["qualification"], "DISCOVERED")
+        self.assertIn("query.bibliographic=imperial+expedition", result["request_url"])
+        self.assertEqual(len(result["response_hash"]), 64)
+        routed = route_retrieval_result(
+            self.project, result["results"][0]["result_id"], "fulltext_queue",
+            "题名与研究问题直接相关，待取得原文", "Professor",
+        )
+        self.assertEqual(routed["results"][0]["qualification"], "DISCOVERED")
+        self.assertEqual(routed["results"][0]["route"], "fulltext_queue")
+        self.assertEqual(routed["results"][0]["route_decided_by"], "Professor")
+
+    def test_authenticated_database_task_captures_discovered_results_without_credentials(self) -> None:
+        task = create_authenticated_search_task(self.project, "CNKI", "秦岭 外国人 考察")
+        self.assertEqual(task["status"], "awaiting_user_session")
+        self.assertNotIn("cookie", json.dumps(task).lower())
+        captured = add_authenticated_results(self.project, task["record_id"], [{
+            "title": "近代外国人秦岭考察研究", "authors": "研究者", "year": "2021",
+            "container": "历史地理", "url": "https://example.invalid/detail/1",
+        }])
+        self.assertEqual(captured["status"], "captured")
+        self.assertEqual(captured["result_count"], 1)
+        self.assertEqual(captured["results"][0]["qualification"], "DISCOVERED")
+
+    def test_wrong_document_identity_blocks_the_whole_source(self) -> None:
+        result = reject_source_identity(
+            self.project, self.source["source_id"], "Professor",
+            "题名声称是天津条约，正文实际为另一份条约",
+        )
+        self.assertEqual(result["use_state"], "blocked")
+        with connect(self.project) as connection:
+            source = connection.execute(
+                "SELECT processing_state, use_state FROM sources WHERE source_id = ?",
+                (self.source["source_id"],),
+            ).fetchone()
+            open_identity = connection.execute(
+                "SELECT COUNT(*) FROM anomalies WHERE anomaly_id = ? AND status = 'open'",
+                (result["anomaly_id"],),
+            ).fetchone()[0]
+        self.assertEqual((source["processing_state"], source["use_state"]), ("error", "blocked"))
+        self.assertEqual(open_identity, 1)
+
+    def test_library_version_is_copied_into_project_without_changing_original(self) -> None:
+        materials, library = self.root / "materials", self.root / "library"
+        materials.mkdir()
+        pdf = materials / "archive.pdf"
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_text((72, 72), "Historical archive expedition record with verified page text.")
+        document.save(pdf)
+        document.close()
+        before = pdf.read_bytes()
+        session = scan_directory(self.project, materials, library)
+        approved = approve_candidates(
+            self.project, session["session_id"], [session["candidates"][0]["candidate_id"]], library
+        )
+        work_id = approved["approved"][0]["work_id"]
+        file_id = work_detail(self.project, work_id, library)["files"][0]["file_id"]
+        result = add_library_file_to_project(self.project, library, work_id, file_id)
+        self.assertEqual(result["library_version"]["sha256"], result["source"]["sha256"])
+        self.assertEqual(pdf.read_bytes(), before)
+        with connect(self.project) as connection:
+            linked = connection.execute(
+                "SELECT library_version_id FROM source_library_links WHERE source_id = ?",
+                (result["source"]["source_id"],),
+            ).fetchone()
+        self.assertEqual(linked["library_version_id"], result["library_version"]["version_id"])
+
+    def test_blocked_text_cannot_be_evidence_and_freeze_requires_approval(self) -> None:
+        claim = create_claim(self.project, "考察活动依赖页面所记载的地方知识。")
+        blocked = f"{self.source['source_id']}:B1"
+        with self.assertRaisesRegex(ValueError, "cannot be submitted"):
+            create_evidence(self.project, claim["claim_id"], blocked,
+                            "The expedition left the station in spring.", "待核")
+
+        usable = f"{self.source['source_id']}:B2"
+        with self.assertRaisesRegex(ValueError, "human page verification"):
+            create_evidence(self.project, claim["claim_id"], usable,
+                            "The sentence continues toward the page boundary", "尚未人工核页")
+        anomaly = next(item for item in list_anomalies(self.project) if item["anomaly_id"].endswith(":A_BLOCK"))
+        submit_block_repair(self.project, anomaly["anomaly_id"],
+                            "The expedition left the station in spring.", "Professor", "Checked original page")
+        verify_page(self.project, f"{self.source['source_id']}:P1", "Professor", "Checked page image and block order")
+        claim = create_evidence(
+            self.project, claim["claim_id"], usable,
+            "The sentence continues toward the page boundary", "页面关系需保留", "supports",
+        )
+        duplicate = create_evidence(
+            self.project, claim["claim_id"], usable,
+            "The sentence continues toward the page boundary", "重复提交不应新增证据", "supports",
+        )
+        self.assertEqual(len(duplicate["evidence"]), 1)
+        freeze = create_freeze(self.project, "小型冻结包", [claim["claim_id"]])
+        self.assertEqual(freeze["status"], "pending")
+        with self.assertRaisesRegex(ValueError, "approved"):
+            draft_from_freeze(self.project, freeze["freeze_id"], "试写")
+
+        approved = approve_freeze(
+            self.project, freeze["freeze_id"], "Professor", "Checked claims, evidence and boundaries"
+        )
+        self.assertEqual(approved["payload"]["approval"]["reviewer"], "Professor")
+        self.assertIn("boundaries", approved["payload"]["approval"]["reason"])
+        artifact = draft_from_freeze(self.project, approved["freeze_id"], "试写")
+        version = artifact["versions"][0]
+        self.assertIn("物理页 1", version["content"])
+        self.assertEqual(len(version["source_refs"]), 1)
+        review = review_artifact(self.project, version["version_id"])
+        self.assertEqual(review["status"], "passed")
+        exported = export_artifact(self.project, artifact["artifact_id"])
+        self.assertTrue((self.project / exported["project_path"]).is_file())
+        translation = translate_evidence(
+            self.project, claim["evidence"][0]["evidence_id"], "Chinese",
+            lambda text, language: "该句延伸至页面边界。",
+        )
+        self.assertEqual(translation["artifact_type"], "evidence_translation")
+        self.assertIn("该句延伸至页面边界", translation["versions"][0]["content"])
+
+    def test_browser_receipt_rejects_secrets_and_memory_stays_local_candidate(self) -> None:
+        session = create_browser_session(self.project, "https://example.org/search?q=archive", "example.org")
+        self.assertEqual(session["status"], "user_controlled")
+        reused = create_browser_session(self.project, "https://example.org/another", "example.org")
+        self.assertEqual(reused["session_id"], session["session_id"])
+        self.assertTrue(reused["reused"])
+        with patch("research_workbench.scholarship._agent_browser_executable", return_value=("agent-browser.exe", "test")), patch(
+            "research_workbench.scholarship._chromium_browser_executable", return_value=("chrome.exe", "test")
+        ), patch(
+            "research_workbench.scholarship.subprocess.Popen"
+        ) as launch:
+            launched = launch_controlled_browser(self.project, session["session_id"])
+        self.assertEqual(launched["status"], "controlled_browser_open")
+        self.assertIn("--headed", launch.call_args.args[0])
+        self.assertIn("--restore", launch.call_args.args[0])
+        self.assertEqual(launch.call_args.args[0][1:3], ["--executable-path", "chrome.exe"])
+        with self.assertRaisesRegex(ValueError, "credential"):
+            create_browser_session(self.project, "https://example.org/?token=secret", "example.org")
+        candidate = create_memory_candidate(
+            self.project, "negative_result", "限定检索未找到直接研究。", [self.source["source_id"]]
+        )
+        decided = decide_memory_candidate(self.project, candidate["candidate_id"], True)
+        self.assertEqual(decided["status"], "approved_local")
+
+    def test_cross_page_evidence_keeps_all_confirmed_block_anchors(self) -> None:
+        first = f"{self.source['source_id']}:B2"
+        second = f"{self.source['source_id']}:B3"
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE pages SET use_state = 'research_usable', verification_state = 'human_verified'"
+            )
+            connection.execute(
+                """UPDATE blocks SET use_state = 'research_usable', verification_state = 'human_verified'
+                   WHERE block_id IN (?, ?)""",
+                (first, second),
+            )
+            connection.execute(
+                """UPDATE page_relations SET relation_type = 'continues_on_next_page',
+                          human_value = '{"continues": true}',
+                          verification_state = 'human_repaired'
+                   WHERE from_block_id = ? AND to_block_id = ?""",
+                (first, second),
+            )
+        claim = create_claim(self.project, "跨页记载构成同一条证据。")
+        claim = create_evidence(
+            self.project,
+            claim["claim_id"],
+            first,
+            "The sentence continues toward the page boundary and ends on the following page.",
+            "人工确认跨页续接",
+            "supports",
+            [first, second],
+        )
+        evidence = claim["evidence"][0]
+        self.assertEqual(evidence["block_ids"], [first, second])
+        self.assertEqual(evidence["physical_pages"], [1, 2])
+
+        duplicate = create_evidence(
+            self.project,
+            claim["claim_id"],
+            first,
+            "The sentence continues toward the page boundary and ends on the following page.",
+            "重复提交不应新增",
+            "supports",
+            [first, second],
+        )
+        self.assertEqual(len(duplicate["evidence"]), 1)
+
+    def test_schema_four_tables_are_created(self) -> None:
+        with connect(self.project) as connection:
+            version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
+            tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertEqual(version, SCHEMA_VERSION)
+        self.assertTrue({"claims", "evidence_items", "evidence_freezes", "browser_sessions"} <= tables)
+
+    def test_loopback_api_exposes_conversation_workspace_and_research_objects(self) -> None:
+        server = build_server(
+            self.project, port=0, library_root=self.root / "library",
+            workspace_root=self.root / "workspace-api",
+        )
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        base = f"http://127.0.0.1:{server.server_port}"
+
+        def post(path: str, payload: dict[str, object]) -> dict[str, object]:
+            request = Request(
+                base + path, data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
+            return json.loads(urlopen(request, timeout=5).read())
+
+        try:
+            snapshot = json.loads(urlopen(base + "/api/snapshot", timeout=5).read())
+            self.assertEqual(snapshot["workspace"]["projects"][0]["title"], "D1 demo")
+            claim = post("/api/claim/create", {"text": "API claim"})
+            session = post("/api/browser/session", {
+                "start_url": "https://example.org/search", "allowed_domain": "example.org",
+            })
+            self.assertEqual(claim["status"], "candidate")
+            self.assertEqual(session["status"], "user_controlled")
+            html = urlopen(base + "/", timeout=5).read().decode()
+            self.assertIn("研究浏览器", html)
+            self.assertIn("projectSelect", html)
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
+
+
+if __name__ == "__main__":
+    unittest.main()

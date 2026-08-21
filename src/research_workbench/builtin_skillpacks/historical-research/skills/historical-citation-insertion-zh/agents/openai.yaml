@@ -1,0 +1,4 @@
+interface:
+  display_name: "中文史学注释插入"
+  short_description: "导入格式要求，核定版本与页码后插入或改写中文史学注释"
+  default_prompt: "Use $historical-citation-insertion-zh to insert or reformat Chinese historical footnotes according to the supplied style requirements and verified source pages."

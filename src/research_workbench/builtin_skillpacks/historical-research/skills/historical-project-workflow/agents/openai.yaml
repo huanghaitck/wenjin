@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学项目流程"
+  short_description: "建立并推进史学研究项目的阶段、人工门禁、状态记录与有界回退"
+  default_prompt: "Use $historical-project-workflow to start or advance an explicitly authorized historical research project."
+policy:
+  allow_implicit_invocation: true

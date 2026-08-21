@@ -1,0 +1,1 @@
+{"main-local":{"identifier":"main-local","description":"The bundled desktop shell may call only application commands exposed by Rust.","local":true,"windows":["main"],"permissions":["core:default"]}}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "史源与版本批判"
+  short_description: "核查材料生成、版本传递、译本关系、证词独立性、沉默与引文边界"
+  default_prompt: "Use $historical-source-criticism to reconstruct the source lineage and evidentiary limits of these materials."
+policy:
+  allow_implicit_invocation: true

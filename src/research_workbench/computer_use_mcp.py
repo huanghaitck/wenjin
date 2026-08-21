@@ -1,0 +1,212 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import subprocess
+import tempfile
+import uuid
+import warnings
+from pathlib import Path
+from typing import Any
+
+warnings.filterwarnings(
+    "ignore",
+    message="Field 'lifespan' has an incomplete definition.*",
+)
+
+from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+from PIL import ImageGrab
+import uiautomation as automation
+
+
+server = FastMCP("wenjin-computer-use")
+READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+ACT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+EXEC = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+
+
+def _rect(control: Any) -> dict[str, int]:
+    value = control.BoundingRectangle
+    return {
+        "left": int(value.left), "top": int(value.top),
+        "right": int(value.right), "bottom": int(value.bottom),
+        "width": int(value.width()), "height": int(value.height()),
+    }
+
+
+def _node(control: Any, reference: str) -> dict[str, Any]:
+    password = bool(getattr(control, "IsPassword", False))
+    return {
+        "ref": reference,
+        "name": "[password]" if password else str(getattr(control, "Name", ""))[:300],
+        "control_type": str(getattr(control, "ControlTypeName", "")),
+        "automation_id": str(getattr(control, "AutomationId", ""))[:300],
+        "window_handle": int(getattr(control, "NativeWindowHandle", 0) or 0),
+        "enabled": bool(getattr(control, "IsEnabled", False)),
+        "offscreen": bool(getattr(control, "IsOffscreen", False)),
+        "password": password,
+        "rect": _rect(control),
+    }
+
+
+def _walk(control: Any, reference: str, depth: int, limit: int, output: list[dict[str, Any]]) -> None:
+    if len(output) >= limit:
+        return
+    output.append(_node(control, reference))
+    if depth <= 0:
+        return
+    for index, child in enumerate(control.GetChildren()):
+        if len(output) >= limit:
+            break
+        _walk(child, f"{reference}.{index}", depth - 1, limit, output)
+
+
+def _resolve(reference: str) -> Any:
+    parts = reference.split(".")
+    if not parts or not parts[0].startswith("w"):
+        raise ValueError("computer control ref must start with a window handle")
+    try:
+        control = automation.ControlFromHandle(int(parts[0][1:]))
+        for part in parts[1:]:
+            control = control.GetChildren()[int(part)]
+    except (ValueError, IndexError, OSError) as error:
+        raise ValueError("computer control ref is stale; take a new desktop snapshot") from error
+    return control
+
+
+@server.tool(annotations=READ)
+def computer_status() -> dict[str, Any]:
+    """Return the bounded Windows Computer Use backend status."""
+    return {
+        "backend": "Windows UI Automation",
+        "screen_width": automation.GetScreenSize()[0],
+        "screen_height": automation.GetScreenSize()[1],
+        "process_id": os.getpid(),
+    }
+
+
+@server.tool(annotations=READ)
+def window_list(limit: int = 50) -> dict[str, Any]:
+    """List visible top-level desktop windows without reading password values."""
+    windows = []
+    for control in automation.GetRootControl().GetChildren():
+        if control.IsOffscreen or not control.Name:
+            continue
+        windows.append(_node(control, f"w{int(control.NativeWindowHandle)}"))
+        if len(windows) >= max(1, min(limit, 100)):
+            break
+    return {"windows": windows, "count": len(windows)}
+
+
+@server.tool(annotations=READ)
+def desktop_snapshot(window_handle: int = 0, depth: int = 4, limit: int = 250) -> dict[str, Any]:
+    """Return a bounded accessibility tree for one window or all top-level windows."""
+    depth, limit = max(0, min(depth, 8)), max(1, min(limit, 1000))
+    controls: list[dict[str, Any]] = []
+    if window_handle:
+        root = automation.ControlFromHandle(window_handle)
+        _walk(root, f"w{window_handle}", depth, limit, controls)
+    else:
+        for root in automation.GetRootControl().GetChildren():
+            if root.IsOffscreen or not root.Name:
+                continue
+            _walk(root, f"w{int(root.NativeWindowHandle)}", min(depth, 2), limit, controls)
+            if len(controls) >= limit:
+                break
+    return {"controls": controls, "count": len(controls), "truncated": len(controls) >= limit}
+
+
+@server.tool(annotations=READ)
+def screen_capture() -> dict[str, Any]:
+    """Capture the current desktop to a local PNG and return its identity."""
+    target = Path(tempfile.gettempdir()) / "wenjin-computer-use" / "screenshots"
+    target.mkdir(parents=True, exist_ok=True)
+    path = target / f"screen-{uuid.uuid4().hex}.png"
+    image = ImageGrab.grab(all_screens=True)
+    image.save(path, "PNG")
+    data = path.read_bytes()
+    return {
+        "path": str(path), "width": image.width, "height": image.height,
+        "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+    }
+
+
+@server.tool(annotations=ACT)
+def focus_control(ref: str) -> dict[str, Any]:
+    """Focus a control from the latest accessibility snapshot."""
+    control = _resolve(ref)
+    control.SetFocus()
+    return {"focused": True, "control": _node(control, ref)}
+
+
+@server.tool(annotations=ACT)
+def click_control(ref: str) -> dict[str, Any]:
+    """Click a control from the latest accessibility snapshot."""
+    control = _resolve(ref)
+    control.Click()
+    return {"clicked": True, "control": _node(control, ref)}
+
+
+@server.tool(annotations=ACT)
+def click_coordinates(x: int, y: int, button: str = "left") -> dict[str, Any]:
+    """Click visible screen coordinates."""
+    if button not in {"left", "right"}:
+        raise ValueError("button must be left or right")
+    if button == "left":
+        automation.Click(x, y)
+    else:
+        automation.RightClick(x, y)
+    return {"clicked": True, "x": x, "y": y, "button": button}
+
+
+@server.tool(annotations=ACT)
+def type_text(ref: str, text: str) -> dict[str, Any]:
+    """Focus a non-password control and enter Unicode text."""
+    control = _resolve(ref)
+    if bool(getattr(control, "IsPassword", False)):
+        raise ValueError("Computer Use never enters password controls")
+    control.SetFocus()
+    control.SendKeys(text, waitTime=0.01)
+    return {"typed": True, "characters": len(text), "control": _node(control, ref)}
+
+
+@server.tool(annotations=ACT)
+def press_keys(keys: str) -> dict[str, Any]:
+    """Send a uiautomation key sequence to the currently focused control."""
+    if not keys or len(keys) > 200:
+        raise ValueError("keys must contain 1-200 characters")
+    automation.SendKeys(keys, waitTime=0.01)
+    return {"sent": True, "keys": keys}
+
+
+@server.tool(annotations=EXEC)
+def launch_program(executable: str, args: list[str] | None = None, cwd: str = "") -> dict[str, Any]:
+    """Launch one explicit executable without invoking a shell."""
+    path = Path(executable).expanduser().resolve()
+    if not path.is_file() or path.suffix.casefold() not in {".exe", ".com", ".bat", ".cmd"}:
+        raise FileNotFoundError("executable is unavailable or unsupported")
+    process = subprocess.Popen([str(path), *(args or [])], cwd=cwd or None)
+    return {"launched": True, "process_id": process.pid, "executable": str(path)}
+
+
+@server.tool(annotations=EXEC)
+def run_command(executable: str, args: list[str] | None = None, cwd: str = "", timeout: int = 120) -> dict[str, Any]:
+    """Run one explicit executable without shell expansion and return bounded output."""
+    path = Path(executable).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError("executable is unavailable")
+    completed = subprocess.run(
+        [str(path), *(args or [])], cwd=cwd or None, capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=max(1, min(timeout, 1800)),
+    )
+    return {
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-10000:],
+        "executable": str(path),
+    }
+
+
+def main() -> None:
+    server.run(transport="stdio")

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "historical-research-workbench"
+version = "0.1.1"
+description = "Wenjin: a local-first, model-selectable humanities and social science research workbench"
+requires-python = ">=3.13"
+license = "AGPL-3.0-only"
+dependencies = ["certifi>=2025.1,<2027", "mcp>=1.10,<2", "PyMuPDF>=1.26,<2", "python-docx>=1.2,<2", "qrcode>=8.2,<9", "uiautomation==2.0.29"]
+
+[project.optional-dependencies]
+desktop = ["pyinstaller>=6.21,<7"]
+
+[project.scripts]
+hrw = "research_workbench.cli:main"
+wenjin = "research_workbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+research_workbench = [
+  "web_assets/*.html",
+  "web_assets/*.js",
+  "web_assets/*.css",
+  "builtin_skills/*/SKILL.md",
+  "builtin_skills/*/agents/*.yaml",
+  "builtin_skills/*/references/*.md",
+  "builtin_skills/*/scripts/*.py",
+  "builtin_skillpacks/*/.codex-plugin/*.json",
+  "builtin_skillpacks/*/LICENSE*",
+  "builtin_skillpacks/*/NOTICE.md",
+  "builtin_skillpacks/*/assets/templates/*",
+  "builtin_skillpacks/*/assets/tests/*",
+  "builtin_skillpacks/*/references/*.md",
+  "builtin_skillpacks/*/references/domains/*.md",
+  "builtin_skillpacks/*/scripts/*.py",
+  "builtin_skillpacks/*/skills/*/SKILL.md",
+  "builtin_skillpacks/*/skills/*/agents/*.yaml",
+  "builtin_skillpacks/*/skills/*/assets/*",
+  "builtin_skillpacks/*/skills/*/references/*.md",
+  "builtin_plugins/*/wenjin-plugin.json",
+  "builtin_plugins/*/skills/*/SKILL.md",
+]

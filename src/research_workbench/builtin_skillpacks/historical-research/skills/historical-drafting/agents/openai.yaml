@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史论文写作"
+  short_description: "由唯一写作主体严格依据冻结证据包起草论文、章节或受控缺口票"
+  default_prompt: "Use $historical-drafting to draft one historical manuscript strictly from the approved frozen evidence package."
+policy:
+  allow_implicit_invocation: true

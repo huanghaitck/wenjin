@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "问津",
+  "version": "0.1.1",
+  "identifier": "cn.hrw.historical-research-workbench",
+  "build": {
+    "frontendDist": "../desktop-shell"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "问津｜人文社会科学研究工作台",
+        "url": "index.html",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1080,
+        "minHeight": 700,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src http://127.0.0.1:*; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "license": "AGPL-3.0-only",
+    "licenseFile": "../LICENSE",
+    "resources": {
+      "../LICENSE": "licenses/AGPL-3.0.txt",
+      "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
+      "../licenses/Tencent-openclaw-weixin-MIT.txt": "licenses/Tencent-openclaw-weixin-MIT.txt",
+      "../licenses/python-qrcode-BSD-3-Clause.txt": "licenses/python-qrcode-BSD-3-Clause.txt",
+      "../node_modules/agent-browser/bin/agent-browser-win32-x64.exe": "tools/agent-browser.exe",
+      "../node_modules/agent-browser/LICENSE": "licenses/agent-browser-APACHE-2.0.txt"
+    },
+    "externalBin": ["binaries/hrw-sidecar"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

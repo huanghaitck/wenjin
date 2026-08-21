@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>问津｜人文社会科学研究工作台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台</span></div>
+    <div class="importer">
+      <button id="agentMode" class="mode-active" data-i18n="nav_agent">研究对话</button>
+      <button id="libraryMode" data-i18n="nav_library">研究图书馆</button>
+      <button id="articleMode" data-i18n="nav_article">文章工作台</button>
+      <button id="skillsMode" data-i18n="nav_skills">技能与插件</button>
+      <button id="settingsMode" data-i18n="nav_settings">AI 与 Agent</button>
+      <button id="languageToggle" title="Switch language">EN</button>
+    </div>
+  </header>
+
+  <div id="notice" role="status">正在读取本地项目……</div>
+  <nav id="libraryViews" class="subview-tabs library-viewbar" aria-label="图书馆子页面" hidden>
+    <button id="showLibraryList" data-library-view="list" class="selected" data-zh="书目与书架" data-en="Catalog and shelves">书目与书架</button>
+    <button id="showLibraryChronicle" data-library-view="chronicle" data-zh="史料长编" data-en="Source chronicle">史料长编</button>
+    <button id="showLibraryGraph" data-library-view="graph" data-zh="知识图谱" data-en="Knowledge graph">知识图谱</button>
+    <button id="showLibraryIntake" data-library-view="intake" data-zh="文件盘点与入库" data-en="File intake">文件盘点与入库</button>
+  </nav>
+  <main id="libraryWorkbench" class="library-workbench" hidden>
+    <aside class="inventory-panel surface">
+      <header class="agent-heading"><div><h2>只读盘点</h2><p id="libraryRoot">正在读取图书馆位置……</p></div></header>
+      <div class="inventory-form">
+        <strong>图书馆收件箱</strong>
+        <label>单份 PDF（项目私有兼容导入）<input id="pdfFile" type="file" accept="application/pdf"></label>
+        <button id="choosePdf" class="desktop-only">从电脑选择 PDF</button>
+        <button id="importButton">导入、清洗并登记页面关系</button>
+        <label>材料所在文件夹<input id="scanRoot" placeholder="例如 D:\History\Books"></label>
+        <button id="chooseFolder" class="desktop-only">从电脑选择文件夹</button>
+        <label>验收 Skill<select id="intakeSkill"></select></label>
+        <button id="scanLibrary" class="primary-inline">只读盘点，先不入库</button>
+        <p class="boundary-note">仅查看你填写的目录；不会移动、改名或修改原文件。</p>
+      </div>
+      <div id="scanSummary" class="scan-summary"></div>
+      <div id="scanCandidates" class="scan-candidates"></div>
+      <button id="approveCandidates" class="primary library-approve" hidden>批准所选材料原地入库</button>
+      <button id="approveAllCandidates" class="primary library-approve" hidden>按建议分类并批量入库</button>
+    </aside>
+
+    <section class="catalog-panel surface">
+      <header class="agent-heading">
+        <div><h1>研究图书馆</h1><p id="libraryCounts">作品、文件与精确版本分层保存</p></div>
+        <div class="library-search"><select id="libraryShelf"><option value="">全部书架</option></select><input id="libraryQuery" placeholder="题名、作者、出版社、标签或前段文本"><button id="searchLibrary">检索</button></div>
+      </header>
+      <div id="workList" class="work-list"></div>
+      <div id="sourceChronicle" class="source-chronicle" hidden></div>
+      <div id="libraryGraph" class="library-graph" hidden></div>
+    </section>
+
+    <aside class="work-detail-panel surface">
+      <header class="agent-heading"><div><h2>作品与版本</h2><p>哈希只标识精确文件版本</p></div></header>
+      <div id="workDetail" class="work-detail"></div>
+      <section class="project-source-box">
+        <h3>当前项目文献</h3>
+        <select id="sourceSelect" aria-label="选择项目文献"></select>
+        <button id="openSourceRepair">打开原页与文本复核</button>
+        <small>修复是具体文件版本的下属动作；旧项目处理记录暂以兼容方式读取。</small>
+      </section>
+    </aside>
+  </main>
+
+  <main id="agentWorkbench" class="agent-workbench">
+    <aside class="thread-panel surface">
+      <header class="project-heading">
+        <label>当前项目<select id="projectSelect"></select></label>
+        <button id="newProject">新建项目</button>
+      </header>
+      <header class="agent-heading"><h2>研究线程</h2><button id="newThread">＋</button></header>
+      <div id="threadList" class="thread-list"></div>
+    </aside>
+
+    <section class="conversation-panel surface">
+      <header class="agent-heading">
+        <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
+        <div>
+          <details id="planningOptions" class="conversation-options">
+            <summary>上下文选项</summary>
+            <label>本轮使用<select id="planningMode"><option value="independent_planning">只处理当前问题</option><option value="guided_execution">沿用已批准研究计划</option></select></label>
+            <small>项目已有批准计划时，可以选择沿用；历史版本继续保留。</small>
+          </details>
+          <label>Agent 权限<select id="agentAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label>
+          <label>主模型<select id="modelProfile"></select></label>
+        </div>
+      </header>
+      <div id="messages" class="messages"></div>
+      <div class="composer">
+        <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
+        <div id="slashMenu" class="slash-menu" hidden></div>
+        <button id="sendMessage" class="primary-inline">发送</button>
+      </div>
+    </section>
+
+    <aside class="activity-panel surface">
+      <header class="agent-heading"><div><h2>研究上下文</h2><p>项目材料与研究记录</p></div></header>
+      <nav id="contextTabs" class="context-tabs">
+        <button data-context="sources" class="selected">项目文献</button>
+        <button data-context="design">研究计划</button>
+        <button data-context="events">逐事件表</button>
+        <button data-context="library">图书馆</button>
+        <button data-context="retrieval">联网研究</button>
+        <button data-context="evidence">证据与论点</button>
+        <button data-context="writing">冻结与写作</button>
+        <button data-context="browser">研究浏览器</button>
+        <button data-context="memory">记忆候选</button>
+      </nav>
+      <div id="contextContent" class="context-content"></div>
+      <div id="approvalPanel"></div>
+      <details class="run-details"><summary>运行与工具回执</summary><div id="runTimeline" class="run-timeline"></div></details>
+    </aside>
+  </main>
+
+  <main id="skillsWorkbench" class="settings-workbench" hidden>
+    <section class="settings-main surface">
+      <header class="agent-heading">
+        <div><h1>技能与插件库</h1><p>研究技能、内部流程和外部工具分开列出</p></div>
+        <input id="skillQuery" placeholder="搜索技能、产物或 Agent 程序">
+      </header>
+      <div id="skillCatalog" class="settings-grid"></div>
+    </section>
+  </main>
+
+  <main id="articleWorkbench" class="article-workbench" hidden>
+    <aside class="manuscript-panel surface">
+      <header class="agent-heading"><div><h2>稿件与章节</h2><p>稿件结构与历史版本</p></div></header>
+      <details class="import-manuscript">
+        <summary>新建或导入稿件</summary>
+        <label>稿件题名<input id="manuscriptTitle" placeholder="论文题目"></label>
+        <label>Markdown 正文<textarea id="manuscriptMarkdown" placeholder="# 导言&#10;&#10;现有正文……"></textarea></label>
+        <button id="importManuscript" class="primary-inline">导入并按标题分节</button>
+        <label>或选择 DOCX<input id="manuscriptDocx" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"></label>
+        <button id="chooseDocx" class="desktop-only">从电脑选择 Word 稿</button>
+        <button id="importDocx">导入 DOCX（生成保真报告）</button>
+      </details>
+      <div id="manuscriptList" class="manuscript-list"></div>
+    </aside>
+
+    <section class="section-editor surface">
+      <header class="agent-heading"><div><h1 id="sectionHeading">选择一个章节</h1><p id="sectionVersion">人工批准后才产生新版本</p></div></header>
+      <div class="editor-toolbar">
+        <label class="toolbar-select">稿件题名<input id="manuscriptTitleEdit" aria-label="稿件题名"></label>
+        <button id="paragraphButton">正文</button><button id="quoteButton">引文</button>
+        <button id="insertSection">在此之前新增章节</button><button id="insertSectionAfter">在此之后新增章节</button><button id="insertTable">插入表格</button><button id="insertNote">插入注释</button>
+        <button id="editorZoomOut" title="缩小正文">A−</button><button id="editorZoomIn" title="放大正文">A＋</button><button id="readingMode">阅读模式</button>
+        <button id="saveDocument" class="primary-inline">保存新修订</button>
+        <label class="toolbar-select">投稿模板<select id="exportTemplate"></select></label>
+        <button id="exportMarkdown">导出 Markdown</button><button id="exportDocx">导出 Word</button>
+        <button id="openInWord" class="desktop-only" disabled>在 Microsoft Word 中打开</button>
+        <button id="reimportWord" class="desktop-only">导回 Word 修改稿</button>
+      </div>
+      <article id="documentCanvas" class="document-canvas" contenteditable="true" spellcheck="true" aria-label="结构化稿件编辑区"></article>
+      <details class="proposal-drawer"><summary>对照待审写作提案</summary><textarea id="sectionProposal"></textarea></details>
+      <textarea id="sectionBase" hidden></textarea>
+      <footer id="manuscriptStats" class="manuscript-status">尚未选择稿件</footer>
+    </section>
+
+    <aside class="authoring-control surface">
+      <header class="agent-heading"><div><h2>研究侧栏</h2><p id="selectionContext">当前稿件、修订、章节与选区会随消息保存</p></div></header>
+      <nav id="authoringTabs" class="context-tabs">
+        <button data-authoring="dialogue" class="selected">研究对话</button>
+        <button data-authoring="write">润色/分节</button>
+        <button data-authoring="notes">注释</button>
+        <button data-authoring="evidence">证据/主张</button>
+        <button data-authoring="reading">批量阅读</button>
+        <button data-authoring="historiography">学术史</button>
+        <button data-authoring="review">多角色评审</button>
+        <button data-authoring="journal">期刊模板</button>
+        <button data-authoring="versions">版本</button>
+      </nav>
+      <div id="authoringContent" class="context-content"></div>
+    </aside>
+  </main>
+
+  <main id="browserWorkbench" class="browser-workbench" hidden>
+    <section class="browser-center surface">
+      <header class="browser-bar"><input id="browserAddress" value="https://www.crossref.org/"><button id="loadBrowser" class="primary-inline">打开研究网页</button><button id="controlledBrowser">受控浏览器打开</button><button id="externalBrowser">普通浏览器打开</button></header>
+      <iframe id="researchFrame" title="研究浏览器预览" sandbox="allow-forms allow-scripts"></iframe>
+      <p class="boundary-note browser-warning">知网等数据库禁止嵌入时，请使用受控浏览器；登录、验证码和滑块由你在可见窗口完成。工作台不读取 Cookie，也不绕过付费墙或许可限制。</p>
+    </section>
+    <aside class="browser-side surface"><header class="agent-heading"><div><h2>浏览会话</h2><p>域名范围、收集篮与回执</p></div></header><div id="browserControls" class="context-content"></div></aside>
+  </main>
+
+  <main id="settingsWorkbench" class="settings-workbench" hidden>
+    <section class="settings-main surface">
+      <header class="agent-heading"><div><h1 id="settingsHeading">AI 与 Agent</h1><p id="settingsLead">主模型、辅助模型、MoA、研究人格、记忆与连接器</p></div></header>
+      <nav id="settingsTabs" class="subview-tabs settings-tabs" aria-label="AI 与 Agent 子页面">
+        <button data-settings-tab="models" class="selected" data-zh="模型" data-en="Models">模型</button>
+        <button data-settings-tab="routing" data-zh="辅助与 MoA" data-en="Routing & MoA">辅助与 MoA</button>
+        <button data-settings-tab="persona" data-zh="研究人格" data-en="Persona">研究人格</button>
+        <button data-settings-tab="memory" data-zh="记忆" data-en="Memory">记忆</button>
+        <button data-settings-tab="connectors" data-zh="连接器与 MCP" data-en="Connectors & MCP">连接器与 MCP</button>
+        <button data-settings-tab="plugins" data-zh="领域包" data-en="Domain packs">领域包</button>
+        <button data-settings-tab="runtime" data-zh="当前状态" data-en="Runtime">当前状态</button>
+      </nav>
+      <div id="settingsContent" class="settings-grid"></div>
+    </section>
+  </main>
+
+  <main id="pdfWorkbench" class="workbench" hidden>
+    <aside class="page-panel surface">
+      <h2 id="pageRailTitle">物理页</h2>
+      <div class="page-jump"><input id="pageJump" type="number" min="1" placeholder="页码"><button id="jumpToPage">跳转</button></div>
+      <div id="pageRail" class="page-rail"></div>
+    </aside>
+
+    <section class="source-panel surface">
+      <header class="panel-heading">
+        <div><button id="backToLibrary">← 返回图书馆</button><h1 id="sourceTitle">尚未导入文献</h1><p id="pageLabel">原 PDF 页面与文本块</p></div>
+        <div class="zoom-controls"><button id="zoomOut">−</button><span id="zoomValue">100%</span><button id="zoomIn">＋</button></div>
+      </header>
+      <div class="page-canvas"><img id="pageImage" alt="当前 PDF 原页"><p id="locatorNotice" class="locator-notice" hidden>这是译稿定位文本，不是原页。可用它查找地名和段落，但建立证据前必须回到原版 PDF 核页。</p></div>
+    </section>
+
+    <section class="repair-panel surface">
+      <header class="panel-heading"><div><h2>提取文本</h2><p id="sourceState">等待材料</p></div></header>
+      <div class="review-fields">
+        <label>复核人<input id="reviewer" value="human-reviewer"></label>
+        <label>修正依据<input id="reason" placeholder="例如：逐字核对当前原页"></label>
+        <label>印刷页码<input id="printedPage" placeholder="按原页页眉或页脚填写"></label>
+        <button id="savePrintedPage">保存页码关系</button>
+      </div>
+      <details class="citation-metadata-panel">
+        <summary>核验这份文献的引文元数据</summary>
+        <div class="review-fields">
+          <label>作者<input id="citationAuthor"></label>
+          <label>题名<input id="citationTitle"></label>
+          <label>版本/卷册<input id="citationEdition"></label>
+          <label>译者<input id="citationTranslator"></label>
+          <label>出版地<input id="citationPlace"></label>
+          <label>出版者<input id="citationPublisher"></label>
+          <label>年份<input id="citationYear"></label>
+          <label>文献类型码<input id="citationTypeCode" placeholder="如 M、J、A"></label>
+          <label>刊名<input id="citationJournal"></label>
+          <label>卷<input id="citationVolume"></label>
+          <label>期<input id="citationIssue"></label>
+          <label>文献页码范围<input id="citationPageRange"></label>
+          <label>核验人<input id="citationVerifiedBy" value="human-reviewer"></label>
+          <button id="saveCitationMetadata">保存人工核验元数据</button>
+          <button id="exportCurrentReadingMarkdown">导出当前阅读Markdown</button>
+          <button id="exportVerifiedReadingMarkdown">导出仅核验Markdown</button>
+        </div>
+        <small id="citationMetadataState">题名页与书目信息待核。</small>
+      </details>
+      <section class="model-assist">
+        <div class="model-heading">
+          <div><h2>模型修复建议</h2><p id="ocrCapability">正在检查视觉模型……</p></div>
+          <button id="ocrPropose" hidden>生成当前页建议</button>
+        </div>
+        <div id="ocrProposal"></div>
+      </section>
+      <div id="blocks" class="blocks"></div>
+      <button id="pageVerify" class="primary" hidden>确认本页与原图一致</button>
+      <button id="pageRepair" class="primary" hidden>提交整页修正</button>
+      <section class="relation-section"><h2>跨页关系</h2><div id="relations"></div></section>
+      <section class="anomaly-section"><h2>待复核项</h2><div id="anomalies"></div></section>
+    </section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

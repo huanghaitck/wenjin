@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史论文评审返修"
+  short_description: "组织独立专项评审、意见冲突合并、作者答辩和单一稿件定向返修"
+  default_prompt: "Use $historical-review-and-revision to review this history manuscript and produce one controlled revision plan."
+policy:
+  allow_implicit_invocation: true
