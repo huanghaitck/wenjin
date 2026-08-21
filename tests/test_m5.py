@@ -15,6 +15,7 @@ from research_workbench.library import (
     _material_type,
     _pdf_bibliography,
     approve_candidates,
+    decide_literature_relation,
     link_work_to_project,
     library_graph,
     move_work_to_shelf,
@@ -24,6 +25,7 @@ from research_workbench.library import (
     work_detail,
 )
 from research_workbench.library_store import connect_library
+from research_workbench.db import connect
 from research_workbench.project_library import add_library_file_to_project
 from research_workbench.service import initialize_project
 from research_workbench.skill_registry import discover_skills
@@ -165,8 +167,25 @@ class M5ResearchLibraryTests(unittest.TestCase):
         added = add_library_file_to_project(
             self.project, self.library, work_id, linked["files"][0]["file_id"]
         )
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE pages SET verification_state='human_verified', use_state='research_usable' WHERE source_id=?",
+                (added["source"]["source_id"],),
+            )
+            connection.execute(
+                """UPDATE blocks SET verification_state='human_verified', use_state='research_usable'
+                   WHERE page_id IN (SELECT page_id FROM pages WHERE source_id=?)""",
+                (added["source"]["source_id"],),
+            )
         linked_graph = library_graph(self.project, "Imperial Archive", library_root=self.library)
         self.assertEqual(linked_graph["work_cards"][0]["project_source"]["source_id"], added["source"]["source_id"])
+        content_graph = library_graph(self.project, library_root=self.library)["content_graph"]
+        content_types = {node["node_type"] for node in content_graph["nodes"]}
+        self.assertIn("source", content_types)
+        self.assertIn("page", content_types)
+        self.assertIn("content", content_types)
+        self.assertTrue(any("Historical archive" in node.get("excerpt", "") for node in content_graph["nodes"]))
+        self.assertIn("contains_content", {edge["relation"] for edge in content_graph["edges"]})
         version = linked["files"][0]["versions"][0]
         self.assertEqual(version["skill_name"], "historical-material-intake")
         self.assertEqual(len(version["skill_sha256"]), 64)
@@ -193,6 +212,34 @@ class M5ResearchLibraryTests(unittest.TestCase):
             _pdf_bibliography(sample, "qdx", "", "", ""),
             ("廿二史考异", "(清)钱大昕撰", "凤凰出版社", "2008"),
         )
+
+    def test_note_title_match_requires_human_decision_before_formal_literature_relation(self) -> None:
+        target = self.materials / "target.md"
+        target.write_text("# Referenced Monograph\n\nHistorical methods and archives." * 10, encoding="utf-8")
+        target_work, _ = self._approve_one(target)
+        update_work(self.project, target_work, {"canonical_title": "Referenced Monograph"}, [], self.library)
+        source = self.materials / "source-study.pdf"
+        document = fitz.open()
+        document.new_page().insert_text((72, 72), "Source Study main argument and evidence.")
+        document.new_page().insert_text((72, 72), "References: Referenced Monograph. University Press.")
+        document.set_metadata({"title": "Source Study", "author": "Scholar B"})
+        document.save(source)
+        document.close()
+        source_work, _ = self._approve_one(source)
+        detail = update_work(self.project, source_work, {"canonical_title": "Source Study"}, [], self.library)
+        add_library_file_to_project(self.project, self.library, source_work, detail["files"][0]["file_id"])
+        graph = library_graph(self.project, library_root=self.library)
+        candidate = next(item for item in graph["literature_relations"] if item["target_work_id"] == target_work)
+        self.assertEqual(candidate["status"], "candidate")
+        decided = decide_literature_relation(
+            self.project, candidate["relation_key"], True, "cites", "researcher", "checked reference page",
+            self.library,
+        )
+        self.assertEqual(decided["status"], "approved")
+        refreshed = library_graph(self.project, library_root=self.library)
+        approved = next(item for item in refreshed["literature_relations"] if item["relation_key"] == candidate["relation_key"])
+        self.assertEqual(approved["relation_type"], "cites")
+        self.assertEqual(approved["status"], "approved")
 
     def test_scan_suggests_all_six_shelves_and_bulk_approval_keeps_files_in_place(self) -> None:
         samples = {

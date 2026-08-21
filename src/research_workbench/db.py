@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 DATABASE_NAME = "project.sqlite3"
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
@@ -920,6 +920,27 @@ ON style_profile_samples(source_id, source_version_id);
 PRAGMA foreign_keys = ON;
 """
 
+MIGRATION_22 = """
+CREATE TABLE IF NOT EXISTS literature_relation_decisions (
+    relation_key TEXT PRIMARY KEY,
+    source_work_id TEXT NOT NULL,
+    target_work_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    page_id TEXT NOT NULL REFERENCES pages(page_id),
+    block_id TEXT NOT NULL REFERENCES blocks(block_id),
+    quote TEXT NOT NULL,
+    status TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decision_reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_literature_relations_status
+ON literature_relation_decisions(status, relation_type, decided_at);
+"""
+
 CITATION_METADATA_COLUMNS = (
     "translator", "journal", "volume", "issue", "page_range",
 )
@@ -1130,7 +1151,7 @@ def _expected_schema_tables() -> set[str]:
     scripts = (
         SCHEMA, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6,
         MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11,
-        MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_19, MIGRATION_20,
+        MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_19, MIGRATION_20, MIGRATION_22,
     )
     return {
         match.group(1)
@@ -1308,6 +1329,13 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (21, utc_now()),
         )
+        version = 21
+    if version < 22:
+        connection.executescript(MIGRATION_22)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (22, utc_now()),
+        )
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -1345,6 +1373,7 @@ def _migrate(connection: sqlite3.Connection) -> None:
         "SELECT 1 FROM pragma_table_info('style_profile_samples') WHERE name = 'sample_role'"
     ).fetchone() is None:
         connection.executescript(MIGRATION_20)
+    connection.executescript(MIGRATION_22)
     _ensure_citation_metadata_columns(connection)
     _ensure_event_comparison_columns(connection)
 
@@ -1391,6 +1420,7 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_16)
         connection.executescript(MIGRATION_19)
         connection.executescript(MIGRATION_20)
+        connection.executescript(MIGRATION_22)
         _ensure_citation_metadata_columns(connection)
         _ensure_event_comparison_columns(connection)
         now = utc_now()

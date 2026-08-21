@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from research_workbench.db import connect
+from research_workbench.content_graph import project_content_graph
 from research_workbench.research_events import (
     _qualified_block_id,
     create_event_candidates,
@@ -122,6 +123,36 @@ class ResearchEventTests(unittest.TestCase):
         self.assertEqual(approved["status"], "approved")
         self.assertEqual(approved["qualification"], "PAGE_LINKED_EVENT_NOT_FROZEN")
         self.assertEqual(approved["notes"], "人工确认后保留")
+
+    def test_approved_normalized_event_fields_share_one_content_entity(self) -> None:
+        events = create_event_candidates(
+            self.project,
+            [{
+                "case_id": f"case-{index}", "event_date": f"1871-10-0{index}",
+                "start_place": "Shared Place", "source_id": self.source["source_id"],
+                "block_ids": [self.block_id],
+                "field_anchors": {
+                    "event_date": [self.block_id], "start_place": [self.block_id],
+                    "original_text": [self.block_id],
+                },
+                "original_text": "The sentence continues toward the page boundary",
+            } for index in (1, 2)],
+            "test-model", model_snapshot={"model": "test-model"},
+        )
+        verify_block(self.project, self.block_id, "Professor", "Exact against the source page")
+        for event in events:
+            decide_event(self.project, event["event_id"], True, "Professor", "approved normalized place")
+        graph = project_content_graph(self.project)
+        places = [
+            node for node in graph["nodes"]
+            if node["node_type"] == "entity" and node.get("entity_type") == "place"
+            and node["label"] == "Shared Place"
+        ]
+        self.assertEqual(len(places), 1)
+        self.assertEqual(
+            sum(edge["relation"] == "starts_at" and edge["target_node_id"] == places[0]["node_id"] for edge in graph["edges"]),
+            2,
+        )
 
     def test_approved_events_can_form_a_pending_freeze_without_duplicate_evidence_rows(self) -> None:
         candidate = self._create()

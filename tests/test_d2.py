@@ -817,7 +817,7 @@ class D2AuthoringReadingTests(unittest.TestCase):
                     "SELECT * FROM reading_notes WHERE note_id LIKE 'RDN_legacy_%' ORDER BY note_id"
                 )
             }
-            connection.execute("DELETE FROM schema_meta WHERE version = 21")
+            connection.execute("DELETE FROM schema_meta WHERE version >= 21")
         raw_connection = sqlite3.connect(database_path(self.project))
         raw_connection.row_factory = sqlite3.Row
         try:

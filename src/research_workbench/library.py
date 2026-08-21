@@ -13,6 +13,7 @@ import fitz
 from .db import connect, project_id, utc_now
 from .library_store import connect_library, initialize_library, resolve_library_root
 from .skill_registry import discover_skills, get_skill
+from .content_graph import project_content_graph
 
 
 SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt", ".docx"}
@@ -813,11 +814,117 @@ def update_work(
     return work_detail(project_root, work_id, root)
 
 
+LITERATURE_RELATION_TYPES = {"cites", "uses_material_from", "reviews", "translates", "mentions_work"}
+
+
+def _literature_relation_candidates(
+    project_root: Path, library_connection: Any, query: str = "", limit: int = 300,
+) -> list[dict[str, Any]]:
+    works = [dict(row) for row in library_connection.execute(
+        "SELECT work_id, canonical_title, author FROM works ORDER BY updated_at DESC"
+    ).fetchall() if len(str(row["canonical_title"]).strip()) >= 4]
+    work_lookup = {item["work_id"]: item for item in works}
+    with connect(project_root) as connection:
+        blocks = connection.execute(
+            """SELECT l.library_work_id AS source_work_id, s.source_id, s.title AS source_title,
+                      p.page_id, p.physical_page, p.printed_page, b.block_id, b.block_type,
+                      COALESCE(b.human_text, b.machine_text) AS text
+               FROM source_library_links l JOIN sources s ON s.source_id = l.source_id
+               JOIN pages p ON p.source_id = s.source_id JOIN blocks b ON b.page_id = p.page_id
+               WHERE b.use_state = 'research_usable' AND (
+                   b.block_type IN ('footnote','bottom_note','note','bibliography','reference')
+                   OR p.physical_page >= (SELECT MAX(p2.physical_page) - 10 FROM pages p2 WHERE p2.source_id = s.source_id)
+               ) ORDER BY s.created_at, p.physical_page, b.block_order LIMIT 5000"""
+        ).fetchall()
+        decisions = {
+            row["relation_key"]: dict(row) for row in connection.execute(
+                "SELECT * FROM literature_relation_decisions"
+            ).fetchall()
+        }
+    candidates: list[dict[str, Any]] = []
+    for block in blocks:
+        text = " ".join(str(block["text"] or "").split())
+        folded = text.casefold()
+        if not text:
+            continue
+        source_work = work_lookup.get(block["source_work_id"], {"canonical_title": block["source_title"], "author": ""})
+        for target in works:
+            if target["work_id"] == block["source_work_id"]:
+                continue
+            title = str(target["canonical_title"]).strip()
+            if title.casefold() not in folded:
+                continue
+            relation_key = hashlib.sha256(
+                f"{block['source_work_id']}\0{target['work_id']}\0{block['block_id']}".encode("utf-8")
+            ).hexdigest()
+            decision = decisions.get(relation_key, {})
+            item = {
+                "relation_key": relation_key,
+                "source_work_id": block["source_work_id"], "source_work_title": source_work["canonical_title"],
+                "target_work_id": target["work_id"], "target_work_title": title,
+                "target_author": target["author"], "source_id": block["source_id"],
+                "page_id": block["page_id"], "block_id": block["block_id"],
+                "physical_page": block["physical_page"], "printed_page": block["printed_page"] or "",
+                "quote": text[:1200], "origin": "exact_registered_title_in_note_or_reference_zone",
+                "status": decision.get("status", "candidate"),
+                "relation_type": decision.get("relation_type", "mentions_work"),
+                "decided_by": decision.get("decided_by", ""),
+                "decision_reason": decision.get("decision_reason", ""),
+            }
+            if query and query.casefold() not in " ".join((
+                item["source_work_title"], item["target_work_title"], item["target_author"], item["quote"],
+            )).casefold():
+                continue
+            candidates.append(item)
+            if len(candidates) >= limit:
+                return candidates
+    return candidates
+
+
+def decide_literature_relation(
+    project_root: Path, relation_key: str, approved: bool, relation_type: str,
+    reviewer: str, reason: str, library_root: Path | None = None,
+) -> dict[str, Any]:
+    relation_key, reviewer, reason = (str(value).strip() for value in (relation_key, reviewer, reason))
+    if not relation_key or not reviewer or not reason:
+        raise ValueError("relation key, reviewer and reason are required")
+    if relation_type not in LITERATURE_RELATION_TYPES:
+        raise ValueError(f"unsupported literature relation type: {relation_type}")
+    root = library_root_for(project_root, library_root)
+    with connect_library(root) as library_connection:
+        candidate = next((item for item in _literature_relation_candidates(
+            project_root, library_connection, limit=5000
+        ) if item["relation_key"] == relation_key), None)
+    if candidate is None:
+        raise KeyError("literature relation candidate no longer matches the current source text")
+    status = "approved" if approved else "rejected"
+    now = utc_now()
+    with connect(project_root) as connection:
+        connection.execute(
+            """INSERT INTO literature_relation_decisions(
+                   relation_key, source_work_id, target_work_id, relation_type, source_id,
+                   page_id, block_id, quote, status, origin, decided_by, decision_reason,
+                   created_at, decided_at
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(relation_key) DO UPDATE SET relation_type=excluded.relation_type,
+                   quote=excluded.quote, status=excluded.status, origin=excluded.origin,
+                   decided_by=excluded.decided_by, decision_reason=excluded.decision_reason,
+                   decided_at=excluded.decided_at""",
+            (relation_key, candidate["source_work_id"], candidate["target_work_id"], relation_type,
+             candidate["source_id"], candidate["page_id"], candidate["block_id"], candidate["quote"],
+             status, candidate["origin"], reviewer, reason, now, now),
+        )
+    return {**candidate, "status": status, "relation_type": relation_type,
+            "decided_by": reviewer, "decision_reason": reason}
+
+
 def library_graph(project_root: Path, query: str = "", limit: int = 200,
                   library_root: Path | None = None) -> dict[str, Any]:
     root = library_root_for(project_root, library_root)
     limit = max(1, min(int(limit), 500))
+    content_graph = project_content_graph(project_root, query, max(40, limit * 5))
     with connect_library(root) as connection:
+        literature_relations = _literature_relation_candidates(project_root, connection, query, max(60, limit * 4))
         missing_work_ids = [
             row["work_id"]
             for row in connection.execute(
@@ -853,8 +960,20 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                 "SELECT work_id FROM works ORDER BY updated_at DESC LIMIT ?", (limit,)
             ).fetchall()]
         if not work_ids:
+            fallback_nodes = [
+                {"node_id": item["node_id"], "node_type": item["node_type"], "label": item["label"],
+                 "origin": item.get("origin", "project_content"), "work_id": ""}
+                for item in content_graph["nodes"][:limit]
+            ]
+            fallback_ids = {item["node_id"] for item in fallback_nodes}
+            fallback_edges = [
+                item for item in content_graph["edges"]
+                if item["source_node_id"] in fallback_ids and item["target_node_id"] in fallback_ids
+            ]
             return {
-                "nodes": [], "edges": [], "work_cards": [], "node_count": 0, "edge_count": 0,
+                "nodes": fallback_nodes, "edges": fallback_edges, "work_cards": [], "content_graph": content_graph,
+                "literature_relations": literature_relations,
+                "node_count": len(fallback_nodes), "edge_count": len(fallback_edges),
                 "backfilled_work_count": len(missing_work_ids), "query": query.strip(),
             }
         normalized_ids = [work_id.casefold() for work_id in work_ids]
@@ -940,6 +1059,8 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
         "backfilled_work_count": len(missing_work_ids),
         "query": query.strip(),
         "preview_boundary": "bounded_intake_sample_not_evidence",
+        "content_graph": content_graph,
+        "literature_relations": literature_relations,
     }
 
 

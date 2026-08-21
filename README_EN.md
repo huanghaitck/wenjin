@@ -16,7 +16,7 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 - A research library that separates works, editions, files, and exact byte versions.
 - Read-only folder inventory, suggested classification, and human-approved bulk registration.
 - PDF page images, text blocks, cross-page relations, printed-page mapping, and human repair.
-- Evidence, a source-linked event chronicle, and a knowledge graph with bounded work previews and project-use status.
+- Evidence, a source-linked event chronicle, and a two-layer knowledge graph for literature relations and Markdown-grounded content entities.
 - Main and auxiliary models, Ollama, OpenAI-compatible APIs, and optional Mixture of Agents.
 - Versioned research persona, Skills, MCP, CLI, and a two-way Codex bridge.
 - Sixteen bundled Historical Research Skills plus an evidence-preserving Chinese historical-prose revision Skill.

@@ -60,6 +60,7 @@ from .source_documents import export_reading_markdown
 from .library import (
     LIBRARY_SHELVES, approve_candidates,
     library_file_path, library_graph,
+    decide_literature_relation,
     library_status,
     link_work_to_project,
     scan_session,
@@ -663,6 +664,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     payload.get("fields", {}) if isinstance(payload.get("fields"), dict) else {},
                     [str(item) for item in payload.get("tags", [])],
                     self.server.library_root,
+                )
+            elif parsed.path == "/api/library/graph/relation/decide":
+                if not isinstance(payload.get("approved"), bool):
+                    raise ValueError("approved must be a boolean")
+                result = decide_literature_relation(
+                    self.server.project_root, str(payload["relation_key"]), bool(payload["approved"]),
+                    str(payload.get("relation_type", "mentions_work")), str(payload["reviewer"]),
+                    str(payload["reason"]), self.server.library_root,
                 )
             elif parsed.path == "/api/library/work/shelf":
                 result = move_work_to_shelf(

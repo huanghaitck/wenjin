@@ -326,9 +326,25 @@ function renderKnowledgeGraph(data){
   const guide=card(english?'How to use this graph':'怎样使用知识图谱',english?'Search by title, author, publisher, tag, or a phrase found in the bounded intake preview. Select a work node or content card to open its bibliography and exact versions. If the work is already in this project, open the project source and return to verified pages. Content previews are discovery aids, not evidence or proof that the work has been fully read.':'可按题名、作者、出版者、标签或分诊内容中的词语检索。点击作品节点或内容卡，可以打开书目和具体版本；作品已经进入当前项目时，还可以直接打开项目文献并回到核验页。内容预览只用于发现和选书，不等于全文已读，也不能直接作为证据。');
   const receipt=document.createElement('p');receipt.className='boundary-note';receipt.textContent=english?`${data.node_count} nodes · ${data.edge_count} relations · ${(data.work_cards||[]).length} work(s). Relations come from registered bibliography and human tags.`:`${data.node_count}个节点 · ${data.edge_count}条关系 · ${(data.work_cards||[]).length}部作品。关系来自已登记书目和人工标签。`;
   graph.append(guide,receipt);
+  const literature=card(english?'Literature relations':'文献关系图谱',english?'Exact registered titles found in note or reference zones become candidates. Confirm whether the source work cites, uses material from, reviews, translates, or merely mentions the target work. Only an approved decision is a formal literature relation.':'脚注、尾注或参考文献区域中出现的已登记题名会形成候选。请判断来源文献是在引用、使用材料、评述、翻译，还是仅仅提及目标文献；只有人工批准后才成为正式文献关系。');
+  const relationLabels=english?{cites:'Cites',uses_material_from:'Uses material from',reviews:'Reviews',translates:'Translates',mentions_work:'Mentions'}:{cites:'引用',uses_material_from:'使用其材料',reviews:'评述',translates:'翻译',mentions_work:'提及'};
+  for(const relation of data.literature_relations||[]){
+    const node=card(`${relation.source_work_title} → ${relation.target_work_title}`,`${relationLabels[relation.relation_type]||relation.relation_type} · ${relation.status} · ${relation.printed_page||`PDF ${relation.physical_page}`}`);
+    node.append(Object.assign(document.createElement('blockquote'),{textContent:relation.quote}));
+    const actions=document.createElement('div');actions.className='button-row';
+    actions.append(actionButton(english?'Open note/reference page':'打开脚注或参考文献页',async()=>{await loadSource(relation.source_id);const index=state.view.pages.findIndex((page)=>page.page_id===relation.page_id);if(index>=0)state.pageIndex=index;setMode('source');render();},true));
+    if(relation.status==='candidate'){
+      const type=document.createElement('select');for(const [value,label] of Object.entries(relationLabels))type.append(new Option(label,value));type.value='cites';
+      const decide=async(approved)=>{const reviewer=window.prompt(english?'Reviewer':'决定人','human-reviewer');if(!reviewer)return;const reason=window.prompt(english?'Decision reason':'判断依据');if(!reason)return;await request('/api/library/graph/relation/decide',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({relation_key:relation.relation_key,approved,relation_type:type.value,reviewer,reason})});await setLibraryView('graph');notice(approved?(english?'Literature relation approved.':'文献关系已批准。'):(english?'Candidate rejected.':'候选关系已拒绝。'));};
+      actions.append(type,actionButton(english?'Approve relation':'批准关系',()=>decide(true),true),actionButton(english?'Reject':'拒绝',()=>decide(false)));
+    }
+    node.append(actions);literature.append(node);
+  }
+  if(!(data.literature_relations||[]).length)literature.append(Object.assign(document.createElement('p'),{className:'empty',textContent:english?'No registered work title was found in the current project note/reference zones.':'当前项目的脚注、尾注和参考文献区域尚未匹配到已登记作品题名。'}));
+  graph.append(literature);
   if(!data.nodes.length){graph.append(Object.assign(document.createElement('p'),{className:'empty',textContent:english?'No bibliographic relation matches the current search.':'当前检索范围没有可显示的书目关系。'}));return;}
-  const typeOrder=['work','person','year','organization','material_type','tag'];
-  const typeLabels=english?{work:'Works',person:'Authors',year:'Years',organization:'Publishers',material_type:'Material types',tag:'Shelves / tags'}:{work:'作品',person:'作者',year:'年代',organization:'出版者',material_type:'材料类型',tag:'书架/标签'};
+  const typeOrder=['work','person','year','organization','material_type','tag','source','page','content','event','entity','claim','evidence'];
+  const typeLabels=english?{work:'Works',person:'Authors',year:'Years',organization:'Publishers',material_type:'Material types',tag:'Shelves / tags',source:'Sources',page:'Pages',content:'Markdown content',event:'Events',entity:'Shared entities',claim:'Claims',evidence:'Evidence'}:{work:'作品',person:'作者',year:'年代',organization:'出版者',material_type:'材料类型',tag:'书架/标签',source:'来源',page:'页面',content:'Markdown内容',event:'事件',entity:'共享实体',claim:'主张',evidence:'证据'};
   const grouped={};for(const node of data.nodes)(grouped[node.node_type]||=[]).push(node);
   const types=typeOrder.filter((type)=>grouped[type]?.length).concat(Object.keys(grouped).filter((type)=>!typeOrder.includes(type)));
   const width=Math.max(900,types.length*210),maxRows=Math.max(...types.map((type)=>grouped[type].length));
@@ -351,6 +367,22 @@ function renderKnowledgeGraph(data){
     node.append(actions);cards.append(node);
   }
   graph.append(cards);
+  const content=data.content_graph||{nodes:[],edges:[],type_counts:{}};
+  const contentSection=card(english?'Project content graph':'项目内容图谱',english?'Built from the current page-linked Markdown blocks, approved events, verified evidence, and their claims. Machine-parsed blocks remain searchable content nodes with visible status; approved research relations retain their page anchors.':'依据当前带页码的Markdown文本块、已批准事件、已核证据及其主张构建。机器解析块仍可作为带状态的检索节点；正式研究关系保留原页锚点。');
+  const contentCounts=document.createElement('p');contentCounts.className='boundary-note';contentCounts.textContent=english?`${content.node_count||0} nodes · ${content.edge_count||0} relations · ${Object.entries(content.type_counts||{}).map(([type,count])=>`${type} ${count}`).join(' · ')}`:`${content.node_count||0}个节点 · ${content.edge_count||0}条关系 · ${Object.entries(content.type_counts||{}).map(([type,count])=>`${type} ${count}`).join(' · ')}`;contentSection.append(contentCounts);
+  const contentCards=document.createElement('section');contentCards.className='content-graph-cards';
+  const contentTypeLabels=english?{source:'Source',page:'Page',content:'Markdown content',event:'Approved event',entity:'Shared entity',claim:'Claim',evidence:'Verified evidence'}:{source:'来源',page:'页面',content:'Markdown内容',event:'已批准事件',entity:'共享实体',claim:'主张',evidence:'已核证据'};
+  for(const item of content.nodes||[]){
+    if(item.node_type==='page')continue;
+    const page=[item.printed_page,item.physical_page?`PDF ${item.physical_page}`:''].filter(Boolean).join(' / ');
+    const node=card(`${contentTypeLabels[item.node_type]||item.node_type} · ${item.label}`,`${item.status||''}${page?` · ${page}`:''}`);
+    if(item.excerpt&&item.excerpt!==item.label)node.append(Object.assign(document.createElement('p'),{className:'graph-content-preview',textContent:item.excerpt}));
+    if(item.source_id){const open=actionButton(english?'Open anchored source page':'打开锚定原页',async()=>{await loadSource(item.source_id);if(item.page_id){const index=state.view.pages.findIndex((pageItem)=>pageItem.page_id===item.page_id);if(index>=0)state.pageIndex=index;}setMode('source');render();notice(english?'Opened the source and anchored page.':'已打开来源及锚定原页。');},true);node.append(open);}
+    contentCards.append(node);
+  }
+  if(!content.nodes?.length)contentCards.append(Object.assign(document.createElement('p'),{className:'empty',textContent:english?'No processed Markdown content or approved research relation matches this search.':'当前检索没有匹配的清洗Markdown内容或已批准研究关系。'}));
+  contentSection.append(contentCards);
+  const contentRelations=document.createElement('details');const contentSummary=document.createElement('summary');contentSummary.textContent=english?'Show content-graph relations':'查看内容图谱关系';const relationBody=document.createElement('section');relationBody.className='graph-relations';const contentById=Object.fromEntries((content.nodes||[]).map((item)=>[item.node_id,item]));for(const edge of content.edges||[]){relationBody.append(Object.assign(document.createElement('p'),{textContent:`${contentById[edge.source_node_id]?.label||edge.source_node_id} —${edge.relation}→ ${contentById[edge.target_node_id]?.label||edge.target_node_id}`}));}contentRelations.append(contentSummary,relationBody);contentSection.append(contentRelations);graph.append(contentSection);
   const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent=english?'Show all relations as text':'查看全部关系文本';const relations=document.createElement('section');relations.className='graph-relations';for(const edge of data.edges){const row=document.createElement('p');row.textContent=`${byId[edge.source_node_id]?.label||edge.source_node_id}  —${edge.relation}→  ${byId[edge.target_node_id]?.label||edge.target_node_id}`;relations.append(row);}details.append(summary,relations);graph.append(details);
 }
 

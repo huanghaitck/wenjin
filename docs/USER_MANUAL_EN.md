@@ -61,6 +61,8 @@ The **Knowledge Graph** visualizes registered works, authors, dates, publishers,
 
 The preview comes from the limited pages inspected during intake. Use it to decide what deserves further reading or which version fits the question. It does not mean that the complete work has been read and it is not evidence. Model-inferred causation, interpersonal relations, and events are not automatically promoted into the graph.
 
+The graph has two layers. The literature layer treats books and articles as nodes. Exact registered titles found in project-source notes, footnotes, and reference zones become candidates for cites, uses material from, reviews, translates, or mentions; they become formal only after the researcher opens the page and approves the relation. The project-content layer reads the source, page, and block structure behind the cleaned Markdown and connects approved events, shared entities, claims, and evidence. Identical researcher-normalized places, dates, cases, and investigation topics across works share an entity node. Aliases, homonyms, and translation variants are not merged automatically; normalize them in the event register first.
+
 The **Source Chronicle** contains only human-approved event records that retain an exact source version and page link. It can be filtered and exported as Markdown. A chronicle is not a claim that the surviving corpus has been exhausted.
 
 ### 2.3 Writing studio

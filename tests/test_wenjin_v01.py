@@ -261,6 +261,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("How to use this graph", script)
         self.assertIn("graph-work-cards", script)
         self.assertIn("Open project source pages", script)
+        self.assertIn("Project content graph", script)
+        self.assertIn("Open anchored source page", script)
         self.assertIn("/api/plugins/install", script)
         self.assertIn("mode-intake", script)
         self.assertIn("createElementNS('http://www.w3.org/2000/svg'", script)
