@@ -6,6 +6,10 @@ Wenjin is a local-first, model-selectable Agent workbench for humanities and soc
 
 The current release is **0.1.1 Public Preview** for Windows 10/11.
 
+![Wenjin Writing Studio](docs/screenshots/wenjin-writing-studio-en.png)
+
+![Wenjin model settings](docs/screenshots/wenjin-model-settings-en.png)
+
 ## Highlights
 
 - Local projects with integrity-checked SQLite backups and non-destructive recovery.
@@ -19,15 +23,15 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 - A structured writing studio with notes, references, DOCX import/export, and multi-role review.
 - Chinese and English interfaces, layered project knowledge, and optional local long-term-memory adapters.
 - A neutral domain-pack SDK, local ZIP/folder installation, and user-owned local-data bindings.
-- A native Weixin private-chat gateway that does not require Hermes or an OpenClaw runtime.
+- Private research conversations through ordinary Weixin QR sign-in.
 
 ## Installation
 
-Download `wenjin-0.1.1-x64-setup.exe` from the [v0.1.1 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1). The installer includes the desktop application, frozen Python sidecar, and the Windows-native `agent-browser 0.33.0` runtime. End users do not need Python, Node.js, PowerShell 7, or Rust.
+Download `wenjin-0.1.1-x64-setup.exe` from the [v0.1.1 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1). It includes the components required to run Wenjin. End users do not need Python, Node.js, PowerShell 7, or Rust.
 
 Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.1-win64-complete-20260821-1210.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
 
-The installer is not code-signed and Windows may display an unknown-publisher warning. Download only from the project release page and verify the published SHA-256 checksums.
+The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
 ## Library inventory and registration
 
@@ -53,7 +57,7 @@ Password controls, hidden credential extraction, CAPTCHA solving, and payment co
 
 ## Domain packs
 
-Wenjin core is not tied to one discipline. A domain pack may contribute a versioned `wenjin-plugin.json`, Skill, MCP runtime, research methods, schemas, processors, graph adapters, local-data bindings, and bounded Agent tools.
+Wenjin core is not tied to one discipline. A domain pack may contribute research methods, schemas, processors, graph adapters, local-data bindings, Skills, and bounded Agent tools.
 
 The public repository contains a neutral scaffold rather than a preinstalled disciplinary sample or user dataset. Install a downloaded ZIP or folder from **AI & Agent > Domain packs**. If a pack declares a user-owned SQLite, CSV, or directory source, bind it after installation. Wenjin records an identity receipt and does not copy or rewrite that database.
 
@@ -98,11 +102,15 @@ wenjin serve C:\Research\my-project
 
 The MCP server exposes qualified project status, source pages, library results, and manuscript structure. It does not bypass write approvals.
 
-## Weixin direct gateway
+## Weixin connection
 
-Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin. Wenjin connects directly to Tencent iLink, maps an allowlisted private contact to a local research thread, and sends replies back with the inbound context token. The bot token is stored only in Windows Credential Manager.
+Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
 
 Version 0.1.1 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
+
+## Platform support
+
+Version 0.1.1 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
 
 ## Data, privacy, and credentials
 

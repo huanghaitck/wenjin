@@ -44,7 +44,7 @@ Each thread also has an Agent access mode: Ask for approval, Auto-approve routin
 
 The library answers “What work is this, which edition is it, and where is the exact file?” It does not decide whether a page supports a claim.
 
-One work may have multiple editions and file locations: an original-language scan, an abridged translation, an OCR locator, and a researcher-corrected working translation. Wenjin separates work, edition, file, and exact file version. A SHA-256 hash identifies exact bytes; a one-character correction creates a new file version without necessarily creating a different work.
+One work may have multiple editions and file locations: an original-language scan, an abridged translation, an OCR locator, and a researcher-corrected working translation. Wenjin separates work, edition, file, and exact file version. A file fingerprint distinguishes exact copies; a one-character correction creates a new file version without necessarily creating a different work.
 
 Six editable shelves are provided:
 
@@ -99,7 +99,7 @@ This workspace shows software and schema versions, main and auxiliary models, Mo
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
-The **Weixin direct gateway** uses a QR code to connect ordinary Weixin directly to Tencent iLink. It does not pass through Hermes and does not require an OpenClaw runtime. The bot token is stored in Windows Credential Manager. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
+The **Weixin connection** uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
 The **Runtime** page can create an immediate integrity-checked backup and restore an older backup as a new project copy. Restore never overwrites the active project.
 
@@ -317,7 +317,7 @@ Create a manuscript or transfer a freeze-backed trial draft. Insert sections and
 
 ### 8.2 Discuss current text
 
-The manuscript discussion thread stores manuscript, revision, section, node, selection hash, selected text, and attached references. Discussion does not change the manuscript until a separate writing proposal is approved.
+The manuscript discussion thread stores the manuscript, revision, section, exact selection snapshot, selected text, and attached references. Discussion does not change the manuscript until a separate writing proposal is approved.
 
 ### 8.3 Section drafting and selection revision
 

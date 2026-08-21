@@ -30,7 +30,7 @@ const exactUiEnglish=new Map(Object.entries({
   '查看原页与文本':'View original page and text','标记整份文件不符':'Reject document identity','研究图书馆':'Research library',
   '全部书架':'All shelves','原始史料':'Primary sources','学术论文':'Articles','学术专著':'Monographs','个人论文与稿件':'Personal papers and drafts',
   '工具书与目录':'Reference works and catalogs','待分类':'Unclassified','检索':'Search','图书馆还没有已批准材料。盘点不会自动入库。':'No approved library item yet. Inventory does not register files automatically.',
-  '作品与版本':'Works and versions','哈希只标识精确文件版本':'Hashes identify exact file versions','当前项目文献':'Current project sources',
+  '作品与版本':'Works and versions','文件指纹只标识精确文件版本':'File fingerprints identify exact file versions','当前项目文献':'Current project sources',
   '稿件与章节':'Manuscripts and sections','稿件结构与历史版本':'Manuscript structure and revision history','新建或导入稿件':'Create or import manuscript',
   '选择一个章节':'Choose a section','人工保存后才产生新修订':'A new revision is created only after an explicit save','稿件题名':'Manuscript title','正文':'Main text',
   '引文':'Citation','在此之前新增章节':'Insert section before','在此之后新增章节':'Insert section after','插入表格':'Insert table','插入注释':'Insert note',
@@ -50,7 +50,7 @@ const exactUiEnglish=new Map(Object.entries({
   '稿件 — 修订 — 章节 — 灵感讨论默认只留在对话。':'Manuscript — revision — section — exploratory discussion remains in the thread by default.',
   '选择一部作品，查看完整书目信息、文件位置与每一次精确版本。':'Choose a work to inspect its bibliography, file locations, and exact versions.',
   '打开原页与文本复核':'Open original page and text','修复是具体文件版本的下属动作；旧项目处理记录暂以兼容方式读取。':'Repairs belong to an exact file version; legacy project records are read through the compatibility layer.',
-  '模型':'Models','辅助与 MoA':'Routing and MoA','研究人格':'Persona','记忆':'Memory','连接器与 MCP':'Connectors and MCP','领域包':'Domain packs','当前状态':'Runtime'
+  '模型':'Models','辅助与 MoA':'Routing and MoA','研究人格':'Persona','记忆':'Memory','连接器与 MCP':'Connectors and MCP','领域包':'Domain packs','当前状态':'Status'
 }));
 const exactUiChinese=new Map([...exactUiEnglish].map(([zh,en])=>[en,zh]));
 const ariaUiEnglish=new Map(Object.entries({
@@ -246,7 +246,7 @@ function renderLibraryShell() {
   const skills = $('intakeSkill'); skills.replaceChildren();
   for (const skill of (library?.skills || []).filter((item)=>item.compatible_actions?.includes('library_intake'))) {
     const option = new Option(`${skill.name} · ${skill.execution}`, skill.name);
-    option.title = `${skill.description}\nSHA-256 ${skill.sha256}`; skills.append(option);
+    option.title = skill.description; skills.append(option);
   }
   renderScan(); renderWorkList(); renderWorkDetail();
   setLibraryView(state.libraryView);
@@ -267,7 +267,7 @@ function renderScan() {
   const statusLabels={scanning:'盘点中',preview_ready:'等待选择',failed:'盘点失败',partially_approved:'部分已入库',approved:'已完成'};
   const title = document.createElement('strong');
   title.textContent = `${scan.total_count || 0} 个候选 · ${statusLabels[scan.status] || scan.status}`;
-  const skill = document.createElement('small'); skill.textContent = `${scan.skill_name} · Skill SHA-256 ${scan.skill_sha256}`;
+  const skill = document.createElement('small'); skill.textContent = scan.skill_name;
   const root = document.createElement('small'); root.textContent = scan.root_path;
   heading.append(title, skill, root); summary.append(heading);
   if(scan.status==='scanning'){
@@ -302,7 +302,7 @@ function renderScan() {
     const path = document.createElement('small'); path.className = 'path'; path.textContent = candidate.path;
     const exact = document.createElement('details');
     const exactTitle = document.createElement('summary'); exactTitle.textContent = '精确盘点信息';
-    const exactText = document.createElement('pre'); exactText.textContent = `SHA-256  ${candidate.sha256 || '未取得'}\n物理页    ${candidate.page_count ?? '不适用'}\n已检查页  ${candidate.inspected_pages}\n文本层    ${candidate.text_layer}\n文件时间  ${new Date(candidate.modified_ns / 1e6).toLocaleString()}\n候选编号  ${candidate.candidate_id}${candidate.error ? `\n错误      ${candidate.error}` : ''}`;
+    const exactText = document.createElement('pre'); exactText.textContent = `${state.language==='en'?'Exact file version recorded':'已记录精确文件版本'}\n${state.language==='en'?'Physical pages':'物理页'}  ${candidate.page_count ?? (state.language==='en'?'not applicable':'不适用')}\n${state.language==='en'?'Pages inspected':'已检查页'}  ${candidate.inspected_pages}\n${state.language==='en'?'Text layer':'文本层'}  ${candidate.text_layer}\n${state.language==='en'?'File time':'文件时间'}  ${new Date(candidate.modified_ns / 1e6).toLocaleString()}${candidate.error ? `\n${state.language==='en'?'Error':'错误'}  ${candidate.error}` : ''}`;
     exact.append(exactTitle, exactText); body.append(name, meta, bibliography, reason, path, exact); card.append(check, body); container.append(card);
   }
   const pages=document.createElement('div');pages.className='row';
@@ -516,7 +516,7 @@ function renderWorkDetail() {
       const card = document.createElement('article'); card.className = `version-card ${version.is_current ? 'current' : ''}`;
       const label = document.createElement('strong'); label.textContent = version.is_current ? '当前精确版本' : '历史版本记录';
       const availability = version.bytes_available ? '当前路径字节可打开' : '仅保留记录，旧字节未归档';
-      const values = document.createElement('pre'); values.textContent = `Version ID  ${version.version_id}\nSHA-256    ${version.sha256}\n大小        ${formatBytes(version.byte_count)}\n文件时间    ${new Date(version.modified_ns / 1e6).toLocaleString()}\n发现时间    ${new Date(version.discovered_at).toLocaleString()}\n格式 / 页数 ${version.format.toUpperCase()} / ${version.page_count ?? '不适用'}\n文本层      ${version.text_layer}\n分诊        ${triageLabels[version.triage_state] || version.triage_state}\n资格        ${version.qualification}（不是 CITABLE）\nSkill       ${version.skill_name}\nSkill Hash  ${version.skill_sha256}\n字节可用性  ${availability}`;
+      const values = document.createElement('pre'); values.textContent = `${state.language==='en'?'Version':'版本'}  ${version.version_id}\n${state.language==='en'?'Size':'大小'}  ${formatBytes(version.byte_count)}\n${state.language==='en'?'File time':'文件时间'}  ${new Date(version.modified_ns / 1e6).toLocaleString()}\n${state.language==='en'?'Discovered':'发现时间'}  ${new Date(version.discovered_at).toLocaleString()}\n${state.language==='en'?'Format / pages':'格式 / 页数'}  ${version.format.toUpperCase()} / ${version.page_count ?? (state.language==='en'?'not applicable':'不适用')}\n${state.language==='en'?'Text layer':'文本层'}  ${version.text_layer}\n${state.language==='en'?'Triage':'分诊'}  ${triageLabels[version.triage_state] || version.triage_state}\n${state.language==='en'?'Qualification':'资格'}  ${version.qualification}\nSkill  ${version.skill_name}\n${state.language==='en'?'File available':'文件可用性'}  ${availability}`;
       card.append(label, values); section.append(card);
     }
     container.append(section);
@@ -596,7 +596,7 @@ function renderThread() {
     if (message.context_binding) {
       const context = document.createElement('small'); context.className = 'message-context';
       const binding = message.context_binding;
-      context.textContent = `稿件 ${binding.manuscript_id || '—'} · 修订 ${binding.revision_id || '—'} · 章节 ${binding.section_id || '—'}${binding.selection_hash ? ` · 选区 ${binding.selection_hash.slice(0, 10)}` : ''}`;
+      context.textContent = `${state.language==='en'?'Manuscript':'稿件'} ${binding.manuscript_id || '—'} · ${state.language==='en'?'Revision':'修订'} ${binding.revision_id || '—'} · ${state.language==='en'?'Section':'章节'} ${binding.section_id || '—'}${binding.selection_hash ? ` · ${state.language==='en'?'selection saved':'选区已保存'}` : ''}`;
       card.append(context);
     }
     messages.append(card);
@@ -1363,7 +1363,7 @@ function renderAuthoringControl(section, proposal) {
     for (const claim of claims) container.append(card(claim.text, `${claim.status} · ${claim.evidence.length} 条页块证据`));
   } else if (state.authoringMode === 'versions') {
     if (!state.document) { container.append(card('尚无结构化版本', '选择稿件后自动建立兼容修订。')); return; }
-    for (const revision of state.document.revisions || []) container.append(card(revision.revision_id, `${revision.source_format} · ${revision.status} · ${new Date(revision.created_at).toLocaleString()}\n文本指纹 ${revision.plain_text_hash.slice(0, 16)}…`));
+    for (const revision of state.document.revisions || []) container.append(card(revision.revision_id, `${revision.source_format} · ${revision.status} · ${new Date(revision.created_at).toLocaleString()}`));
     for (const receipt of state.document.io_receipts || []) container.append(card(`${receipt.direction} ${receipt.format.toUpperCase()}`, `${receipt.fidelity.level} · ${(receipt.fidelity.warnings || []).join('；') || '无保真警告'}`));
   } else if (state.authoringMode === 'write') {
     const model = authoring.writing_model || {};
@@ -2166,9 +2166,9 @@ function renderSettings() {
     const modelStatus=document.createElement('small');modelStatus.textContent=english?'Model list not loaded.':'尚未读取模型列表。';
     let discoveredModels=[];
     const modelLabel=document.createElement('label');modelLabel.textContent=english?'Model':'模型';modelLabel.append(model,modelList,modelStatus);
-    const baseUrl=document.createElement('input');baseUrl.value=item.base_url;baseUrl.placeholder='例如 http://127.0.0.1:11434';
+    const baseUrl=document.createElement('input');baseUrl.value=item.base_url;baseUrl.placeholder=english?'For example, http://127.0.0.1:11434':'例如 http://127.0.0.1:11434';
     const urlLabel=document.createElement('label');urlLabel.textContent='Base URL';urlLabel.append(baseUrl);
-    const apiKey=document.createElement('input');apiKey.type='password';apiKey.autocomplete='new-password';apiKey.placeholder=item.has_secret?'已安全保存；留空表示不更换':'远程接口需要，Ollama 留空';
+    const apiKey=document.createElement('input');apiKey.type='password';apiKey.autocomplete='new-password';apiKey.placeholder=item.has_secret?(english?'Saved securely; leave blank to keep it':'已安全保存；留空表示不更换'):(english?'Required for remote APIs; leave blank for Ollama':'远程接口需要，Ollama 留空');
     const keyLabel=document.createElement('label');keyLabel.textContent='API Key';keyLabel.append(apiKey);
     const timeout=document.createElement('input');timeout.type='number';timeout.min='5';timeout.max='600';timeout.value=item.timeout_seconds;
     const timeoutLabel=document.createElement('label');timeoutLabel.textContent=english?'Timeout (seconds)':'超时（秒）';timeoutLabel.append(timeout);
@@ -2193,7 +2193,7 @@ function renderSettings() {
       try{
         if(discoveredModels.length&&!discoveredModels.includes(model.value.trim()))throw new Error(english?'Choose a model returned by the provider, or refresh after changing the endpoint.':'请选择服务商返回的模型；如已更换接口，请先刷新模型列表。');
         const result=await request('/api/model-settings/save',localSessionOptions({role:item.role,provider:provider.value,model:model.value,base_url:baseUrl.value,api_key:apiKey.value,clear_secret:clear.checked,timeout_seconds:Number(timeout.value),context_window:Number(contextWindow.value),preset_id:preset.value||'custom'}));
-        state.modelSettings=result.settings;await loadSnapshot();notice(`${item.label}已经保存；之后的新任务会记录实际模型快照。`);
+        state.modelSettings=result.settings;await loadSnapshot();notice(english?`${item.label_en||item.label} saved. New runs will record the selected model.`:`${item.label}已经保存；之后的新任务会记录实际模型快照。`);
       }catch(error){notice(error.message,true);}
     },true),actionButton(english?'Refresh models':'刷新模型列表',()=>refreshModels(true)),actionButton(english?'Test connection':'测试连接',async()=>{
       try{const result=await request('/api/model-settings/probe',localSessionOptions({role:item.role}));notice(result.detail,!result.available);}catch(error){notice(error.message,true);}
@@ -2212,7 +2212,7 @@ function renderSettings() {
   const fanout=document.createElement('select');fanout.append(new Option(english?'Once per user turn':'每轮用户消息一次','user_turn'),new Option(english?'Every agent iteration':'每次 Agent 循环','per_iteration'));fanout.value=moaState.fanout||'user_turn';
   moa.append(moaEnabledLabel,refs,fanout,actionButton(english?'Save MoA preset':'保存 MoA 方案',async()=>{try{const reference_roles=[...refs.querySelectorAll('input:checked')].map((node)=>node.value);const result=await request('/api/model-settings/moa',localSessionOptions({enabled:moaEnabled.checked,reference_roles,fanout:fanout.value}));state.modelSettings=result.settings;renderSettings();notice(english?'MoA preset saved.':'MoA 方案已保存。');}catch(error){notice(error.message,true);}},true));appendSetting('routing',moa);
 
-  const models = card(english?'Effective runtime':'当前生效快照', english?'Every run records the concrete models and active persona used.':'每次运行都会固定实际使用的模型与研究人格版本。');
+  const models = card(english?'Current configuration':'当前生效配置', english?'Every run records the models and persona that were actually used.':'每次运行都会记录实际使用的模型与研究人格版本。');
   for (const profile of state.snapshot.model_profiles || []) models.append(Object.assign(document.createElement('p'), {textContent:`${profile.assigned ? (english?'Current main model':'当前主模型') : profile.status} · ${profile.provider} / ${profile.model} · ${profile.endpoint||(english?'local rules':'本机规则')}`}));
   models.append(Object.assign(document.createElement('p'), {textContent:`${english?'Vision assistant':'视觉辅助'}：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : (english?'not configured':'未配置')}\n${english?'Translation assistant':'翻译辅助'}：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : (english?'not configured':'未配置')}`})); appendSetting('runtime',models);
   const memory=card(english?'Memory layers':'记忆分层',english?'Conversation state, project knowledge, reusable historical knowledge, and engineering memory remain separate.':'对话状态、项目知识、可复用史学知识与工程记忆分开保存，不把所有信息塞进同一上下文。');
@@ -2251,7 +2251,7 @@ function renderSettings() {
   }
   appendSetting('connectors',codexPanel);
   appendSetting('connectors',card(english?'MCP and CLI':'MCP 与 CLI', `${english?'This project can be exposed as a local read-only MCP server and administered from the command line.':'当前项目可以作为本地只读 MCP 服务供其他 Agent 调用，也能通过命令行管理。'}\nwenjin mcp-server "${project.project_root||'<project>'}"\nwenjin --help\n${english?'MCP tools return qualified sources, library results, manuscript structure, and project status; they do not bypass write approvals.':'MCP 工具返回来源资格、图书馆结果、稿件结构和项目状态，不绕过写入审批。'}`));
-  const weixin=card(english?'Weixin direct gateway':'微信直连网关',english?'Scan with ordinary Weixin to continue a private research conversation with this Wenjin installation. Wenjin connects to Tencent iLink directly; Hermes and OpenClaw are not runtime dependencies. Version 0.1.1 responds only to inbound private text messages. Group delivery, scheduled push, files, payments, CAPTCHA handling, and credential extraction are deliberately unavailable.':'使用普通微信扫码后，可与本机问津继续私聊研究对话。问津直接连接腾讯 iLink，不经过 Hermes，也不依赖 OpenClaw 运行时。0.1.1 仅回复收到的私聊文字；暂不支持群聊、定时主动推送、文件、支付、验证码处理或凭据提取。');
+  const weixin=card(english?'Weixin connection':'微信连接',english?'Scan with ordinary Weixin to continue a private research conversation with this Wenjin installation. Version 0.1.1 replies only to inbound private text. Group chat, scheduled messages, files, payments, and CAPTCHA handling are not available.':'使用普通微信扫码后，即可从微信继续本机问津中的私聊研究对话。0.1.1只回复收到的私聊文字，暂不支持群聊、定时消息、文件、支付或验证码处理。');
   const weixinState=document.createElement('pre');weixinState.textContent=english?'Reading gateway status…':'正在读取网关状态……';
   const qrBox=document.createElement('div');qrBox.className='weixin-qr';
   const allowInput=document.createElement('input');allowInput.placeholder=english?'Allowed Weixin user IDs, comma-separated':'允许使用的微信用户ID，逗号分隔';
@@ -2298,7 +2298,7 @@ function renderSettings() {
       const pathInput=document.createElement('input');pathInput.value=source.binding?.path||'';pathInput.placeholder=source.kind==='directory'?(english?'Local data directory':'本地数据目录'):(english?'Local database or data file':'本地数据库或数据文件');
       const row=document.createElement('div');row.className='button-row';
       if(nativeAvailable())row.append(actionButton(english?'Choose locally':'选择本地数据',async()=>{const selected=source.kind==='directory'?await nativeInvoke('choose_folder'):await nativeInvoke('choose_file',{kind:'data'});if(selected)pathInput.value=selected;},true));
-      row.append(actionButton(english?'Connect':'连接',async()=>{try{state.snapshot.plugins=await request('/api/plugins/bind-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:plugin.name,source_id:source.id,local_path:pathInput.value})});renderSettings();notice(english?'Local data identity was recorded for this domain pack.':'已为该领域包登记本地数据的路径、版本与哈希回执。');}catch(error){notice(error.message,true);}},true));
+      row.append(actionButton(english?'Connect':'连接',async()=>{try{state.snapshot.plugins=await request('/api/plugins/bind-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:plugin.name,source_id:source.id,local_path:pathInput.value})});renderSettings();notice(english?'The selected local data was connected to this domain pack.':'已把所选本地数据连接到该领域包。');}catch(error){notice(error.message,true);}},true));
       details.append(pathInput,row);node.append(details);
     }
     for(const pack of plugin.data_packs||[]){
