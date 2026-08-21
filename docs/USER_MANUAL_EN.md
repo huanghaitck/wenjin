@@ -2,8 +2,10 @@
 
 English | [中文](USER_MANUAL_ZH.md)
 
-Version: 0.1.1 Public Preview (the installer is not code-signed)  
-Verified: 2026-08-21  
+Version: 0.1.1 Public Preview (the installer is not code-signed)
+
+Verified: 2026-08-21
+
 Scope: local literature organization, PDF repair, research dialogue, web discovery, evidence control, writing, and Word export
 
 > **Boundary of this release**
