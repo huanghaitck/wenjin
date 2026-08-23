@@ -32,6 +32,25 @@ button:hover { border-color: var(--accent); }
 #notice { min-height: 34px; padding: 8px 20px; color: var(--muted); font-size: 13px; }
 #notice.error { color: var(--danger); }
 .agent-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(480px, 1fr) 390px; gap: 10px; padding: 0 12px 12px; }
+.project-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 250px minmax(520px, 1fr) 340px; gap: 10px; padding: 0 12px 12px; }
+.project-list-panel, .project-dashboard-panel, .project-activity-panel { min-width: 0; min-height: 0; overflow: auto; }
+.project-workspace-list { display: grid; gap: 7px; padding: 12px; }
+.project-workspace-list button { display: grid; gap: 3px; width: 100%; text-align: left; }
+.project-workspace-list button.selected { color: #fff; background: var(--accent); }
+.project-dashboard-panel { padding: 14px; }
+.project-activity-panel { padding: 14px; }
+.project-overview { padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); }
+.project-overview h1 { margin: 0 0 5px; font: 600 24px/1.25 Georgia, "Songti SC", serif; }
+.project-phase { display: inline-block; margin: 6px 0; padding: 4px 9px; border-radius: 999px; color: #fff; background: var(--accent); font-size: 11px; }
+.project-object-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-top: 12px; }
+.project-object-grid .card { margin: 0; }
+.project-source-list { display: grid; gap: 8px; margin-top: 12px; }
+.project-source-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.project-source-row small { color: var(--muted); }
+.project-next-actions { display: grid; gap: 8px; }
+.project-activity-list { display: grid; gap: 7px; margin-top: 14px; }
+.project-activity-item { padding: 8px; border-left: 3px solid var(--accent-soft); background: var(--paper); }
+.project-activity-item small { color: var(--muted); }
 .composer { position: relative; }
 .slash-menu { position: absolute; z-index: 20; right: 80px; bottom: calc(100% - 8px); left: 12px; max-height: 280px; overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: 0 12px 30px #30271f2c; }
 .slash-menu button { width: 100%; margin: 2px 0; text-align: left; }
@@ -291,6 +310,8 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
 .relation-actions { display: flex; gap: 6px; margin-top: 7px; }
 .empty { color: var(--muted); font-size: 13px; }
 @media (max-width: 1350px) {
+  .project-workbench { height: auto; grid-template-columns: 220px minmax(0, 1fr); }
+  .project-activity-panel { grid-column: 1 / -1; min-height: 360px; }
   .library-workbench { height: auto; min-height: calc(100vh - 153px); }
   .library-workbench.mode-list, .library-workbench.mode-graph { grid-template-columns: minmax(0, 1fr); }
   .library-workbench.mode-list > .work-detail-panel, .library-workbench.mode-graph > .work-detail-panel { min-height: 540px; }
@@ -302,6 +323,8 @@ textarea { width: 100%; min-height: 92px; resize: vertical; padding: 9px; color:
   .manuscript-panel, .section-editor, .authoring-control { min-height: 520px; }
   .inventory-panel, .catalog-panel, .work-detail-panel { min-height: 520px; }
   .agent-workbench { height: auto; grid-template-columns: 1fr; }
+  .project-workbench { height: auto; grid-template-columns: 1fr; }
+  .project-list-panel, .project-dashboard-panel, .project-activity-panel { min-height: 360px; }
   .thread-panel, .conversation-panel, .activity-panel { min-height: 300px; }
   .workbench { height: auto; grid-template-columns: 90px 1fr; }
   .browser-workbench { height: auto; grid-template-columns: 1fr; }

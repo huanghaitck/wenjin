@@ -18,6 +18,28 @@ def _write(path: Path, value: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def _deduplicate_projects(projects: list[dict[str, Any]], current_project: str = "") -> list[dict[str, Any]]:
+    """Keep one registry entry per project identity, preferring an available/current path."""
+    selected: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    current_resolved = str(Path(current_project).resolve()) if current_project else ""
+    for item in projects:
+        project_id = str(item.get("project_id", ""))
+        key = project_id or str(Path(item["path"]).resolve())
+        candidate_path = str(Path(item["path"]).resolve())
+        candidate_available = (Path(candidate_path) / "project.sqlite3").is_file()
+        existing = selected.get(key)
+        if existing is None:
+            selected[key] = {**item, "path": candidate_path}
+            order.append(key)
+            continue
+        existing_path = str(Path(existing["path"]).resolve())
+        existing_available = (Path(existing_path) / "project.sqlite3").is_file()
+        if candidate_path == current_resolved or (candidate_available and not existing_available):
+            selected[key] = {**item, "path": candidate_path}
+    return [selected[key] for key in order]
+
+
 def initialize_workspace(workspace_root: Path, project_root: Path) -> dict[str, Any]:
     workspace_root = workspace_root.resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
@@ -62,6 +84,9 @@ def initialize_workspace(workspace_root: Path, project_root: Path) -> dict[str, 
                 recovered.append((status["source_count"], root.stat().st_mtime, str(root.resolve())))
         if current_status["source_count"] == 0 and recovered:
             registry["current_project"] = max(recovered)[2]
+    registry["projects"] = _deduplicate_projects(
+        registry["projects"], registry.get("current_project", "")
+    )
     _write(path, registry)
     return registry
 
@@ -82,13 +107,17 @@ def workspace_view(workspace_root: Path) -> dict[str, Any]:
     return {**registry, "projects": projects}
 
 
-def create_workspace_project(workspace_root: Path, title: str) -> dict[str, Any]:
+def create_workspace_project(workspace_root: Path, title: str, parent_root: Path | None = None) -> dict[str, Any]:
     title = title.strip()
     if not title:
         raise ValueError("project title is required")
     workspace_root = workspace_root.resolve()
     slug = re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "-", title).strip("-")[:40] or "project"
-    project_root = workspace_root / "projects" / f"{slug}-{uuid.uuid4().hex[:8]}"
+    parent = parent_root.expanduser().resolve() if parent_root else workspace_root / "projects"
+    if parent_root and not parent.is_dir():
+        raise FileNotFoundError(f"selected project parent folder does not exist: {parent}")
+    parent.mkdir(parents=True, exist_ok=True)
+    project_root = parent / f"{slug}-{uuid.uuid4().hex[:8]}"
     created = initialize_project(project_root, title)
     registry_path = workspace_root / REGISTRY
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
@@ -98,6 +127,26 @@ def create_workspace_project(workspace_root: Path, title: str) -> dict[str, Any]
     registry["current_project"] = str(project_root)
     _write(registry_path, registry)
     return {**created, "workspace": workspace_view(workspace_root)}
+
+
+def register_workspace_project(workspace_root: Path, project_root: Path) -> dict[str, Any]:
+    workspace_root = workspace_root.resolve()
+    project_root = project_root.expanduser().resolve()
+    if not (project_root / "project.sqlite3").is_file():
+        raise FileNotFoundError("selected folder is not a Wenjin project")
+    status = project_status(project_root)
+    registry_path = workspace_root / REGISTRY
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    resolved = str(project_root)
+    registry["projects"] = [
+        item for item in registry["projects"] if item["project_id"] != status["project_id"]
+    ]
+    registry["projects"].append({
+        "project_id": status["project_id"], "title": status["title"], "path": resolved,
+    })
+    registry["current_project"] = resolved
+    _write(registry_path, registry)
+    return {**status, "project_root": resolved, "workspace": workspace_view(workspace_root)}
 
 
 def select_workspace_project(workspace_root: Path, project_id: str) -> Path:

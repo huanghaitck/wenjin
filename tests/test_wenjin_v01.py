@@ -250,6 +250,10 @@ class WenjinV01Tests(unittest.TestCase):
         script = (root / "app.js").read_text(encoding="utf-8")
         styles = (root / "styles.css").read_text(encoding="utf-8")
         self.assertIn('id="settingsTabs"', html)
+        self.assertIn('id="projectWorkbench"', html)
+        self.assertIn('id="projectMode"', html)
+        self.assertIn('/api/project/workspace', script)
+        self.assertIn('/api/project/register', script)
         for tab in ("models", "routing", "persona", "memory", "connectors", "plugins", "runtime"):
             self.assertIn(f'data-settings-tab="{tab}"', html)
         self.assertIn('id="libraryViews"', html)

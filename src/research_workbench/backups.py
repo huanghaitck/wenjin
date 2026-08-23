@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,12 +27,18 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _source_signature(database: Path) -> str:
+def _source_signature(project_root: Path, database: Path) -> str:
     values = []
-    for path in (database, database.with_name(database.name + "-wal")):
-        if path.is_file():
-            stat = path.stat()
-            values.append(f"{path.name}:{stat.st_size}:{stat.st_mtime_ns}")
+    for path in sorted(project_root.rglob("*")):
+        if not path.is_file() or path == database or path.name in {
+            database.name + "-wal", database.name + "-shm",
+        }:
+            continue
+        relative = path.relative_to(project_root)
+        if relative.parts and relative.parts[0] in {"logs", "tmp"}:
+            continue
+        stat = path.stat()
+        values.append(f"{relative.as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
     return hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
 
 
@@ -69,9 +76,7 @@ def backup_project(project_root: Path, backup_root: Path, reason: str = "manual"
     destination_root = backup_root / "projects" / project_id
     manifest_path = destination_root / "manifest.json"
     entries = _manifest(manifest_path)
-    signature = _source_signature(database)
-    if entries and entries[-1].get("source_signature") == signature:
-        return {**entries[-1], "status": "unchanged"}
+    signature = _source_signature(project_root, database)
     backup_id = f"BKP_{uuid.uuid4().hex}"
     target = destination_root / f"{_stamp()}-{backup_id}.sqlite3"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -91,9 +96,21 @@ def backup_project(project_root: Path, backup_root: Path, reason: str = "manual"
         target.unlink(missing_ok=True)
         raise RuntimeError(f"backup integrity check failed: {integrity}")
     database_hash = _sha256(target)
-    if entries and entries[-1].get("database_sha256") == database_hash:
+    if entries and entries[-1].get("database_sha256") == database_hash and entries[-1].get("source_signature") == signature:
         target.unlink(missing_ok=True)
         return {**entries[-1], "status": "unchanged"}
+    archive = target.with_suffix(".zip")
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(target, "project.sqlite3")
+        for source in sorted(project_root.rglob("*")):
+            if not source.is_file() or source == database or source.name in {
+                database.name + "-wal", database.name + "-shm",
+            }:
+                continue
+            relative = source.relative_to(project_root)
+            if relative.parts and relative.parts[0] in {"logs", "tmp"}:
+                continue
+            bundle.write(source, relative.as_posix())
     yaml_source = project_root / "project.yaml"
     yaml_target = target.with_suffix(".yaml")
     if yaml_source.is_file():
@@ -103,6 +120,8 @@ def backup_project(project_root: Path, backup_root: Path, reason: str = "manual"
         "source_project_root": str(project_root), "source_signature": signature,
         "database_path": str(target), "database_sha256": database_hash,
         "database_bytes": target.stat().st_size, "project_yaml_path": str(yaml_target) if yaml_target.is_file() else "",
+        "project_archive_path": str(archive), "project_archive_sha256": _sha256(archive),
+        "project_archive_bytes": archive.stat().st_size,
         "reason": reason, "created_at": _now(), "status": "created",
     }
     entries.append(entry)
@@ -114,14 +133,26 @@ def backup_existing_projects(data_root: Path, reason: str = "startup") -> dict[s
     data_root = data_root.resolve()
     projects_root, backup_root = data_root / "workspace" / "projects", data_root / "backups"
     receipts, failures = [], []
+    candidates: dict[str, Path] = {}
     if projects_root.is_dir():
         for project in sorted(projects_root.iterdir()):
-            if not (project / "project.sqlite3").is_file():
-                continue
-            try:
-                receipts.append(backup_project(project, backup_root, reason))
-            except Exception as error:
-                failures.append({"project_root": str(project), "error": str(error)})
+            if (project / "project.sqlite3").is_file():
+                candidates[str(project.resolve())] = project.resolve()
+    registry = data_root / "workspace" / "workspace.json"
+    if registry.is_file():
+        try:
+            registered = json.loads(registry.read_text(encoding="utf-8")).get("projects", [])
+            for item in registered:
+                project = Path(str(item.get("path", ""))).expanduser().resolve()
+                if (project / "project.sqlite3").is_file():
+                    candidates[str(project)] = project
+        except (json.JSONDecodeError, OSError, TypeError):
+            failures.append({"project_root": str(registry), "error": "workspace registry could not be read"})
+    for project in sorted(candidates.values(), key=lambda value: str(value).lower()):
+        try:
+            receipts.append(backup_project(project, backup_root, reason))
+        except Exception as error:
+            failures.append({"project_root": str(project), "error": str(error)})
     return {"receipts": receipts, "failures": failures, "backup_root": str(backup_root)}
 
 
@@ -145,7 +176,18 @@ def restore_backup(backup_root: Path, workspace_root: Path, backup_id: str) -> d
     slug = "restored-" + re_safe_slug(str(item.get("title", "project")))
     destination = workspace_root.resolve() / "projects" / f"{slug}-{uuid.uuid4().hex[:8]}"
     destination.mkdir(parents=True, exist_ok=False)
-    shutil.copy2(source, destination / "project.sqlite3")
+    archive_value = str(item.get("project_archive_path", ""))
+    archive = Path(archive_value).resolve() if archive_value else None
+    if archive and archive.is_file() and _sha256(archive) == item.get("project_archive_sha256"):
+        with zipfile.ZipFile(archive) as bundle:
+            destination_root = destination.resolve()
+            for member in bundle.infolist():
+                target = (destination / member.filename).resolve()
+                if target != destination_root and destination_root not in target.parents:
+                    raise RuntimeError("backup archive contains an unsafe path")
+            bundle.extractall(destination)
+    else:
+        shutil.copy2(source, destination / "project.sqlite3")
     yaml_source = Path(str(item.get("project_yaml_path", "")))
     if yaml_source.is_file():
         shutil.copy2(yaml_source, destination / "project.yaml")

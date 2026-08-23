@@ -127,9 +127,11 @@ from .model_settings import (
 from .workspace import (
     create_workspace_project,
     initialize_workspace,
+    register_workspace_project,
     select_workspace_project,
     workspace_view,
 )
+from .project_workspace import project_workspace_state
 from .weixin_gateway import gateway as weixin_gateway
 
 
@@ -211,6 +213,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/model-settings":
                 self._json(public_settings(self.server.config_root))
+                return
+            if parsed.path == "/api/project/workspace":
+                self._json(project_workspace_state(self.server.project_root))
                 return
             if parsed.path == "/api/weixin/status":
                 self._json(weixin_gateway(self.server.config_root, self.server.project_root).status())
@@ -685,7 +690,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.library_root,
                 )
             elif parsed.path == "/api/project/create":
-                result = create_workspace_project(self.server.workspace_root, str(payload["title"]))
+                parent = Path(str(payload["parent_path"])) if payload.get("parent_path") else None
+                result = create_workspace_project(self.server.workspace_root, str(payload["title"]), parent)
+                self.server.project_root = Path(result["project_root"])
+            elif parsed.path == "/api/project/register":
+                result = register_workspace_project(
+                    self.server.workspace_root, Path(str(payload["project_root"])),
+                )
                 self.server.project_root = Path(result["project_root"])
             elif parsed.path == "/api/project/select":
                 self.server.project_root = select_workspace_project(

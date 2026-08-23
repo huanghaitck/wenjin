@@ -2,9 +2,11 @@
 
 English | [中文](README.md)
 
-Wenjin is a local-first, model-selectable Agent workbench for humanities and social science research. It keeps research conversations, a personal library, source-page repair, bounded web research, evidence, historiography, drafting, Word round trips, Skills, CLI, and MCP on one auditable project data model.
+Wenjin is a local-first, model-selectable Agent workbench for humanities and social science research. Each study lives in an independent local project workspace, which connects research conversations, a personal library, source-page repair, bounded web research, evidence, historiography, drafting, Word round trips, Skills, CLI, and MCP through one auditable project data model.
 
 The current release is **0.1.1 Public Preview** for Windows 10/11.
+
+![Wenjin Project Workspace](docs/screenshots/wenjin-project-workspace-en.png)
 
 ![Wenjin Writing Studio](docs/screenshots/wenjin-writing-studio-en.png)
 
@@ -12,7 +14,8 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 
 ## Highlights
 
-- Local projects with integrity-checked SQLite backups and non-destructive recovery.
+- A project workspace for creating a study in a chosen local folder, registering an existing Wenjin project, and seeing its stage, sources, evidence, manuscripts, pending decisions, and recent activity.
+- Integrity-checked backups of the project database and project artifacts, including projects stored outside Wenjin's default folder, with non-destructive recovery.
 - A research library that separates works, editions, files, and exact byte versions.
 - Read-only folder inventory, suggested classification, and human-approved bulk registration.
 - PDF page images, text blocks, cross-page relations, printed-page mapping, and human repair.

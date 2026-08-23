@@ -8,6 +8,7 @@ const state = {
   sectionId: sessionStorage.getItem('hrwSectionId') || '', authoringMode: 'dialogue', proposalId: '',
   document: null, documentManuscriptId: '', selection: null, writingSelection: null, browserSession: null,
   modelSettings: null, sessionToken: '', lastDocxExport: '', nativeBridge: '',
+  projectWorkspace: null,
   eventFreezeDraft: [],
   historiographyEntryIds: JSON.parse(sessionStorage.getItem('hrwHistoriographyEntryIds') || '{}'),
   planningMode: sessionStorage.getItem('hrwPlanningMode') || 'independent_planning',
@@ -18,12 +19,12 @@ const state = {
 };
 const $ = (id) => document.getElementById(id);
 const translations={
-  'zh-CN':{nav_agent:'研究对话',nav_library:'研究图书馆',nav_article:'文章工作台',nav_skills:'技能与插件',nav_settings:'AI 与 Agent',tagline:'人文社会科学研究工作台',settings:'AI 与 Agent',settings_lead:'主模型、辅助模型、MoA、研究人格、记忆与连接器'},
-  en:{nav_agent:'Research chat',nav_library:'Research library',nav_article:'Writing studio',nav_skills:'Skills & plugins',nav_settings:'AI & Agent',tagline:'Humanities and social science research workbench',settings:'AI & Agent',settings_lead:'Main and auxiliary models, MoA, research persona, memory, and connectors'},
+  'zh-CN':{nav_agent:'研究对话',nav_project:'项目工作区',nav_library:'研究图书馆',nav_article:'文章工作台',nav_skills:'技能与插件',nav_settings:'AI 与 Agent',tagline:'人文社会科学研究工作台',settings:'AI 与 Agent',settings_lead:'主模型、辅助模型、MoA、研究人格、记忆与连接器'},
+  en:{nav_agent:'Research chat',nav_project:'Project workspace',nav_library:'Research library',nav_article:'Writing studio',nav_skills:'Skills & plugins',nav_settings:'AI & Agent',tagline:'Humanities and social science research workbench',settings:'AI & Agent',settings_lead:'Main and auxiliary models, MoA, research persona, memory, and connectors'},
 };
 const exactUiEnglish=new Map(Object.entries({
   '当前项目':'Current project','新建项目':'New project','研究线程':'Research threads','主模型':'Main model','发送':'Send',
-  '对话工作台已就绪。':'Research workspace ready.',
+  '项目工作区已就绪。':'Project workspace ready.',
   '研究上下文':'Research context','项目材料与研究记录':'Project materials and research records','项目文献':'Project sources','研究计划':'Research plan',
   '逐事件表':'Event register','图书馆':'Library','联网研究':'Web research','证据与论点':'Evidence and claims','冻结与写作':'Evidence freeze and writing',
   '研究浏览器':'Research browser','记忆候选':'Memory candidates','暂无待处理事项。':'No pending action.','运行与工具回执':'Run and tool receipts',
@@ -51,6 +52,14 @@ const exactUiEnglish=new Map(Object.entries({
   '选择一部作品，查看完整书目信息、文件位置与每一次精确版本。':'Choose a work to inspect its bibliography, file locations, and exact versions.',
   '打开原页与文本复核':'Open original page and text','修复是具体文件版本的下属动作；旧项目处理记录暂以兼容方式读取。':'Repairs belong to an exact file version; legacy project records are read through the compatibility layer.',
   '模型':'Models','辅助与 MoA':'Routing and MoA','研究人格':'Persona','记忆':'Memory','连接器与 MCP':'Connectors and MCP','领域包':'Domain packs','当前状态':'Status'
+  ,'物理页':'Physical pages','页码':'Page','跳转':'Go','← 返回图书馆':'← Back to library','尚未导入文献':'No source imported',
+  '原 PDF 页面与文本块':'Original PDF page and text blocks','提取文本':'Extracted text','等待材料':'Waiting for source','复核人':'Reviewer',
+  '修正依据':'Basis for correction','印刷页码':'Printed page','保存页码关系':'Save page mapping','模型修复建议':'Model repair suggestions',
+  '正在检查视觉模型……':'Checking the vision model…','确认本页与原图一致':'Confirm page against image','跨页关系':'Cross-page relations',
+  '待复核项':'Open review items','按双栏阅读顺序重排':'Reorder as two-column reading','在本页新增一块':'Add a block on this page',
+  '保存整页结构修正':'Save page-structure repair','提交整页修正':'Submit page repair','确认续接':'Confirm continuation',
+  '确认不续接':'Confirm no continuation','保存关系更正':'Save relation correction','当前没有待复核项。':'No open review item.',
+  '当前页没有跨页关系。':'No cross-page relation on this page.'
 }));
 const exactUiChinese=new Map([...exactUiEnglish].map(([zh,en])=>[en,zh]));
 const ariaUiEnglish=new Map(Object.entries({
@@ -79,6 +88,9 @@ function applyLanguage(){
   $('messageInput').placeholder=state.language==='en'?'For example: inspect the current source and anomalies, then save a bounded research note.':'例如：查看当前来源和异常，并把结论保存为研究札记';
   $('libraryQuery').placeholder=state.language==='en'?'Title, author, publisher, tag, or leading text':'题名、作者、出版社、标签或前段文本';
   $('skillQuery').placeholder=state.language==='en'?'Search skills, artifacts, or Agent integrations':'搜索技能、产物或 Agent 程序';
+  $('pageJump').placeholder=state.language==='en'?'Page':'页码';
+  $('reason').placeholder=state.language==='en'?'For example: checked character by character against this page':'例如：逐字核对当前原页';
+  $('printedPage').placeholder=state.language==='en'?'Read from the original header or footer':'按原页页眉或页脚填写';
   for(const node of document.querySelectorAll('[data-zh][data-en]'))node.textContent=state.language==='en'?node.dataset.en:node.dataset.zh;
   const ariaDictionary=state.language==='en'?ariaUiEnglish:ariaUiChinese;
   for(const node of document.querySelectorAll('[aria-label]')){
@@ -577,6 +589,64 @@ async function refreshLibrary() {
   renderLibraryShell();
   if (state.libraryWorkId) await loadWork(state.libraryWorkId);
 }
+
+async function activateWorkspaceProject(projectId, destination='project') {
+  await request('/api/project/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:projectId})});
+  state.threadId='';state.thread=null;state.view=null;state.libraryWork=null;state.libraryWorkId='';state.manuscriptId='';state.sectionId='';state.projectWorkspace=null;
+  sessionStorage.removeItem('hrwManuscriptId');sessionStorage.removeItem('hrwSectionId');
+  await loadSnapshot();setMode(destination);if(destination==='project')await loadProjectWorkspace();
+}
+
+function projectAction(action) {
+  if(action==='library_intake'){setMode('library');setLibraryView('intake');return;}
+  if(action==='repair_sources'){setMode('agent');state.contextMode='sources';renderContext();return;}
+  if(action==='research_design'){setMode('agent');state.contextMode='design';renderContext();return;}
+  if(action==='events_or_evidence'){setMode('agent');state.contextMode='events';renderContext();return;}
+  if(action==='approve_freeze'){setMode('agent');state.contextMode='writing';renderContext();return;}
+  if(['create_manuscript','decide_writing','review_export'].includes(action)){setMode('article');renderAuthoring();}
+}
+
+function renderProjectWorkspace() {
+  const english=state.language==='en';
+  const data=state.projectWorkspace;
+  const list=$('projectWorkspaceList');list.replaceChildren();
+  const projects=[];
+  for(const project of state.snapshot?.workspace?.projects||[]){
+    const existing=projects.findIndex((item)=>item.project_id===project.project_id);
+    if(existing<0)projects.push(project);
+    else if(project.available&&!projects[existing].available)projects[existing]=project;
+  }
+  for(const project of projects){
+    const button=document.createElement('button');button.classList.toggle('selected',project.project_id===state.snapshot.project.project_id);
+    button.append(Object.assign(document.createElement('strong'),{textContent:project.title}),Object.assign(document.createElement('small'),{textContent:project.available?`${project.source_count} ${english?'source(s)':'项文献'}`:(english?'Project folder unavailable':'项目目录不可用')}));
+    button.disabled=!project.available;button.onclick=()=>activateWorkspaceProject(project.project_id).catch((error)=>notice(error.message,true));list.append(button);
+  }
+  const createLocal=$('projectWorkspaceCreate');createLocal.textContent=english?'New project in Wenjin workspace':'在问津工作区新建项目';
+  const extra=document.createElement('div');extra.className='button-row';
+  if(nativeAvailable()){
+    extra.append(actionButton(english?'New project in a local folder':'在本地文件夹新建项目',async()=>{const parent=await nativeInvoke('choose_folder');if(!parent)return;const title=window.prompt(english?'Project title':'项目名称');if(!title?.trim())return;await request('/api/project/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,parent_path:parent})});await loadSnapshot();await loadProjectWorkspace();notice(english?'Local project created and selected.':'本地项目已建立并选中。');},true));
+    extra.append(actionButton(english?'Open an existing Wenjin project':'打开已有问津项目',async()=>{const path=await nativeInvoke('choose_folder');if(!path)return;await request('/api/project/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_root:path})});await loadSnapshot();await loadProjectWorkspace();notice(english?'Existing project registered and selected.':'已有项目已登记并选中。');}));
+  }
+  list.append(extra);
+  for(const id of ['projectWorkspaceOverview','projectWorkspaceObjects','projectWorkspaceSources','projectWorkspaceNext','projectWorkspaceActivity'])$(id).replaceChildren();
+  if(!data){$('projectWorkspaceOverview').append(Object.assign(document.createElement('p'),{className:'empty',textContent:english?'Loading project workspace…':'正在读取项目工作区……'}));return;}
+  const phaseLabels=english?{setup:'Project setup',materials:'Material processing',design:'Research design',research:'Reading and structured research',evidence:'Evidence and freeze',writing:'Writing',revision:'Revision decision',review:'Review and export'}:{setup:'建立项目',materials:'材料处理',design:'研究设计',research:'阅读与结构化研究',evidence:'证据与冻结',writing:'文章写作',revision:'返修决定',review:'评审与导出'};
+  const overview=document.createElement('section');overview.className='project-overview';overview.append(Object.assign(document.createElement('h1'),{textContent:data.project.title}),Object.assign(document.createElement('span'),{className:'project-phase',textContent:phaseLabels[data.phase]||data.phase}),Object.assign(document.createElement('p'),{textContent:english?`Project data: ${data.project.project_root}`:`项目位置：${data.project.project_root}`}));
+  if(data.research_design.shared)overview.append(Object.assign(document.createElement('p'),{textContent:`${english?'Approved shared design':'已批准共同计划'}：${data.research_design.shared.title}`}));
+  $('projectWorkspaceOverview').append(overview);
+  const objectDefinitions=[
+    [english?'Sources':'项目文献','sources','library_intake'],[english?'Approved events':'获批事件','approved_events','events_or_evidence'],[english?'Verified evidence':'已核证据','verified_evidence','events_or_evidence'],[english?'Approved freezes':'批准冻结','approved_freezes','approve_freeze'],[english?'Reading jobs':'阅读任务','reading_jobs','events_or_evidence'],[english?'Approved historiography':'批准学术史','approved_historiography','events_or_evidence'],[english?'Manuscripts':'稿件','manuscripts','create_manuscript'],[english?'Reviews':'评审','reviews','review_export'],[english?'Waiting approvals':'等待批准','waiting_approvals','repair_sources']
+  ];
+  for(const [label,key,action] of objectDefinitions){const node=card(label,String(data.counts[key]??0));node.onclick=()=>projectAction(action);node.tabIndex=0;$('projectWorkspaceObjects').append(node);}
+  const sourceBox=card(english?'Project sources':'项目文献',english?'Open a source to inspect page processing, verification, and outstanding anomalies.':'打开文献可查看页面处理、核验状态和待处理异常。');const sourceList=document.createElement('section');sourceList.className='project-source-list';
+  for(const source of data.sources){const row=document.createElement('div');row.className='project-source-row';const text=document.createElement('div');text.append(Object.assign(document.createElement('strong'),{textContent:source.title}),document.createElement('br'),Object.assign(document.createElement('small'),{textContent:`${source.processing_state} · ${source.use_state} · ${source.verified_pages||0}/${source.page_count||0} ${english?'verified pages':'已核页'} · ${source.open_anomalies||0} ${english?'open issue(s)':'项待处理'}`}));row.append(text,actionButton(english?'Open pages':'打开原页',async()=>{await loadSource(source.source_id);setMode('source');render();},true));sourceList.append(row);}if(!data.sources.length)sourceList.append(Object.assign(document.createElement('p'),{className:'empty',textContent:english?'No source has been added to this project.':'当前项目还没有文献。'}));sourceBox.append(sourceList);$('projectWorkspaceSources').append(sourceBox);
+  const actionLabels=english?{library_intake:'Add or inventory sources',repair_sources:'Resolve source-page issues',research_design:'Establish or approve the research design',events_or_evidence:'Build events or evidence from source pages',approve_freeze:'Review and approve an evidence freeze',create_manuscript:'Create a manuscript',decide_writing:'Decide pending writing proposals',review_export:'Review and export the current manuscript'}:{library_intake:'导入或盘点材料',repair_sources:'处理文献页面问题',research_design:'建立或批准研究计划',events_or_evidence:'从原页建立事件或证据',approve_freeze:'核对并批准证据冻结',create_manuscript:'建立稿件',decide_writing:'处理待审写作提案',review_export:'评审并导出当前稿件'};
+  const next=card(english?'Recommended next steps':'建议的下一步',english?'Generated from current project state; these are navigation suggestions, not research conclusions.':'依据当前项目状态生成，只是操作导航，不是研究结论。');const actionList=document.createElement('section');actionList.className='project-next-actions';for(const item of data.next_actions)actionList.append(actionButton(`${actionLabels[item.action]||item.action}${item.count?` (${item.count})`:''}`,()=>projectAction(item.action),true));if(!data.next_actions.length)actionList.append(Object.assign(document.createElement('p'),{textContent:english?'No urgent project action detected.':'当前没有紧急项目操作。'}));next.append(actionList);$('projectWorkspaceNext').append(next);
+  if(data.readiness.blockers?.length||data.readiness.warnings?.length)$('projectWorkspaceNext').append(card(english?'Research readiness':'研究准备情况',[...(data.readiness.blockers||[]),...(data.readiness.warnings||[])].join('\n')));
+  const activity=card(english?'Recent project activity':'最近项目活动','');const activityList=document.createElement('section');activityList.className='project-activity-list';const activityLabels=english?{project_initialized:'Project created',source_registered:'Source added',pdf_ingested:'PDF processed',block_verified:'Text block verified',page_verified:'Page verified',research_design_approved:'Research design approved',research_event_approved:'Event approved',evidence_freeze_approved:'Evidence freeze approved'}:{project_initialized:'项目建立',source_registered:'文献加入',pdf_ingested:'PDF处理',block_verified:'文本段核验',page_verified:'页面核验',research_design_approved:'研究计划批准',research_event_approved:'事件批准',evidence_freeze_approved:'证据冻结批准'};for(const item of data.recent_activity){const row=document.createElement('div');row.className='project-activity-item';row.append(Object.assign(document.createElement('strong'),{textContent:activityLabels[item.event_type]||(english?'Project record updated':'项目记录更新')}),document.createElement('br'),Object.assign(document.createElement('small'),{textContent:`${item.entity_type} · ${new Date(item.created_at).toLocaleString()}`}));activityList.append(row);}activity.append(activityList);$('projectWorkspaceActivity').append(activity);
+}
+
+async function loadProjectWorkspace(){state.projectWorkspace=await request('/api/project/workspace');renderProjectWorkspace();}
 
 function renderAgentShell() {
   const sharedDesign=state.snapshot?.research_design?.shared_design;
@@ -1816,11 +1886,12 @@ function currentPageAnomalies() {
 
 function renderRail() {
   const rail = $('pageRail'); rail.replaceChildren();
+  const english=state.language==='en';
   for (const [index, page] of (state.view?.pages || []).entries()) {
     const button = document.createElement('button');
     button.textContent = page.page_type === 'docx_locator'
-      ? `片段 ${page.physical_page}`
-      : `第 ${page.physical_page} 页${page.printed_page ? ` · ${page.printed_page}` : ''}`;
+      ? `${english?'Segment':'片段'} ${page.physical_page}`
+      : `${english?'Page':'第'} ${page.physical_page}${english?'':' 页'}${page.printed_page ? ` · ${page.printed_page}` : ''}`;
     button.classList.toggle('selected', index === state.pageIndex);
     button.classList.toggle('blocked', page.use_state === 'blocked');
     button.onclick = () => { state.pageIndex = index; clearReviewReason(); render(); };
@@ -1829,14 +1900,15 @@ function renderRail() {
 }
 
 function blockCard(block, pageAnomaly) {
+  const english=state.language==='en';
   const card = document.createElement('article'); card.className = 'block-card';
   const anomaly = openAnomalies().find((item) => item.scope_type === 'block' && item.target_id === block.block_id);
   card.classList.toggle('blocked', Boolean(anomaly)); card.dataset.order = block.block_order;
   card.dataset.verificationState=block.verification_state||'';
   card.dataset.region = JSON.stringify(block.source_region || null);
   const meta = document.createElement('div'); meta.className = 'block-meta';
-  const region = block.source_region ? Object.values(block.source_region).map((v) => Number(v).toFixed(2)).join(', ') : '未定位';
-  const label = document.createElement('span'); label.textContent = `块 ${block.block_order} · 区域 ${region}`;
+  const region = block.source_region ? Object.values(block.source_region).map((v) => Number(v).toFixed(2)).join(', ') : (english?'not located':'未定位');
+  const label = document.createElement('span'); label.textContent = `${english?'Block':'块'} ${block.block_order} · ${english?'region':'区域'} ${region}`;
   const type = document.createElement('select'); type.className = 'block-type';
   for (const value of ['paragraph', 'heading', 'footnote', 'header', 'footer', 'page_number']) type.append(new Option(value, value));
   type.value = block.block_type;
@@ -1847,7 +1919,7 @@ function blockCard(block, pageAnomaly) {
   card.append(meta, textarea);
   if (anomaly) {
     const actions = document.createElement('div'); actions.className = 'block-actions';
-    const button = document.createElement('button'); button.textContent = '提交这一小段';
+    const button = document.createElement('button'); button.textContent = english?'Submit this block':'提交这一小段';
     button.onclick = async () => {
       try {
         await request('/api/repair/block', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ anomaly_id: anomaly.anomaly_id, text: textarea.value, ...reviewerPayload() }) });
@@ -1859,7 +1931,7 @@ function blockCard(block, pageAnomaly) {
     const actions = document.createElement('div'); actions.className = 'block-actions';
     const verified = ['human_verified', 'human_repaired'].includes(block.verification_state);
     const button = document.createElement('button');
-    button.textContent = verified ? '此段已人工核验' : '确认此段与原图一致';
+    button.textContent = verified ? (english?'Block verified by a person':'此段已人工核验') : (english?'Confirm block against image':'确认此段与原图一致');
     button.disabled = verified;
     button.onclick = async () => {
       try {
@@ -1868,7 +1940,7 @@ function blockCard(block, pageAnomaly) {
       } catch (error) { notice(error.message, true); }
     };
     const correct = document.createElement('button');
-    correct.textContent = pageAnomaly ? '保存这一小段修正' : '保存这段修正';
+    correct.textContent = pageAnomaly ? (english?'Save this block repair':'保存这一小段修正') : (english?'Save block repair':'保存这段修正');
     correct.onclick = async () => {
       try {
         await request('/api/block/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({block_id:block.block_id, text:textarea.value, block_type:type.value, ...reviewerPayload()})});
@@ -2116,6 +2188,7 @@ function renderAnomalies() {
 
 function renderRelations() {
   const container = $('relations'); container.replaceChildren();
+  const english=state.language==='en';
   const page = currentPage();
   if (!page) return;
   const blockIds = new Set(page.blocks.map((block) => block.block_id));
@@ -2134,18 +2207,18 @@ function renderRelations() {
     const card = document.createElement('article'); card.className = 'relation-card';
     const value = relation.effective_value?.continues;
     card.append(Object.assign(document.createElement('small'), {
-      textContent:`${relation.relation_id} · ${value === true ? '已确认续接' : value === false ? '已确认不续接' : '待确认'}`,
+      textContent:`${relation.relation_id} · ${value === true ? (english?'continuation confirmed':'已确认续接') : value === false ? (english?'no continuation confirmed':'已确认不续接') : (english?'pending':'待确认')}`,
     }));
     const form = document.createElement('div'); form.className = 'relation-form';
     const from = document.createElement('select');
     const to = document.createElement('select');
-    for (const block of leftPage?.blocks || []) from.append(new Option(`第${leftPage.physical_page}页 B${block.block_order} · ${block.block_type}`, block.block_id));
-    for (const block of rightPage?.blocks || []) to.append(new Option(`第${rightPage.physical_page}页 B${block.block_order} · ${block.block_type}`, block.block_id));
+    for (const block of leftPage?.blocks || []) from.append(new Option(`${english?'Page ':`第`}${leftPage.physical_page}${english?'':'页'} B${block.block_order} · ${block.block_type}`, block.block_id));
+    for (const block of rightPage?.blocks || []) to.append(new Option(`${english?'Page ':`第`}${rightPage.physical_page}${english?'':'页'} B${block.block_order} · ${block.block_type}`, block.block_id));
     from.value = relation.from_block_id; to.value = relation.to_block_id;
     const continues = document.createElement('select');
-    continues.append(new Option('确认续接', 'true'), new Option('确认不续接', 'false'));
+    continues.append(new Option(english?'Confirm continuation':'确认续接', 'true'), new Option(english?'Confirm no continuation':'确认不续接', 'false'));
     continues.value = value === false ? 'false' : 'true';
-    const save = document.createElement('button'); save.textContent = '保存关系更正';
+    const save = document.createElement('button'); save.textContent = english?'Save relation correction':'保存关系更正';
     save.onclick = async () => {
       try {
         await request('/api/relation/correct', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
@@ -2422,8 +2495,9 @@ function renderBrowserControls() {
 function render() {
   renderRail(); renderOcrProposal(); renderBlocks(); renderRelations(); renderAnomalies();
   const page = currentPage(); const source = state.view?.source;
-  $('sourceTitle').textContent = source?.title || '尚未导入文献';
-  $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : '等待材料';
+  const english=state.language==='en';
+  $('sourceTitle').textContent = source?.title || (english?'No source imported':'尚未导入文献');
+  $('sourceState').textContent = source ? `${source.processing_state} · ${source.use_state}` : (english?'Waiting for source':'等待材料');
   const citation=source?.citation_metadata||{};
   $('citationAuthor').value=citation.author||'';
   $('citationTitle').value=citation.title||source?.title||'';
@@ -2442,8 +2516,8 @@ function render() {
     ? `已由 ${citation.verified_by} 核验 · ${new Date(citation.verified_at).toLocaleString()}`
     : '题名页与书目信息待核。';
   const locator = page?.page_type === 'docx_locator';
-  $('pageRailTitle').textContent = locator ? '译稿片段' : '物理页';
-  $('pageLabel').textContent = page ? (locator ? `逻辑片段 ${page.physical_page} · locator_only` : `物理页 ${page.physical_page}${page.printed_page ? ` · 印刷页 ${page.printed_page}` : ''}`) : '原 PDF 页面与文本块';
+  $('pageRailTitle').textContent = locator ? (english?'Translation segments':'译稿片段') : (english?'Physical pages':'物理页');
+  $('pageLabel').textContent = page ? (locator ? `${english?'Logical segment':'逻辑片段'} ${page.physical_page} · locator_only` : `${english?'Physical page':'物理页'} ${page.physical_page}${page.printed_page ? ` · ${english?'printed page':'印刷页'} ${page.printed_page}` : ''}`) : (english?'Original PDF page and text blocks':'原 PDF 页面与文本块');
   $('pageJump').value = page?.physical_page || '';
   $('printedPage').value = page?.printed_page || '';
   $('pageImage').hidden = Boolean(locator);
@@ -2478,6 +2552,7 @@ async function exportReadingMarkdown(verifiedOnly){
 $('exportCurrentReadingMarkdown').onclick=()=>exportReadingMarkdown(false);
 $('exportVerifiedReadingMarkdown').onclick=()=>exportReadingMarkdown(true);
 function setMode(mode) {
+  $('projectWorkbench').hidden = mode !== 'project';
   $('libraryWorkbench').hidden = mode !== 'library';
   $('libraryViews').hidden = mode !== 'library';
   $('agentWorkbench').hidden = mode !== 'agent';
@@ -2488,20 +2563,24 @@ function setMode(mode) {
   $('skillsWorkbench').hidden = mode !== 'skills';
   $('libraryMode').classList.toggle('mode-active', mode === 'library');
   $('agentMode').classList.toggle('mode-active', mode === 'agent');
+  $('projectMode').classList.toggle('mode-active', mode === 'project');
   $('articleMode').classList.toggle('mode-active', mode === 'article');
   $('settingsMode').classList.toggle('mode-active', mode === 'settings');
   $('skillsMode').classList.toggle('mode-active', mode === 'skills');
   if (mode === 'settings') renderSettings();
+  if (mode === 'project') loadProjectWorkspace().catch((error)=>notice(error.message,true));
   if (mode === 'skills') renderSkillCatalog();
   if (mode === 'browser') renderBrowserControls();
   queueMicrotask(()=>translateExactUi());
 }
 $('libraryMode').onclick = () => setMode('library');
 $('agentMode').onclick = () => setMode('agent');
+$('projectMode').onclick = () => setMode('project');
 $('articleMode').onclick = () => { setMode('article'); renderAuthoring(); };
 $('skillsMode').onclick = () => setMode('skills');
 $('settingsMode').onclick = () => setMode('settings');
-$('languageToggle').onclick=()=>{state.language=state.language==='zh-CN'?'en':'zh-CN';localStorage.setItem('wenjinLanguage',state.language);applyLanguage();renderAgentShell();renderLibraryShell();renderAuthoring();renderSkillCatalog();renderSettings();queueMicrotask(()=>translateExactUi());};
+$('projectWorkspaceCreate').onclick=async()=>{const title=window.prompt(state.language==='en'?'Project title':'项目名称',state.language==='en'?'New research project':'新的研究项目');if(!title?.trim())return;try{await request('/api/project/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});state.projectWorkspace=null;await loadSnapshot();setMode('project');notice(state.language==='en'?'Project created in the Wenjin workspace.':'项目已建立在问津工作区。');}catch(error){notice(error.message,true);}};
+$('languageToggle').onclick=()=>{state.language=state.language==='zh-CN'?'en':'zh-CN';localStorage.setItem('wenjinLanguage',state.language);applyLanguage();renderAgentShell();renderProjectWorkspace();renderLibraryShell();renderAuthoring();renderSkillCatalog();renderSettings();notice(state.language==='en'?'Project workspace ready.':'项目工作区已就绪。');queueMicrotask(()=>translateExactUi());};
 $('settingsTabs').onclick=(event)=>{const button=event.target.closest('[data-settings-tab]');if(!button)return;state.settingsTab=button.dataset.settingsTab;sessionStorage.setItem('wenjinSettingsTab',state.settingsTab);renderSettings();};
 $('libraryViews').onclick=(event)=>{const button=event.target.closest('[data-library-view]');if(!button)return;setLibraryView(button.dataset.libraryView);};
 $('skillQuery').oninput=renderSkillCatalog;
@@ -2775,5 +2854,9 @@ const languageObserver=new MutationObserver((mutations)=>{
   }
 });
 languageObserver.observe(document.body,{childList:true,subtree:true});
-setMode(['agent', 'article', 'library', 'skills', 'settings', 'browser', 'source'].includes(initialMode) ? initialMode : 'agent');
-loadSnapshot().then(async()=>{await restoreLibraryScan();notice(state.language==='en'?'Research workspace ready.':'对话工作台已就绪。');}).catch((error) => notice(error.message, true));
+setMode(['agent', 'project', 'article', 'library', 'skills', 'settings', 'browser', 'source'].includes(initialMode) ? initialMode : 'project');
+loadSnapshot().then(async()=>{
+  if(!$('projectWorkbench').hidden)await loadProjectWorkspace();
+  await restoreLibraryScan();
+  notice(state.language==='en'?'Project workspace ready.':'项目工作区已就绪。');
+}).catch((error) => notice(error.message, true));

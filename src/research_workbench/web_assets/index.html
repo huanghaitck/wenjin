@@ -11,6 +11,7 @@
     <div><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台</span></div>
     <div class="importer">
       <button id="agentMode" class="mode-active" data-i18n="nav_agent">研究对话</button>
+      <button id="projectMode" data-i18n="nav_project">项目工作区</button>
       <button id="libraryMode" data-i18n="nav_library">研究图书馆</button>
       <button id="articleMode" data-i18n="nav_article">文章工作台</button>
       <button id="skillsMode" data-i18n="nav_skills">技能与插件</button>
@@ -20,6 +21,22 @@
   </header>
 
   <div id="notice" role="status">正在读取本地项目……</div>
+  <main id="projectWorkbench" class="project-workbench" hidden>
+    <aside class="project-list-panel surface">
+      <header class="agent-heading"><div><h2 data-zh="研究项目" data-en="Research projects">研究项目</h2><p data-zh="项目之间的材料、证据和稿件相互隔离" data-en="Sources, evidence, and manuscripts remain separated by project">项目之间的材料、证据和稿件相互隔离</p></div></header>
+      <div id="projectWorkspaceList" class="project-workspace-list"></div>
+      <button id="projectWorkspaceCreate" class="primary-inline" data-zh="新建研究项目" data-en="New research project">新建研究项目</button>
+    </aside>
+    <section class="project-dashboard-panel surface">
+      <div id="projectWorkspaceOverview"></div>
+      <div id="projectWorkspaceObjects" class="project-object-grid"></div>
+      <div id="projectWorkspaceSources"></div>
+    </section>
+    <aside class="project-activity-panel surface">
+      <div id="projectWorkspaceNext"></div>
+      <div id="projectWorkspaceActivity"></div>
+    </aside>
+  </main>
   <nav id="libraryViews" class="subview-tabs library-viewbar" aria-label="图书馆子页面" hidden>
     <button id="showLibraryList" data-library-view="list" class="selected" data-zh="书目与书架" data-en="Catalog and shelves">书目与书架</button>
     <button id="showLibraryChronicle" data-library-view="chronicle" data-zh="史料长编" data-en="Source chronicle">史料长编</button>

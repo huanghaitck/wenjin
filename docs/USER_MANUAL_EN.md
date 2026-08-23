@@ -10,7 +10,7 @@ Scope: local literature organization, PDF repair, research dialogue, web discove
 
 > **Boundary of this release**
 >
-> Wenjin is a local-first research workbench. It is not an unattended “write my paper” system and it does not replace Microsoft Word, Zotero, CNKI, or Obsidian. A feature that is not visible in the interface should not be assumed to exist. Restricted databases are not downloaded through unattended automation. The desktop application creates integrity-checked backups for changed projects; external long-term memory accepts only explicitly approved candidates.
+> Wenjin is a local-first research workbench. It is not an unattended “write my paper” system and it does not replace Microsoft Word, Zotero, CNKI, or Obsidian. A feature that is not visible in the interface should not be assumed to exist. Restricted databases are not downloaded through unattended automation. The desktop application creates integrity-checked backups containing the project database and project artifacts; external long-term memory accepts only explicitly approved candidates.
 
 ## 1. Three principles to remember
 
@@ -18,9 +18,17 @@ Scope: local literature organization, PDF repair, research dialogue, web discove
 2. **Models produce candidates.** OCR repair, research plans, evidence, memory, and formal writing all pass through human decisions. “Pending” or “candidate” does not mean approved.
 3. **Keep different kinds of information in different layers.** The library, project knowledge, Agent runs, and long-term memory have different purposes. Chat history and search results do not silently become durable knowledge.
 
-## 2. The five main workspaces
+## 2. The six main workspaces
 
-### 2.1 Research chat
+### 2.1 Project workspace
+
+The Project Workspace is the default home. It lists registered local projects, shows the current project's phase and object counts, and surfaces source-page issues, pending decisions, recommended next actions, and recent activity.
+
+The desktop application can create a project under a folder chosen by the researcher or register an existing Wenjin directory that contains `project.sqlite3`. The ordinary create button uses Wenjin's default application-data folder. Conversations, evidence, manuscripts, and run records remain project-specific, while the research library can reuse the same work and exact file version across projects.
+
+Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. Version 0.1.1 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
+
+### 2.2 Research chat
 
 Research chat is the default home page. Give each thread one bounded task, for example:
 
@@ -40,7 +48,7 @@ Create a thread with the plus button before sending the first message. If no mai
 
 Each thread also has an Agent access mode: Ask for approval, Auto-approve routine research, or Full access. These modes are described in Section 5.
 
-### 2.2 Research library
+### 2.3 Research library
 
 The library answers “What work is this, which edition is it, and where is the exact file?” It does not decide whether a page supports a claim.
 
@@ -65,13 +73,13 @@ The graph has two layers. The literature layer treats books and articles as node
 
 The **Source Chronicle** contains only human-approved event records that retain an exact source version and page link. It can be filtered and exported as Markdown. A chronicle is not a claim that the surviving corpus has been exhausted.
 
-### 2.3 Writing studio
+### 2.4 Writing studio
 
 The Writing Studio manages manuscript structure, sections, tables, notes, review, and venue export. Every save creates a new revision; older revisions are not overwritten.
 
 Wenjin is not a full Word clone. Use it for research structure, evidence anchors, and version control. Export to Word for final pagination, typography, headers, and submission layout, then reimport the edited DOCX as a new revision.
 
-### 2.4 Skills and integrations
+### 2.5 Skills and integrations
 
 This workspace separates user-invoked Skills, internal harness workflows, and external integrations. Clicking **Invoke in chat** inserts a slash command, for example:
 
@@ -97,7 +105,7 @@ Install a domain pack from a local folder or ZIP. A self-contained pack should i
 wenjin plugin-create my-domain-plugin --output .\plugins
 ```
 
-### 2.5 AI & Agent
+### 2.6 AI & Agent
 
 This workspace shows software and schema versions, main and auxiliary models, MoA, research persona, memory, Skills, MCP, connectors, domain packs, Computer Use, and privacy boundaries.
 
@@ -105,7 +113,7 @@ The **two-way Codex bridge** has two directions. Codex can inspect the current W
 
 The **Weixin connection** is experimental in 0.1.1. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
-The **Runtime** page can create an immediate integrity-checked backup and restore an older backup as a new project copy. Restore never overwrites the active project.
+The **Runtime** page can create an immediate backup. Wenjin first uses SQLite's online backup API for a consistent database, then bundles source copies, cleaned derivatives, research notes, manuscripts, reviews, and exports. Logs and temporary files are excluded. Registered projects outside the default Wenjin directory are included in startup backup checks. Restore creates a new project copy and never overwrites the active project.
 
 The **Memory** page configures separate local historical and engineering vaults. Only an `approved_local` candidate may be promoted, and promotion writes one draft card to the target vault's `90_INBOX`. It does not copy full conversations, OCR drafts, or source files.
 
@@ -113,10 +121,10 @@ The **Memory** page configures separate local historical and engineering vaults.
 
 ### 3.1 Create the project
 
-1. Click **New project**.
+1. Use **New project in Wenjin workspace**. In the desktop application, choose **New project in a local folder** when you want to control its location.
 2. Use a durable, recognizable title that names the research object.
 3. Avoid titles such as “New project 1” or “final paper.”
-4. Confirm that the new project appears in the Current Project selector.
+4. Confirm that the new project is selected in the Project Workspace and inspect the displayed project path.
 
 One project should correspond to a reasonably stable question or manuscript. Unrelated papers should not share a project database.
 
