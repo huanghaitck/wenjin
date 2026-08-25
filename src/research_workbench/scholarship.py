@@ -622,6 +622,7 @@ def _agent_browser_executable() -> tuple[str, str]:
     if configured:
         candidates.append((Path(configured), "configured"))
     candidates.append((Path(sys.executable).resolve().parent / "tools" / "agent-browser.exe", "bundled"))
+    candidates.append((Path(__file__).resolve().parents[2] / "node_modules" / "agent-browser" / "bin" / "agent-browser-win32-x64.exe", "project"))
     located = shutil.which("agent-browser")
     if located:
         candidates.append((Path(located), "system"))

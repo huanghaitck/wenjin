@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .model_settings import apply_settings
+from .agent_runtime import ensure_default_thread
 from .service import initialize_project
 from .web import serve
 from .workspace import initialize_workspace
@@ -26,7 +27,11 @@ def _install_builtin_computer_use(config_root: Path) -> None:
         None,
     )
     manifest = json.loads((source / "wenjin-plugin.json").read_text(encoding="utf-8"))
-    if installed and installed.get("version") == manifest.get("version") and not installed.get("package_changed"):
+    if (
+        installed and installed.get("status") == "ready"
+        and installed.get("version") == manifest.get("version")
+        and not installed.get("package_changed")
+    ):
         return
     install_domain_plugin(config_root, source, runtime_command=sys.executable)
 
@@ -53,6 +58,7 @@ def bootstrap_desktop(data_root: Path) -> dict[str, Any]:
             initialize_project(project_root, "我的历史研究")
     registry = initialize_workspace(workspace_root, project_root)
     project_root = Path(registry["current_project"])
+    ensure_default_thread(project_root)
     _install_builtin_computer_use(config_root)
     apply_settings(config_root)
     start_configured_gateway(config_root, project_root)

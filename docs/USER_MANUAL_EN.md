@@ -4,7 +4,7 @@ English | [中文](USER_MANUAL_ZH.md)
 
 Version: 0.1.1 Public Preview (the installer is not code-signed)
 
-Verified: 2026-08-21
+Verified: 2026-08-26
 
 Scope: local literature organization, PDF repair, research dialogue, web discovery, evidence control, writing, and Word export
 
@@ -12,13 +12,26 @@ Scope: local literature organization, PDF repair, research dialogue, web discove
 >
 > Wenjin is a local-first research workbench. It is not an unattended “write my paper” system and it does not replace Microsoft Word, Zotero, CNKI, or Obsidian. A feature that is not visible in the interface should not be assumed to exist. Restricted databases are not downloaded through unattended automation. The desktop application creates integrity-checked backups containing the project database and project artifacts; external long-term memory accepts only explicitly approved candidates.
 
+## 0. Five-minute quick start for first-time AI users
+
+1. **Open Wenjin.** On first launch, select **Configure main model**. Choose **Not now** only when you want to use the library and manual page tools without AI.
+2. **Connect a model.** For DeepSeek or another hosted service, select the provider, enter the API key, refresh the model list, choose a model, and test the connection. Choose Ollama when it is already installed locally; Ollama does not require an API key.
+3. **Create a project.** Open Project Workspace, create a project, and use a title that will still identify the research later. Do not mix unrelated papers in one project.
+4. **Add material.** The easiest method is **+ Attach files** in chat. The same file is archived in the Research Library and exact duplicate bytes reuse one file version. You may also upload in the library or inventory a computer folder and approve selected candidates.
+5. **Ask in ordinary language.** No command syntax is required. Example: “Inspect the spreadsheet I just uploaded. Report header and dirty-row problems first. Do not modify the file yet.” State the object, requested action, forbidden action, and stopping point whenever possible.
+6. **Read run status.** The conversation shows public actions such as “searching files” and “tool returned,” not hidden chain-of-thought. Pending approvals and artifacts appear in the side panel.
+7. **Approve carefully.** Ask mode pauses before opening a controlled site, clicking the computer, launching a program, running a command, or writing a file. Inspect the arguments, enter a decision reason, and approve. The same run continues automatically after approval.
+8. **Open results.** In the desktop application, use **Open artifact** or double-click supported image and table artifacts. OCR, extracted tables, and charts remain candidates until human review.
+
+When you do not know which workspace to use, state the goal in Research Chat. The main Agent inspects the current project, chooses the smallest necessary Skill, tool, or Domain Agent, and identifies decisions that still belong to the researcher.
+
 ## 1. Three principles to remember
 
 1. **The original file remains authoritative.** Cleaned text, translations, model answers, and summaries are working derivatives. When a claim is uncertain, return to the exact page in the original PDF.
 2. **Models produce candidates.** OCR repair, research plans, evidence, memory, and formal writing all pass through human decisions. “Pending” or “candidate” does not mean approved.
 3. **Keep different kinds of information in different layers.** The library, project knowledge, Agent runs, and long-term memory have different purposes. Chat history and search results do not silently become durable knowledge.
 
-## 2. The six main workspaces
+## 2. The seven main workspaces
 
 ### 2.1 Project workspace
 
@@ -48,7 +61,41 @@ Create a thread with the plus button before sending the first message. If no mai
 
 Each thread also has an Agent access mode: Ask for approval, Auto-approve routine research, or Full access. These modes are described in Section 5.
 
-### 2.3 Research library
+#### Let the main Agent orchestrate existing capabilities
+
+The main Agent can coordinate project tools instead of merely answering questions. For example:
+
+```text
+Check whether these PDFs already have usable text. Process existing text directly; use visual OCR only for pages that need it. Produce candidate Markdown, but do not write formal evidence.
+```
+
+The Agent first reads project state, then selects among reusable Skills, Computer Use, web research, the Writing Studio, and installed Domain Agents. It should reuse existing capabilities before proposing a new extension. A bounded specialist task may be delegated inside the current run; sustained specialist work can continue in the Domain Agent workspace.
+
+#### Let the main Agent create a controlled extension
+
+You may say “Help me create a Skill for this material” or “Help me create a Domain Agent.” The main Agent first asks about purpose, inputs, tools, permissions, outputs, and stopping conditions. Only after those answers and the required approval may it call `skill.create` or the Domain Agent project creator.
+
+“Self-extension” means creating a versioned, validated Skill or Domain Agent project. It does not allow a model to silently rewrite Wenjin core. File creation, program launch, and commands still follow the selected access mode. New extensions cannot bypass source-page, evidence, writing, or release gates. New users should keep **Ask for approval** and inspect every target path and argument before a write.
+
+### 2.3 Domain Agent
+
+Domain Agents are for sustained tasks that require specialist terminology, schemas, databases, and deterministic tools. A Domain Agent has its own thread, isolated memory, allowlisted tools, and candidate artifacts. The main Agent may delegate a bounded task to it from Research Chat, or the researcher may open the Domain Agent workspace and speak to it directly.
+
+The left sidebar imports a ZIP or extracted directory, selects an installed Agent, or starts **Create Agent**. Guided creation first creates a project and a dedicated chat. The main Agent asks one necessary question at a time: research object and stopping rule, materials, fields and databases, permissions, outputs, and human final review. It creates the project only after those boundaries are clear.
+
+Each installed Agent has an explicit **Uninstall** action. After confirmation, Wenjin removes the installed copy, that Agent's model overrides, and its secure credentials. It does not delete the original ZIP, source project, user-bound local database, or historical records already stored in Wenjin projects.
+
+The central composer accepts PDF, DOCX, spreadsheets, text, images, and spatial files. Files uploaded through either main chat or Domain Agent chat are also archived in the Research Library. Exact duplicate bytes reuse one file version rather than creating another copy. Archival does not mean that a file has been read or qualified as evidence.
+
+The pills below the Agent title are model roles. Select one to configure domain reasoning, primary vision, secondary vision review, or fallback review in the right sidebar. Overrides are stored by domain package plus role. Several Agents may share an API endpoint, Ollama port, or credential without overwriting one another, while an individual Agent may use a separate credential when cost, quota, or data boundaries require it.
+
+While a run is active, the Send button becomes a stop symbol. Clicking it requests a stop at the next safe boundary. Typing another message and pressing Enter during the run queues a direction update; after the update is consumed, the same run continues automatically. A user-stopped run never restarts by itself: send a new instruction to continue. Pending direction updates can be edited or deleted.
+
+The right sidebar shows the current tool activity and newest artifacts first; older artifacts are collapsed. In the desktop application, click **Open artifact** or double-click a supported artifact to open it with the system application. Access mode, model, reasoning mode, and reasoning effort remain in the composer; unsupported controls stay hidden.
+
+A self-contained Domain Agent may also be used by Codex or another MCP stdio host. Wenjin injects the selected model roles and local-data bindings when launching the MCP process. Other hosts may use the blank environment template shipped by the Agent; distributed packages must not contain populated credentials.
+
+### 2.4 Research library
 
 The library answers “What work is this, which edition is it, and where is the exact file?” It does not decide whether a page supports a claim.
 
@@ -73,19 +120,23 @@ The graph has two layers. The literature layer treats books and articles as node
 
 The **Source Chronicle** contains only human-approved event records that retain an exact source version and page link. It can be filtered and exported as Markdown. A chronicle is not a claim that the surviving corpus has been exhausted.
 
-### 2.4 Writing studio
+### 2.5 Writing studio
 
 The Writing Studio manages manuscript structure, sections, tables, notes, review, and venue export. Every save creates a new revision; older revisions are not overwritten.
 
 Wenjin is not a full Word clone. Use it for research structure, evidence anchors, and version control. Export to Word for final pagination, typography, headers, and submission layout, then reimport the edited DOCX as a new revision.
 
-### 2.5 Skills and integrations
+### 2.6 Skills and integrations
 
 This workspace separates user-invoked Skills, internal harness workflows, and external integrations. Clicking **Invoke in chat** inserts a slash command, for example:
 
 ```text
 /historical-literature-search find public primary sources for a bounded period and region
 ```
+
+Natural-language requests also expose the versioned catalog of Skills that permit implicit use. The main Agent reads the smallest matching Skill before applying it; users do not have to know the slash command.
+
+Creating a thread from an existing conversation inherits bounded parent context without copying messages or reading unrelated threads. The chat composer accepts versioned PDF, DOCX, spreadsheet, text, and image attachments. Attachments remain conversational context until inspected and do not become verified sources or evidence automatically. Access mode is on the left of the composer and the main model is on the right; reasoning effort stays hidden unless a model explicitly advertises support.
 
 A Skill does not bypass page verification, source qualification, evidence approval, or writing approval. The run records the Skill and Agent-program fingerprints. Instruction packages do not receive arbitrary permission to execute every script in their folder.
 
@@ -97,17 +148,17 @@ wenjin mcp-server C:\Research\my-project
 
 The MCP server provides bounded project status, source details, pages, library results, and manuscript structure. Formal writes remain approval-gated.
 
-Version 0.1.1 supports **domain packs**. The working integrations are a Skill for the main Agent, manifest-allowlisted MCP tools, and local-data bindings. Schema, processor, graph-adapter, and panel entries can be recorded for development but are not automatically routed into existing workspaces. Only declared tools can be called by the main Agent. The public release does not preinstall a disciplinary sample or user dataset.
+Version 0.1.1 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
 
-Install a domain pack from a local folder or ZIP. A self-contained pack should include its MCP executable and portable configuration rather than a developer-specific Conda path. Generate a neutral project with the UI, with an explicitly authorized Agent action, or with:
+Source developers can create the neutral engineering scaffold with:
 
 ```powershell
 wenjin plugin-create my-domain-plugin --output .\plugins
 ```
 
-### 2.6 AI & Agent
+### 2.7 AI & Agent
 
-This workspace shows software and schema versions, main and auxiliary models, MoA, research persona, memory, Skills, MCP, connectors, domain packs, Computer Use, and privacy boundaries.
+This workspace shows software and schema versions, main and auxiliary models, MoA, research persona, memory, Skills, MCP, connectors, domain packs, Computer Use, and privacy boundaries. Domain reasoning, primary vision, secondary vision review, translation, web research, context compression, title generation, and secondary review can each use a separate model. Auto follows the main model; Disabled skips that role. Context compression runs near 90 percent of the selected model's context window. MoA remains an optional advisory pass and does not replace these direct routes.
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
@@ -118,6 +169,16 @@ The **Runtime** page can create an immediate backup. Wenjin first uses SQLite's 
 The **Memory** page configures separate local historical and engineering vaults. Only an `approved_local` candidate may be promoted, and promotion writes one draft card to the target vault's `90_INBOX`. It does not copy full conversations, OCR drafts, or source files.
 
 ## 3. First use: create a project
+
+### 3.0 Connect a main model
+
+On the first launch, Wenjin asks for a real main model. Choose local Ollama or an OpenAI-compatible service such as DeepSeek, refresh the provider's model list, then save and test the connection. The production client does not expose Mock and never falls back to it after an API configuration failure. Choose **Not now** if you only need the library or manual page verification; research chat and other model-dependent actions remain disabled.
+
+The first time a project opens, Wenjin automatically creates an empty **New research discussion** thread. Additional task-specific threads can still be added later.
+
+### 3.0.5 Decide whether a Domain Agent is necessary
+
+Use the main Agent first for ordinary discovery, reading, spreadsheet work, and writing. Install or create a Domain Agent only when a sustained workflow repeatedly needs specialist rules, stable fields, a domain database, or dedicated tools. When uncertain, ask: “First decide whether this needs the main Agent, an existing Skill, or a Domain Agent. Do not create a new project yet.”
 
 ### 3.1 Create the project
 

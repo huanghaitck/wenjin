@@ -116,10 +116,38 @@ fn open_in_word(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let selected = Path::new(&path);
+    if !selected.exists() {
+        return Err("文件或目录已经不存在".into());
+    }
+    if selected.is_dir() {
+        std::process::Command::new("explorer.exe")
+            .arg(selected)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let target: Vec<u16> = format!("{}\0", selected.display()).encode_utf16().collect();
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::ShellExecuteW(
+            std::ptr::null_mut(), operation.as_ptr(), target.as_ptr(),
+            std::ptr::null(), std::ptr::null(),
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err("系统没有找到可打开该产物的应用".into());
+    }
+    Ok(())
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word])
+        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word, open_path])
         .setup(|app| {
             app.manage(StartupState(Mutex::new(None)));
             let data_root = data_root(app.handle()).map_err(std::io::Error::other)?;

@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from research_workbench.service import initialize_project
-from research_workbench.weixin_gateway import WeixinGateway, _headers, _load, _message_text
+from research_workbench.weixin_gateway import WELCOME_TEXT, WeixinGateway, _headers, _load, _message_text
 
 
 class FakeApi:
@@ -58,6 +58,8 @@ class WeixinGatewayTests(unittest.TestCase):
         persisted = (self.config / "weixin-gateway.json").read_text(encoding="utf-8")
         self.assertNotIn("secret-token", persisted)
         self.assertEqual(_load(self.config)["allowed_user_ids"], ["user-1"])
+        self.assertTrue(_load(self.config)["welcome_pending"])
+        self.assertIn("首条回复", result["message"])
 
     def test_private_allowlisted_text_routes_to_agent_and_replies_with_context_token(self) -> None:
         api = FakeApi()
@@ -76,6 +78,23 @@ class WeixinGatewayTests(unittest.TestCase):
         self.assertEqual(reply["context_token"], "context-1")
         self.assertEqual(reply["item_list"][0]["text_item"]["text"], "已完成核对。")
         self.assertNotIn("bot-token", str(api.calls[-1]["payload"]))
+
+    def test_first_private_reply_includes_welcome_and_clears_pending_flag(self) -> None:
+        api = FakeApi()
+        gateway = WeixinGateway(self.config, self.project, api)
+        settings = _load(self.config)
+        settings.update({"allowed_user_ids": ["user-1"], "base_url": "https://api.example.invalid",
+                         "thread_map": {}, "welcome_pending": True})
+        message = {"message_id": 11, "from_user_id": "user-1", "context_token": "context-2",
+                   "item_list": [{"type": 1, "text_item": {"text": "你好"}}]}
+        view = {"messages": [{"role": "assistant", "content": {"text": "有什么可以帮你？"}}],
+                "runs": [{"status": "COMPLETED"}]}
+        with patch("research_workbench.weixin_gateway.send_message", return_value=view):
+            gateway._handle_message(message, settings, "bot-token")
+        reply = api.calls[-1]["payload"]["msg"]["item_list"][0]["text_item"]["text"]
+        self.assertTrue(reply.startswith(WELCOME_TEXT))
+        self.assertIn("有什么可以帮你", reply)
+        self.assertFalse(_load(self.config)["welcome_pending"])
 
     def test_group_unlisted_duplicate_and_non_text_messages_are_ignored(self) -> None:
         api = FakeApi()

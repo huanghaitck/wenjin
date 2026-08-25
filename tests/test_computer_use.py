@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+from pathlib import Path
 
-from research_workbench.computer_use_mcp import computer_status, desktop_snapshot, window_list
+from research_workbench.computer_use_mcp import (
+    computer_status, desktop_snapshot, file_search, filesystem_roots, window_list,
+)
 
 
 class ComputerUseTests(unittest.TestCase):
@@ -17,6 +21,18 @@ class ComputerUseTests(unittest.TestCase):
         for control in snapshot["controls"]:
             if control["password"]:
                 self.assertEqual(control["name"], "[password]")
+
+    def test_bounded_file_search_reads_names_and_metadata_without_file_contents(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "灾害史领域包.zip").write_text("secret body is not returned", encoding="utf-8")
+            (root / "other.txt").write_text("other", encoding="utf-8")
+            result = file_search([str(root)], "灾害史", [".zip"], max_results=10)
+        self.assertEqual(result["returned_count"], 1)
+        self.assertEqual(result["matches"][0]["name"], "灾害史领域包.zip")
+        self.assertNotIn("secret body", str(result))
+        self.assertFalse(result["truncated"])
+        self.assertIn("drives", filesystem_roots())
 
 
 if __name__ == "__main__":

@@ -29,6 +29,12 @@ APP_ID = "bot"
 CLIENT_VERSION = 257
 TOKEN_TARGET = "Wenjin/Weixin/iLinkBotToken"
 LOGIN_TTL_SECONDS = 300
+WELCOME_TEXT = (
+    "你好，我是问津，一套本地优先的人文社会科学研究工作台。"
+    "我可以协助整理文献、核对PDF原页、处理表格与图片、调用领域 Agent、管理证据和推进写作。"
+    "你可以直接发问题或文件；文件会按指纹归入研究图书馆，同一内容不会重复登记。"
+    "涉及写文件、运行程序或其他敏感动作时，我会按照你在客户端选择的权限请求确认。"
+)
 
 
 def _base_info() -> dict[str, Any]:
@@ -62,6 +68,7 @@ def _defaults() -> dict[str, Any]:
         "schema_version": 1, "enabled": False, "account_id": "", "user_id": "",
         "base_url": FIXED_BASE_URL, "allowed_user_ids": [], "access_mode": "ask",
         "thread_map": {}, "get_updates_buf": "", "last_error": "", "last_event_at": "",
+        "welcome_pending": False,
     }
 
 
@@ -135,7 +142,8 @@ class WeixinGateway:
             "user_id": settings.get("user_id", ""), "allowed_user_ids": settings.get("allowed_user_ids", []),
             "access_mode": settings.get("access_mode", "ask"), "last_error": settings.get("last_error", ""),
             "last_event_at": settings.get("last_event_at", ""), "private_chat_only": True,
-            "proactive_messages": False, "credential_backend": "windows_credential_manager",
+            "proactive_messages": False, "welcome_on_first_message": True,
+            "credential_backend": "windows_credential_manager",
             "implementation": "wenjin_native_ilink_gateway",
         }
 
@@ -186,13 +194,15 @@ class WeixinGateway:
                 "enabled": True, "account_id": account_id, "user_id": user_id,
                 "base_url": str(response.get("baseurl") or FIXED_BASE_URL),
                 "allowed_user_ids": [user_id] if user_id else [], "last_error": "",
+                "welcome_pending": True,
             })
             _save(self.config_root, settings)
             with self._lock:
                 self._login = None
             self.start()
             return {"connected": True, "status": status, "account_id": account_id,
-                    "user_id": user_id, "message": "微信已连接到问津"}
+                    "user_id": user_id,
+                    "message": "微信已连接。请发送任意一条消息，问津会在首条回复中自我介绍。"}
         return {"connected": False, "status": status,
                 "requires_verify_code": status == "need_verifycode", "message": "等待微信确认"}
 
@@ -295,6 +305,10 @@ class WeixinGateway:
         except Exception as error:
             reply = "问津暂时无法处理这条消息。请在客户端查看运行状态。"
             settings["last_error"] = str(error)[:500]
+            _save(self.config_root, settings)
+        if settings.get("welcome_pending"):
+            reply = WELCOME_TEXT + "\n\n" + reply
+            settings["welcome_pending"] = False
             _save(self.config_root, settings)
         self.api.request(
             "POST", str(settings.get("base_url") or FIXED_BASE_URL), "ilink/bot/sendmessage",

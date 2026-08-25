@@ -190,7 +190,7 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(version["skill_name"], "historical-material-intake")
         self.assertEqual(len(version["skill_sha256"]), 64)
 
-    def test_skill_discovery_and_unsupported_candidate_remain_visible(self) -> None:
+    def test_skill_discovery_and_uncertain_image_candidate_remain_visible(self) -> None:
         skill = next(item for item in discover_skills() if item["name"] == "historical-material-intake")
         self.assertEqual(skill["execution"], "instructions_only")
         self.assertEqual(skill["placement"], "user_action")
@@ -200,11 +200,11 @@ class M5ResearchLibraryTests(unittest.TestCase):
         unsupported.write_bytes(b"not-a-real-image")
         session = scan_directory(self.project, self.materials, self.library)
         candidate = session["candidates"][0]
-        self.assertEqual(candidate["triage_state"], "unsupported")
+        self.assertEqual(candidate["triage_state"], "uncertain")
         approved = approve_candidates(
             self.project, session["session_id"], [candidate["candidate_id"]], self.library
         )
-        self.assertEqual(approved["approved"], [])
+        self.assertEqual(len(approved["approved"]), 1)
 
     def test_title_page_suggestions_remain_human_editable_metadata(self) -> None:
         sample = "书 名廿二史考异\n(清)钱大昕撰\n凤凰出版社\n版次 2008年1月第1版"

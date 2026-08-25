@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import base64
 import hashlib
+import mimetypes
 import os
 import queue
 import re
 import ssl
+import sys
 import threading
 import uuid
 from dataclasses import dataclass
@@ -13,6 +16,7 @@ from html import unescape
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 import certifi
@@ -28,21 +32,24 @@ from .authoring import (
     save_reading_note,
     validate_historiography_entry_payload,
 )
-from .research import list_retrievals, retrieval_record
+from .research import list_retrievals, retrieval_record, search as search_research
 from .research_design import create_design_draft, current_shared_design
 from .research_events import create_event_candidates, event_coverage, event_state
 from .scholarship import (
     inspect_controlled_browser,
+    create_browser_session,
+    launch_controlled_browser,
     navigate_controlled_browser,
     read_controlled_browser,
     research_state,
 )
 from .service import list_sources, project_status, source_view
-from .skill_registry import get_skill
-from .model_settings import ROLES
+from .skill_registry import discover_skills, get_skill
+from .model_settings import ROLES, reasoning_controls
 from .domain_plugins import call_domain_plugin_tool, find_config_root, plugin_state
 from .domain_plugins import validate_domain_plugin
-from .plugin_sdk import create_plugin_project
+from .plugin_sdk import create_local_skill, create_plugin_project
+from .attachments import inspect_attachment
 
 
 MAIN_ROLE = "main_reasoning"
@@ -171,7 +178,10 @@ def _compact_retrievals(project_root: Path, record_id: str = "", limit: int = 30
             "download, but do not claim any item was read until its file is acquired and verified."
         ),
     }
-SYSTEM_PROMPT = """You are the main agent in a local historical research workbench.
+SYSTEM_PROMPT = """You are a general local computer-use agent optimized for humanities and social-science research.
+ Retain broad Codex/Hermes-style capability for files, web research, office applications, local programs,
+ coding and reusable Skills; apply stronger source, evidence and writing gates only when the task is scholarly.
+ Natural-language intent is sufficient: do not ask the user to restate a clear request as tool names or JSON.
 Use tools to inspect project facts. Never claim you read a source unless a tool returned it.
 Return exactly one JSON object for exactly one action and no markdown. If several tools are needed,
 request them one at a time and wait for each TOOL_RESULT before choosing the next action.
@@ -184,11 +194,31 @@ Available actions:
 {"type":"tool_call","tool":"research.state","arguments":{}}
 {"type":"tool_call","tool":"research.plan_context","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{"record_id":"optional exact retrieval record","limit":30}}
+{"type":"tool_call","tool":"research.search","arguments":{"provider":"crossref|openalex|zotero","query":"...","limit":10}}
 {"type":"tool_call","tool":"plugin.list","arguments":{}}
 {"type":"tool_call","tool":"plugin.call","arguments":{"plugin_name":"exact installed plugin","tool_name":"approved tool","arguments":{}}}
+{"type":"tool_call","tool":"domain_agent.list","arguments":{}}
+{"type":"tool_call","tool":"domain_agent.consult","arguments":{"plugin_name":"exact installed domain pack","question":"bounded specialist question"}}
+{"type":"tool_call","tool":"skill.list","arguments":{}}
+{"type":"tool_call","tool":"skill.read","arguments":{"name":"exact user-action skill name"}}
+{"type":"tool_call","tool":"skill.create","arguments":{"name":"lower-case-skill-name","display_name":"...","description":"...","instructions":"complete reusable instructions","allow_implicit_invocation":true}}
+{"type":"tool_call","tool":"attachment.inspect","arguments":{"attachment_id":"ATT_...","prompt":"what to inspect"}}
+{"type":"tool_call","tool":"computer.roots","arguments":{}}
+{"type":"tool_call","tool":"computer.file_search","arguments":{"roots":["D:\\\\Research"],"query":"disaster","extensions":[".zip",".sqlite"],"max_results":100}}
+{"type":"tool_call","tool":"computer.windows","arguments":{"limit":30}}
+{"type":"tool_call","tool":"computer.snapshot","arguments":{"window_handle":0,"depth":3,"limit":250}}
+{"type":"tool_call","tool":"computer.capture","arguments":{}}
+{"type":"tool_call","tool":"computer.focus","arguments":{"ref":"exact-ref-from-latest-snapshot"}}
+{"type":"tool_call","tool":"computer.click","arguments":{"ref":"exact-ref-from-latest-snapshot"}}
+{"type":"tool_call","tool":"computer.click_coordinates","arguments":{"x":100,"y":100}}
+{"type":"tool_call","tool":"computer.type","arguments":{"ref":"exact-ref-from-latest-snapshot","text":"..."}}
+{"type":"tool_call","tool":"computer.keys","arguments":{"keys":"{Ctrl}c"}}
+{"type":"tool_call","tool":"computer.launch","arguments":{"executable":"absolute executable path","args":[],"cwd":"optional absolute directory"}}
+{"type":"tool_call","tool":"computer.run","arguments":{"executable":"absolute executable path","args":["explicit","arguments"],"cwd":"optional absolute directory"}}
 {"type":"tool_call","tool":"domain_pack.validate","arguments":{"plugin_root":"absolute existing domain-pack folder"}}
 {"type":"tool_call","tool":"domain_pack.create","arguments":{"parent":"absolute parent folder","name":"lower-case project name","display_name":"...","description":"..."}}
 {"type":"tool_call","tool":"browser.snapshot","arguments":{"session_id":"exact-visible-session-id"}}
+{"type":"tool_call","tool":"browser.start","arguments":{"url":"https://example.com/page-or-search"}}
 {"type":"tool_call","tool":"browser.read","arguments":{"session_id":"exact-visible-session-id"}}
 {"type":"tool_call","tool":"browser.open","arguments":{"session_id":"exact-visible-session-id","url":"same-domain-http-or-https-url"}}
 {"type":"tool_call","tool":"authoring.state","arguments":{}}
@@ -213,13 +243,34 @@ may support drafting.
 Use plugin.list only when the user requests a small-domain capability. plugin.call accepts only tools
 explicitly approved by the installed plugin manifest; plugin output remains a candidate and cannot bypass
 Wenjin source, evidence, writing or review gates.
+Use domain_agent.consult when a stateful installed specialist should work through a bounded domain task.
+The specialist has an isolated thread and tool history. Treat its answer and artifacts as candidates; you
+remain responsible for cross-domain judgment and must not present a candidate artifact as approved.
+For ordinary-language research requests, use the implicit skill catalog in context. Call skill.read for the
+smallest matching research skill before applying it; users do not need to type slash commands.
+Use skill.create only after the user has supplied or approved a stable purpose, trigger boundary and complete
+instructions. The new Skill is installed in Wenjin's local Skill directory and becomes discoverable without
+turning it into a domain Agent or MCP service.
+When CURRENT_RESEARCH_CONTEXT includes attached_refs, inspect each relevant attachment before answering.
+An attachment is project context, not a verified source or approved evidence.
+Computer Use is already routed through the installed system pack. For a request to locate files on the
+researcher's computer, call computer.roots and then computer.file_search; do not claim that local file
+access is unavailable before attempting those tools. Search is bounded and returns names and metadata,
+not file contents. Search common_folders before whole drive roots. If a whole-drive search returns zero
+matches with truncated=true, retry once against the most relevant common folder before reporting no result.
+Use computer.windows/snapshot before control refs. State-changing computer tools obey
+the run's Ask, Auto-approve or Full access policy. Never inspect password controls, credentials or CAPTCHA.
 Use domain_pack.create only when the researcher explicitly asks to create a reusable domain pack and
 has supplied its scope, material types, operations, field/schema needs, permission classes and data
-boundary. It writes a neutral scaffold, not a finished scholarly method. domain_pack.validate is read-only.
+boundary. It writes an engineering scaffold only after those orchestration choices are explicit; it is
+not a finished scholarly method. domain_pack.validate is read-only.
 Browser tools operate only on a visible session that the researcher opened from the Research Browser.
 They may inspect rendered state, read the active page and navigate to a same-domain URL. They cannot
 click controls, fill forms, log in, solve CAPTCHA, pay, download or submit. Browser text is a discovery
 lead and must be acquired and verified as a project source before evidentiary use.
+browser.start may create and open a visible, domain-bounded session for an explicit HTTP(S) URL. Use it for
+ordinary URL lookup or web search instead of claiming that internet access is unavailable. Logged-in actions
+and consequential submissions still remain under the existing approval boundary.
 Prior thread messages preserve the research discussion but are not source evidence. Reinspect source pages
 when a prior message mentions a fact that must enter an event, claim, quotation or draft.
 If a tool reports a correctable locator or argument error, use the error to correct the call within the
@@ -280,6 +331,23 @@ Never expose or echo internal lines beginning with TOOL_RESULT in the final answ
 """
 
 
+COMPUTER_TOOL_ALIASES = {
+    "computer.status": "computer_status",
+    "computer.roots": "filesystem_roots",
+    "computer.file_search": "file_search",
+    "computer.windows": "window_list",
+    "computer.snapshot": "desktop_snapshot",
+    "computer.capture": "screen_capture",
+    "computer.focus": "focus_control",
+    "computer.click": "click_control",
+    "computer.click_coordinates": "click_coordinates",
+    "computer.type": "type_text",
+    "computer.keys": "press_keys",
+    "computer.launch": "launch_program",
+    "computer.run": "run_command",
+}
+
+
 @dataclass(frozen=True)
 class ModelProfile:
     profile_id: str
@@ -290,7 +358,7 @@ class ModelProfile:
     credential_ref: str
     status: str
     api_key: str = ""
-    timeout_seconds: float = 90.0
+    timeout_seconds: float = 180.0
 
 
 class ModelActionFormatError(ValueError):
@@ -311,6 +379,13 @@ def _decode(value: str | None, fallback: Any) -> Any:
     return json.loads(value)
 
 
+def _clean_final_text(value: str) -> str:
+    return re.sub(
+        r"^(?:final\s+(?:answer|response)|assistant\s+final|最终(?:回答|答复))\s*:\s*",
+        "", value.strip(), count=1, flags=re.IGNORECASE,
+    ).strip()
+
+
 def _id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
@@ -326,6 +401,122 @@ def _append_run_event(connection: Any, run_id: str, event_type: str, payload: di
         (run_id, sequence, event_type, _json(payload), utc_now()),
     )
     return sequence
+
+
+def queue_run_control(
+    project_root: Path, run_kind: str, action: str, content: str = "",
+    *, thread_id: str = "", session_id: str = "",
+) -> dict[str, Any]:
+    if run_kind not in {"main", "domain"} or action not in {"steer", "stop"}:
+        raise ValueError("unknown run control")
+    content = content.strip()
+    if action == "steer" and not content:
+        raise ValueError("steering message is required")
+    with connect(project_root) as connection:
+        if run_kind == "main":
+            row = connection.execute(
+                "SELECT run_id,thread_id FROM runs WHERE thread_id=? AND status='RUNNING' ORDER BY created_at DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT run_id,main_thread_id AS thread_id FROM domain_agent_runs WHERE session_id=? AND status='RUNNING' ORDER BY created_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError("there is no running agent task to control")
+        control_id, now = _id("CTL"), utc_now()
+        connection.execute(
+            "INSERT INTO agent_run_controls(control_id,run_kind,run_id,action,content,status,created_at) VALUES (?,?,?,?,?,'pending',?)",
+            (control_id, run_kind, row["run_id"], action, content, now),
+        )
+        if action == "steer":
+            if run_kind == "main":
+                connection.execute(
+                    "INSERT INTO messages(message_id,thread_id,role,content_json,created_at) VALUES (?,?, 'user', ?, ?)",
+                    (_id("MSG"), row["thread_id"], _json({"text": content, "steering_for_run": row["run_id"], "run_control_id": control_id}), now),
+                )
+            else:
+                session = connection.execute(
+                    "SELECT session_id FROM domain_agent_runs WHERE run_id=?", (row["run_id"],)
+                ).fetchone()
+                connection.execute(
+                    "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) VALUES (?,?, 'user', ?, ?)",
+                    (_id("DMS"), session["session_id"], _json({"text": content, "main_thread_id": row["thread_id"] or "", "steering_for_run": row["run_id"], "run_control_id": control_id}), now),
+                )
+        return {"control_id": control_id, "run_id": row["run_id"], "action": action, "status": "pending"}
+
+
+def revise_run_control(
+    project_root: Path, control_id: str, *, content: str = "", delete: bool = False,
+) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT * FROM agent_run_controls WHERE control_id=?", (control_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError("unknown run control")
+        if row["status"] != "pending" or row["action"] != "steer":
+            raise ValueError("only a queued direction update can be edited or deleted")
+        table = "messages" if row["run_kind"] == "main" else "domain_agent_messages"
+        message = connection.execute(
+            f"SELECT message_id,content_json FROM {table} WHERE json_extract(content_json,'$.run_control_id')=?",
+            (control_id,),
+        ).fetchone()
+        if delete:
+            if message is not None:
+                connection.execute(f"DELETE FROM {table} WHERE message_id=?", (message["message_id"],))
+            connection.execute("DELETE FROM agent_run_controls WHERE control_id=?", (control_id,))
+            return {"control_id": control_id, "deleted": True}
+        content = content.strip()
+        if not content:
+            raise ValueError("steering message is required")
+        connection.execute(
+            "UPDATE agent_run_controls SET content=? WHERE control_id=?", (content, control_id),
+        )
+        if message is not None:
+            payload = json.loads(message["content_json"])
+            payload["text"] = content
+            connection.execute(
+                f"UPDATE {table} SET content_json=? WHERE message_id=?",
+                (_json(payload), message["message_id"]),
+            )
+        return {"control_id": control_id, "deleted": False, "content": content}
+
+
+def _consume_run_controls(project_root: Path, run_kind: str, run_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        rows = connection.execute(
+            "SELECT * FROM agent_run_controls WHERE run_kind=? AND run_id=? AND status='pending' ORDER BY created_at,control_id",
+            (run_kind, run_id),
+        ).fetchall()
+        if rows:
+            connection.executemany(
+                "UPDATE agent_run_controls SET status='applied',applied_at=? WHERE control_id=?",
+                [(utc_now(), row["control_id"]) for row in rows],
+            )
+    return {
+        "stop": any(row["action"] == "stop" for row in rows),
+        "steering": [str(row["content"]) for row in rows if row["action"] == "steer"],
+    }
+
+
+def _apply_main_run_controls(
+    project_root: Path, run_id: str, observations: list[dict[str, Any]],
+) -> str:
+    controls = _consume_run_controls(project_root, "main", run_id)
+    with connect(project_root) as connection:
+        for message in controls["steering"]:
+            _append_run_event(connection, run_id, "user_steering", {"content": message})
+            observations.append({"tool": "user.steering", "arguments": {}, "result": {"message": message}})
+        if controls["stop"]:
+            connection.execute(
+                "UPDATE runs SET status='STOPPED',updated_at=?,completed_at=? WHERE run_id=?",
+                (utc_now(), utc_now(), run_id),
+            )
+            _append_run_event(connection, run_id, "run_stopped", {})
+            return "stop"
+    return "steer" if controls["steering"] else ""
 
 
 def _saved_artifact_receipt(connection: Any, run_id: str) -> dict[str, Any]:
@@ -351,9 +542,14 @@ def _saved_artifact_receipt(connection: Any, run_id: str) -> dict[str, Any]:
 def sync_model_profiles(project_root: Path) -> list[dict[str, Any]]:
     now = utc_now()
     environment = _environment_profile()
+    mock_enabled = (
+        os.environ.get("HRW_ENABLE_MOCK_MODEL", "").strip() == "1"
+        or any("unittest" in str(argument).casefold() for argument in sys.argv)
+    )
     with connect(project_root) as connection:
-        connection.execute(
-            """INSERT INTO model_profiles(
+        if mock_enabled:
+            connection.execute(
+                """INSERT INTO model_profiles(
                    profile_id, provider, model, endpoint, capabilities_json, credential_ref,
                    status, created_at, updated_at
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -364,9 +560,14 @@ def sync_model_profiles(project_root: Path) -> list[dict[str, Any]]:
                    credential_ref = excluded.credential_ref,
                    status = excluded.status,
                    updated_at = excluded.updated_at""",
-            ("builtin-mock", "mock", "deterministic-research-mock", "", _json(["text", "tool_calling"]),
-             "none", "available", now, now),
-        )
+                ("builtin-mock", "mock", "deterministic-research-mock", "", _json(["text", "tool_calling"]),
+                 "none", "available", now, now),
+            )
+        else:
+            connection.execute(
+                "DELETE FROM model_assignments WHERE profile_id = 'builtin-mock'"
+            )
+            connection.execute("DELETE FROM model_profiles WHERE profile_id = 'builtin-mock'")
         if environment is not None:
             connection.execute(
                 """INSERT INTO model_profiles(
@@ -390,11 +591,19 @@ def sync_model_profiles(project_root: Path) -> list[dict[str, Any]]:
                 "UPDATE model_profiles SET status = 'unavailable', updated_at = ? WHERE profile_id = 'environment-main'",
                 (now,),
             )
-        connection.execute(
-            """INSERT OR IGNORE INTO model_assignments(role, profile_id, updated_at)
-               VALUES (?, 'builtin-mock', ?)""",
-            (MAIN_ROLE, now),
-        )
+        assigned = connection.execute(
+            "SELECT 1 FROM model_assignments WHERE role = ?", (MAIN_ROLE,)
+        ).fetchone()
+        if assigned is None and environment is not None:
+            connection.execute(
+                "INSERT INTO model_assignments(role, profile_id, updated_at) VALUES (?, ?, ?)",
+                (MAIN_ROLE, environment.profile_id, now),
+            )
+        elif assigned is None and mock_enabled:
+            connection.execute(
+                "INSERT INTO model_assignments(role, profile_id, updated_at) VALUES (?, 'builtin-mock', ?)",
+                (MAIN_ROLE, now),
+            )
         rows = connection.execute(
             """SELECT p.profile_id, p.provider, p.model, p.endpoint, p.capabilities_json,
                       p.credential_ref, p.status,
@@ -425,7 +634,7 @@ def _environment_profile() -> ModelProfile | None:
         credential_ref="env:HRW_AGENT_API_KEY" if provider == "openai_compatible" else "none",
         status="available",
         api_key=api_key,
-        timeout_seconds=float(os.environ.get("HRW_AGENT_TIMEOUT_SECONDS", "90")),
+        timeout_seconds=float(os.environ.get("HRW_AGENT_TIMEOUT_SECONDS", "180")),
     )
 
 
@@ -439,6 +648,7 @@ def _profile_public(row: dict[str, Any]) -> dict[str, Any]:
         "credential_ref": row["credential_ref"],
         "status": row["status"],
         "assigned": bool(row.get("assigned", 0)),
+        "reasoning_controls": reasoning_controls(row["provider"], row["model"], row["endpoint"]),
     }
 
 
@@ -462,6 +672,14 @@ def assign_model(project_root: Path, profile_id: str, role: str = MAIN_ROLE) -> 
     return {"role": role, "profile_id": profile_id}
 
 
+def clear_model_assignment(project_root: Path, role: str = MAIN_ROLE) -> dict[str, Any]:
+    if role != MAIN_ROLE:
+        raise ValueError(f"M4 only supports role {MAIN_ROLE}")
+    with connect(project_root) as connection:
+        connection.execute("DELETE FROM model_assignments WHERE role = ?", (role,))
+    return {"role": role, "profile_id": ""}
+
+
 def _assigned_profile(project_root: Path) -> ModelProfile:
     sync_model_profiles(project_root)
     with connect(project_root) as connection:
@@ -474,7 +692,7 @@ def _assigned_profile(project_root: Path) -> ModelProfile:
     if row is None:
         raise RuntimeError("main model assignment is missing")
     api_key = ""
-    timeout = 90.0
+    timeout = 180.0
     if row["profile_id"] == "environment-main":
         current = _environment_profile()
         if current is None:
@@ -489,18 +707,52 @@ def _assigned_profile(project_root: Path) -> ModelProfile:
     )
 
 
-def create_thread(project_root: Path, title: str) -> dict[str, Any]:
+def create_thread(project_root: Path, title: str, parent_thread_id: str = "") -> dict[str, Any]:
     title = title.strip()
     if not title:
         raise ValueError("thread title is required")
     thread_id = _id("THR")
     now = utc_now()
     with connect(project_root) as connection:
+        if parent_thread_id and connection.execute(
+            "SELECT 1 FROM threads WHERE thread_id=?", (parent_thread_id,)
+        ).fetchone() is None:
+            raise KeyError(f"unknown parent thread: {parent_thread_id}")
         connection.execute(
             "INSERT INTO threads(thread_id, title, status, created_at, updated_at) VALUES (?, ?, 'active', ?, ?)",
             (thread_id, title, now, now),
         )
-    return {"thread_id": thread_id, "title": title, "status": "active", "created_at": now}
+        if parent_thread_id:
+            connection.execute(
+                "INSERT INTO thread_inheritance(child_thread_id,parent_thread_id,created_at) VALUES (?,?,?)",
+                (thread_id, parent_thread_id, now),
+            )
+    return {
+        "thread_id": thread_id, "title": title, "status": "active", "created_at": now,
+        "parent_thread_id": parent_thread_id,
+    }
+
+
+def _maybe_title_thread(project_root: Path, thread_id: str, content: str) -> None:
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT title FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+    if row is None or not str(row["title"]).startswith(("新的研究", "New research")):
+        return
+    profile = _role_profile("title_generation")
+    if profile is None:
+        return
+    title = _plain_model_call(profile, [{"role": "system", "content": "Return one concise thread title, at most 28 Chinese characters or 12 English words. No quotes, labels, punctuation suffix, or explanation."},{"role": "user", "content": content[:4000]}]).strip().splitlines()[0][:80]
+    if title:
+        with connect(project_root) as connection:
+            connection.execute("UPDATE threads SET title=?,updated_at=? WHERE thread_id=?", (title, utc_now(), thread_id))
+
+
+def ensure_default_thread(project_root: Path) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT thread_id, title, status, created_at FROM threads ORDER BY created_at LIMIT 1"
+        ).fetchone()
+    return dict(row) if row is not None else create_thread(project_root, "新的研究讨论")
 
 
 def list_threads(project_root: Path) -> list[dict[str, Any]]:
@@ -535,7 +787,21 @@ def recover_interrupted_runs(project_root: Path) -> int:
             _append_run_event(
                 connection, str(row["run_id"]), "run_failed", {"error": message, **receipt}
             )
-    return len(rows)
+        domain_rows = connection.execute(
+            "SELECT run_id FROM domain_agent_runs WHERE status = 'RUNNING'"
+        ).fetchall()
+        message = "Domain subagent run was interrupted by an application restart."
+        for row in domain_rows:
+            connection.execute(
+                "UPDATE domain_agent_runs SET status='FAILED',error=?,updated_at=? WHERE run_id=?",
+                (message, now, row["run_id"]),
+            )
+            connection.execute(
+                "UPDATE domain_agent_tool_calls SET status='FAILED',output_json=?,completed_at=? "
+                "WHERE run_id=? AND status='RUNNING'",
+                (_json({"error": message}), now, row["run_id"]),
+            )
+    return len(rows) + len(domain_rows)
 
 
 def _fail_run(project_root: Path, run_id: str, error: Exception | str) -> bool:
@@ -567,6 +833,11 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
         thread = connection.execute("SELECT * FROM threads WHERE thread_id = ?", (thread_id,)).fetchone()
         if thread is None:
             raise KeyError(f"unknown thread: {thread_id}")
+        thread = dict(thread)
+        inherited = connection.execute(
+            "SELECT parent_thread_id FROM thread_inheritance WHERE child_thread_id=?", (thread_id,)
+        ).fetchone()
+        thread["parent_thread_id"] = str(inherited["parent_thread_id"]) if inherited else ""
         messages = [dict(row) for row in connection.execute(
             "SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at, message_id", (thread_id,)
         )]
@@ -575,6 +846,12 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
         )]
         for message in messages:
             message["content"] = _decode(message.pop("content_json"), {})
+            control_id = str(message["content"].get("run_control_id", ""))
+            if control_id:
+                control = connection.execute(
+                    "SELECT status FROM agent_run_controls WHERE control_id=?", (control_id,),
+                ).fetchone()
+                message["run_control_status"] = str(control["status"]) if control else "deleted"
             binding = connection.execute(
                 "SELECT * FROM thread_context_bindings WHERE message_id = ?", (message["message_id"],)
             ).fetchone()
@@ -613,21 +890,29 @@ def thread_view(project_root: Path, thread_id: str) -> dict[str, Any]:
                 item["tool_name"] = call["tool_name"] if call else ""
                 run["approvals"].append(item)
             run["artifact_receipt"] = _saved_artifact_receipt(connection, str(run["run_id"]))
-    return {"thread": dict(thread), "messages": messages, "runs": runs}
+    return {"thread": thread, "messages": messages, "runs": runs}
 
 
 def _thread_history(project_root: Path, thread_id: str) -> tuple[list[dict[str, str]], dict[str, Any]]:
     with connect(project_root) as connection:
-        rows = connection.execute(
-            """SELECT message_id, role, content_json FROM messages
-               WHERE thread_id = ? AND role IN ('user', 'assistant')
-               ORDER BY created_at DESC, message_id DESC LIMIT ?""",
-            (thread_id, MAX_HISTORY_MESSAGES + 1),
-        ).fetchall()
-    truncated = len(rows) > MAX_HISTORY_MESSAGES
-    rows = rows[:MAX_HISTORY_MESSAGES]
-    remaining = MAX_HISTORY_CHARS
-    selected: list[dict[str, str]] = []
+        lineage, current = [], thread_id
+        while current and current not in lineage and len(lineage) < 8:
+            lineage.append(current)
+            parent = connection.execute(
+                "SELECT parent_thread_id FROM thread_inheritance WHERE child_thread_id=?", (current,)
+            ).fetchone()
+            current = str(parent["parent_thread_id"]) if parent else ""
+        all_rows = []
+        for inherited_thread_id in reversed(lineage):
+            all_rows.extend(connection.execute(
+                """SELECT message_id, role, content_json FROM messages
+                   WHERE thread_id = ? AND role IN ('user', 'assistant')
+                   ORDER BY created_at, message_id""",
+                (inherited_thread_id,),
+            ).fetchall())
+        rows = list(all_rows)
+    prepared: list[dict[str, str]] = []
+    truncated = False
     for row in rows:
         text = str(_decode(row["content_json"], {}).get("text", "")).strip()
         if not text:
@@ -639,22 +924,34 @@ def _thread_history(project_root: Path, thread_id: str) -> tuple[list[dict[str, 
             half = (MAX_HISTORY_MESSAGE_CHARS - 25) // 2
             text = text[:half] + "\n...[message clipped]...\n" + text[-half:]
             truncated = True
-        if len(text) > remaining:
-            if remaining < 200:
-                truncated = True
-                break
-            half = max(80, (remaining - 25) // 2)
-            text = text[:half] + "\n...[history clipped]...\n" + text[-half:]
-            truncated = True
-        selected.append({"message_id": str(row["message_id"]), "role": str(row["role"]), "content": text})
-        remaining -= len(text)
-        if remaining <= 0:
-            break
-    selected.reverse()
+        prepared.append({"message_id": str(row["message_id"]), "role": str(row["role"]), "content": text})
+    configured_window = int(os.environ.get("HRW_AGENT_CONTEXT_WINDOW", "0") or 0)
+    if not configured_window:
+        configured_window = 1_000_000 if "deepseek-v4" in os.environ.get("HRW_AGENT_MODEL", "").casefold() else 128_000
+    threshold_tokens = int(configured_window * .9)
+    estimated_tokens = sum(max(1, (len(item["content"]) + 1) // 2) for item in prepared)
+    selected = prepared
+    compacted = estimated_tokens >= threshold_tokens and len(prepared) > 8
+    if compacted:
+        recent, older, recent_tokens = [], list(prepared), 0
+        recent_budget = max(8_000, int(configured_window * .35))
+        while older and (recent_tokens < recent_budget or len(recent) < 8):
+            item = older.pop()
+            recent.insert(0, item)
+            recent_tokens += max(1, (len(item["content"]) + 1) // 2)
+        source = "\n\n".join(f"[{item['role']} {item['message_id']}]\n{item['content']}" for item in older)
+        profile = _role_profile("context_compression") or _assigned_profile(project_root)
+        summary = _plain_model_call(profile, [{"role": "system", "content": "Compress earlier conversation without inventing facts. Preserve user goals, decisions, file paths, source and page identifiers, citations, unresolved questions, permissions and promised deliverables. Omit social filler and repeated wording."},{"role": "user", "content": source}])[:24000]
+        selected = [{"message_id": "COMPACTED_HISTORY", "role": "system", "content": "EARLIER_CONVERSATION_COMPACTED\n" + summary}, *recent]
+        truncated = True
     return selected, {
         "message_ids": [item["message_id"] for item in selected],
         "truncated": truncated,
         "character_count": sum(len(item["content"]) for item in selected),
+        "context_window_tokens": configured_window,
+        "compression_threshold_tokens": threshold_tokens,
+        "estimated_tokens_before_compression": estimated_tokens,
+        "compacted": compacted,
     }
 
 
@@ -730,6 +1027,43 @@ def _plain_model_call(profile: ModelProfile, messages: list[dict[str, str]]) -> 
     return content.strip()
 
 
+def _vision_file_call(profile: ModelProfile, path: Path, prompt: str) -> str:
+    raw = path.read_bytes()
+    if len(raw) > 20 * 1024 * 1024:
+        raise ValueError("image attachment exceeds the 20 MB vision limit")
+    encoded = base64.b64encode(raw).decode("ascii")
+    mime = mimetypes.guess_type(path.name)[0] or "image/png"
+    if profile.provider == "ollama":
+        endpoint = profile.endpoint.rstrip("/")
+        if not endpoint.endswith("/api/chat"):
+            endpoint += "/api/chat"
+        payload = {
+            "model": profile.model, "stream": False,
+            "messages": [{"role": "user", "content": prompt, "images": [encoded]}],
+            "options": {"temperature": 0},
+        }
+        response = _post_json(endpoint, payload, {}, profile.timeout_seconds)
+        content = response.get("message", {}).get("content", "")
+    else:
+        endpoint = profile.endpoint.rstrip("/")
+        if not endpoint.endswith("/chat/completions"):
+            endpoint += "/chat/completions"
+        payload = {
+            "model": profile.model, "temperature": 0,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
+            ]}],
+        }
+        response = _post_json(
+            endpoint, payload, {"Authorization": f"Bearer {profile.api_key}"}, profile.timeout_seconds,
+        )
+        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not isinstance(content, str) or not content.strip():
+        raise EmptyModelContentError("vision model returned empty content")
+    return content.strip()
+
+
 def _moa_guidance(
     objective: str,
     history: list[dict[str, str]],
@@ -781,10 +1115,22 @@ def _format_moa_guidance(items: list[dict[str, str]]) -> str:
     )
 
 
+def _implicit_skill_catalog() -> str:
+    skills = [
+        {"name": item["name"], "description": item["description"]}
+        for item in discover_skills()
+        if item["placement"] == "user_action"
+        and bool((item.get("agent_program") or {}).get("allow_implicit_invocation"))
+    ]
+    return "IMPLICIT_RESEARCH_SKILLS " + _json(skills) if skills else ""
+
+
 def send_message(project_root: Path, thread_id: str, content: str,
                  context: dict[str, Any] | None = None,
                  planning_mode: str = "guided_execution",
-                 access_mode: str = "ask") -> dict[str, Any]:
+                 access_mode: str = "ask",
+                 reasoning_mode: str = "standard",
+                 reasoning_effort: str = "medium") -> dict[str, Any]:
     content = content.strip()
     if not content:
         raise ValueError("message content is required")
@@ -792,7 +1138,12 @@ def send_message(project_root: Path, thread_id: str, content: str,
         raise ValueError(f"unknown planning mode: {planning_mode}")
     if access_mode not in ACCESS_MODES:
         raise ValueError(f"unknown agent access mode: {access_mode}")
+    if reasoning_mode not in {"standard", "deep"}:
+        raise ValueError(f"unknown reasoning mode: {reasoning_mode}")
+    if reasoning_effort not in {"low", "medium", "high", "max"}:
+        raise ValueError(f"unknown reasoning effort: {reasoning_effort}")
     resolved_content, active_skill, skill_context = _resolve_skill_invocation(content)
+    _maybe_title_thread(project_root, thread_id, resolved_content)
     profile = _assigned_profile(project_root)
     shared_design = current_shared_design(project_root) if planning_mode == "guided_execution" else None
     history, history_receipt = (
@@ -807,11 +1158,16 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "model": profile.model, "endpoint": profile.endpoint,
         "planning_mode": planning_mode,
         "access_mode": access_mode,
+        "reasoning_mode": reasoning_mode,
+        "reasoning_effort": reasoning_effort,
         "shared_design_id": shared_design["design_id"] if shared_design else "",
         "history_policy": "bounded_thread_history" if history else "withheld_or_empty",
         "history_message_ids": history_receipt["message_ids"],
         "history_truncated": history_receipt["truncated"],
         "history_character_count": history_receipt["character_count"],
+        "history_compacted": history_receipt.get("compacted", False),
+        "context_window_tokens": history_receipt.get("context_window_tokens", 0),
+        "compression_threshold_tokens": history_receipt.get("compression_threshold_tokens", 0),
         "active_skill": active_skill,
         "moa": {
             "enabled": os.environ.get("HRW_MOA_ENABLED") == "1",
@@ -897,6 +1253,12 @@ def send_message(project_root: Path, thread_id: str, content: str,
         if skill_context:
             design_context += "\n\n" + skill_context
         design_context += "\n\n" + agent_profile_prompt(project_root)
+        implicit_skills = _implicit_skill_catalog()
+        if implicit_skills:
+            design_context += "\n\n" + implicit_skills
+        domain_catalog = _domain_agent_catalog(project_root)
+        if domain_catalog:
+            design_context += "\n\n" + domain_catalog
         design_context += (
             "\n\nAGENT_ACCESS_MODE " + access_mode + ". ask pauses every state-changing computer "
             "action; research_assist auto-approves routine actions but pauses sensitive execution; "
@@ -904,7 +1266,10 @@ def send_message(project_root: Path, thread_id: str, content: str,
             "packs for this run. Password controls, credential extraction, CAPTCHA solving and payment "
             "confirmation remain unavailable in every mode."
         )
-        _advance_run(project_root, run_id, objective, profile, design_context, history)
+        _advance_run(
+            project_root, run_id, objective, profile, design_context, history,
+            reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+        )
     except Exception as error:
         _fail_run(project_root, run_id, error)
         raise
@@ -912,9 +1277,36 @@ def send_message(project_root: Path, thread_id: str, content: str,
 
 
 def _advance_run(project_root: Path, run_id: str, objective: str, profile: ModelProfile,
-                 design_context: str = "", history: list[dict[str, str]] | None = None) -> None:
-    observations: list[dict[str, Any]] = []
+                 design_context: str = "", history: list[dict[str, str]] | None = None,
+                 reasoning_mode: str = "standard", reasoning_effort: str = "medium",
+                 initial_observations: list[dict[str, Any]] | None = None) -> None:
+    observations: list[dict[str, Any]] = list(initial_observations or [])
     moa_fanout = os.environ.get("HRW_MOA_FANOUT", "user_turn")
+    explicit_required = _explicit_required_tool(objective)
+    attachment_ids = list(dict.fromkeys(re.findall(r'"attachment_id"\s*:\s*"(ATT_[a-f0-9]+)"', objective)))
+    domain_plugin = _matching_domain_agent(project_root, objective, history or [])
+    if explicit_required and domain_plugin:
+        plugin = next(
+            (item for item in _ready_domain_agents(project_root) if item["name"] == domain_plugin),
+            None,
+        )
+        if plugin is None or explicit_required not in plugin.get("agent_tools", []):
+            domain_plugin = ""
+    required_tool = explicit_required or (
+        "attachment.inspect" if attachment_ids else "domain_agent.consult" if domain_plugin else ""
+    )
+    if domain_plugin and not attachment_ids and not any(item.get("tool") == "domain_agent.consult" for item in observations):
+        result = _execute_tool(
+            project_root, run_id, "domain_agent.consult",
+            {"plugin_name": domain_plugin, "question": objective},
+        )
+        latest = result.get("latest_message") if isinstance(result, dict) else None
+        content = str(((latest or {}).get("content") or {}).get("text", "")).strip()
+        _complete_run(
+            project_root, run_id,
+            content or "领域Agent已完成本轮处理；结果仍为候选，需在项目中复核后采用。",
+        )
+        return
     moa_guidance = _moa_guidance(objective, history or [])
     if moa_guidance:
         with connect(project_root) as connection:
@@ -925,18 +1317,22 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             })
     empty_content_retries = 0
     action_format_retries = 0
+    model_request_retries = 0
     internal_transcript_retries = 0
-    required_tool = _explicit_required_tool(objective)
     missing_tool_retries = 0
-    for _ in range(MAX_TOOL_CALLS + 1):
-        remaining = MAX_TOOL_CALLS - len(observations)
+    tool_budget = {"low": 8, "medium": 16, "high": MAX_TOOL_CALLS, "max": MAX_TOOL_CALLS}[reasoning_effort]
+    for _ in range(tool_budget + 1):
+        if _apply_main_run_controls(project_root, run_id, observations) == "stop":
+            return
+        remaining = tool_budget - len(observations)
         if observations and moa_fanout == "per_iteration":
             moa_guidance = _moa_guidance(objective, history or [], observations)
         private_guidance = _format_moa_guidance(moa_guidance)
         try:
             action = _mock_action(project_root, observations) if profile.provider == "mock" else _model_action(
                 profile, objective, observations, remaining,
-                design_context + ("\n\n" + private_guidance if private_guidance else ""), history
+                design_context + ("\n\n" + private_guidance if private_guidance else ""), history,
+                SYSTEM_PROMPT, reasoning_mode, reasoning_effort,
             )
         except TimeoutError as error:
             _fail_run(project_root, run_id, error)
@@ -969,6 +1365,20 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                 "error": message + ". Return one shorter valid JSON object and retry the same action.",
             })
             continue
+        except RuntimeError as error:
+            if model_request_retries or not _is_transient_model_error(str(error)):
+                raise
+            model_request_retries += 1
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "model_request_retry", {
+                    "attempt": model_request_retries, "error": str(error),
+                })
+            continue
+        control = _apply_main_run_controls(project_root, run_id, observations)
+        if control == "stop":
+            return
+        if control == "steer":
+            continue
         action_type = action.get("type")
         if action_type == "final":
             final_content = str(action.get("content", ""))
@@ -989,6 +1399,24 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             completion_tool = required_tool or _claimed_unexecuted_write_tool(
                 objective, final_content, observations
             )
+            if attachment_ids:
+                inspected = {
+                    str((item.get("arguments") or {}).get("attachment_id", ""))
+                    for item in observations
+                    if item.get("tool") == "attachment.inspect" and item.get("result") is not None
+                }
+                missing_attachments = [value for value in attachment_ids if value not in inspected]
+                if missing_attachments:
+                    if missing_tool_retries >= 2:
+                        raise RuntimeError("attached files were not inspected: " + ", ".join(missing_attachments))
+                    missing_tool_retries += 1
+                    observations.append({
+                        "tool": "run.completion_contract",
+                        "arguments": {"missing_attachments": missing_attachments},
+                        "result": None,
+                        "error": "Inspect every attached file before returning a final answer.",
+                    })
+                    continue
             required_tool_attempted = completion_tool and any(
                 item.get("tool") == completion_tool
                 for item in observations
@@ -1025,6 +1453,22 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         arguments = action.get("arguments", {})
         if not isinstance(arguments, dict):
             raise ValueError("tool arguments must be an object")
+        exact_failures = [
+            item for item in observations
+            if item.get("tool") == tool_name and item.get("arguments") == arguments
+            and item.get("result") is None and item.get("error")
+        ]
+        if len(exact_failures) >= 2:
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "tool_retry_blocked", {
+                    "tool": tool_name, "reason": "same_call_failed_twice",
+                })
+            observations.append({
+                "tool": "run.recovery", "arguments": {"blocked_tool": tool_name},
+                "result": None,
+                "error": "The same call failed twice. Use a different tool, correct different arguments, or return a concise user-facing blocker.",
+            })
+            continue
         prior_batch_calls = [item for item in observations if item.get("tool") == tool_name]
         batch_retry_blocked = (
             tool_name == "research_event.propose_batch"
@@ -1052,6 +1496,10 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         try:
             result = _execute_tool(project_root, run_id, tool_name, arguments)
         except (KeyError, ValueError) as error:
+            with connect(project_root) as connection:
+                _append_run_event(connection, run_id, "tool_correction_requested", {
+                    "tool": tool_name, "error": str(error), "attempt": len(exact_failures) + 1,
+                })
             observations.append({
                 "tool": tool_name,
                 "arguments": arguments,
@@ -1062,6 +1510,31 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
+        if tool_name == "attachment.inspect" and domain_plugin:
+            inspected = {
+                str((item.get("arguments") or {}).get("attachment_id", ""))
+                for item in observations
+                if item.get("tool") == "attachment.inspect" and item.get("result") is not None
+            }
+            if all(value in inspected for value in attachment_ids):
+                receipts = [
+                    item.get("result") for item in observations
+                    if item.get("tool") == "attachment.inspect" and item.get("result") is not None
+                ]
+                domain_result = _execute_tool(
+                    project_root, run_id, "domain_agent.consult",
+                    {
+                        "plugin_name": domain_plugin,
+                        "question": objective + "\n\nATTACHMENT_INSPECTION_RECEIPTS " + _json(receipts),
+                    },
+                )
+                latest = domain_result.get("latest_message") if isinstance(domain_result, dict) else None
+                content = str(((latest or {}).get("content") or {}).get("text", "")).strip()
+                _complete_run(
+                    project_root, run_id,
+                    content or "领域 Agent 已根据附件识读回执完成处理；结果仍为候选。",
+                )
+                return
         if tool_name == "research_event.propose_batch" and required_tool == tool_name:
             created = result if isinstance(result, list) else []
             event_ids = [str(item.get("event_id", "")) for item in created if isinstance(item, dict)]
@@ -1086,6 +1559,72 @@ def _explicit_required_tool(objective: str) -> str:
         match = re.search(pattern, objective, flags=re.IGNORECASE)
         if match:
             return match.group(1)
+    if re.search(
+        r"(?:请|帮我|替我|现在)?\s*(?:查找|搜索|寻找|定位|检查).{0,24}"
+        r"(?:电脑|磁盘|硬盘|文件夹).{0,24}(?:文件|领域包|安装包)",
+        objective,
+    ):
+        return "computer.file_search"
+    return ""
+
+
+def _ready_domain_agents(project_root: Path) -> list[dict[str, Any]]:
+    from .domain_plugins import find_config_root, plugin_state
+
+    return [
+        item for item in plugin_state(find_config_root(project_root))["plugins"]
+        if item.get("kind") != "system" and item.get("status") == "ready" and item.get("agent")
+    ]
+
+
+def _domain_agent_catalog(project_root: Path) -> str:
+    agents = [
+        {
+            "plugin_name": item["name"],
+            "description": item.get("description_zh") or item.get("description", ""),
+            "routing_triggers": (item.get("agent") or {}).get("routing_triggers", []),
+            "tools": item.get("agent_tools", []),
+        }
+        for item in _ready_domain_agents(project_root)
+    ]
+    if not agents:
+        return ""
+    return (
+        "INSTALLED_DOMAIN_SUBAGENTS " + _json(agents) + "\n"
+        "When the user's ordinary-language request matches a routing trigger, consult the matching specialist "
+        "with domain_agent.consult inside this same main conversation. Reuse its persistent private session; "
+        "do not ask the user to open a domain workspace or create another research thread."
+    )
+
+
+def _natural_domain_tool(project_root: Path, objective: str) -> str:
+    return "domain_agent.consult" if _matching_domain_agent(project_root, objective) else ""
+
+
+def _matching_domain_agent(
+    project_root: Path,
+    objective: str,
+    history: list[dict[str, str]] | None = None,
+) -> str:
+    if re.search(r"(?:领域包|插件|subagent|agent).{0,20}(?:界面|架构|设计|安装|删除|开发|调试)", objective, re.I):
+        return ""
+    agents = _ready_domain_agents(project_root)
+    if len(agents) == 1 and re.search(
+        r"(?:继续|沿用|恢复|续跑|接着).{0,80}(?:原|同一|上一轮)?\s*(?:领域\s*)?(?:sub)?agent",
+        objective,
+        re.I,
+    ):
+        return str(agents[0]["name"])
+    for item in agents:
+        triggers = (item.get("agent") or {}).get("routing_triggers", [])
+        if any(str(trigger).strip() and str(trigger) in objective for trigger in triggers):
+            return str(item["name"])
+    if re.search(r"(?:继续|上一轮|刚才|断点续跑|恢复运行|接着)", objective):
+        context = "\n".join(str(item.get("content") or "") for item in (history or [])[-6:])
+        for item in agents:
+            triggers = (item.get("agent") or {}).get("routing_triggers", [])
+            if any(str(trigger).strip() and str(trigger) in context for trigger in triggers):
+                return str(item["name"])
     return ""
 
 
@@ -1168,6 +1707,9 @@ def _model_action(
     remaining_tool_calls: int = MAX_TOOL_CALLS,
     design_context: str = "",
     history: list[dict[str, str]] | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
+    reasoning_mode: str = "standard",
+    reasoning_effort: str = "medium",
 ) -> dict[str, Any]:
     budget_instruction = (
         "No tool calls remain. Return a final answer now using only the tool results already provided."
@@ -1175,10 +1717,12 @@ def _model_action(
         else f"You may make at most {remaining_tool_calls} more tool call(s). Reserve one model turn for the final answer."
     )
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system_prompt},
         {"role": "system", "content": budget_instruction},
         {"role": "system", "content": design_context},
     ]
+    if reasoning_mode == "deep":
+        messages.append({"role": "system", "content": "DEEP_REASONING_MODE: verify the plan, tool choice, and completion criteria before acting."})
     messages.extend(
         {"role": item["role"], "content": item["content"]}
         for item in (history or [])
@@ -1190,9 +1734,16 @@ def _model_action(
         endpoint = profile.endpoint.rstrip("/")
         if not endpoint.endswith("/chat/completions"):
             endpoint += "/chat/completions"
+        payload: dict[str, Any] = {
+            "model": profile.model, "temperature": 0, "messages": messages,
+        }
+        if "deepseek" in profile.model.casefold() or "deepseek" in profile.endpoint.casefold():
+            payload["thinking"] = {"type": "enabled" if reasoning_mode == "deep" else "disabled"}
+            if reasoning_mode == "deep":
+                payload["reasoning_effort"] = reasoning_effort
         raw = _post_json(
             endpoint,
-            {"model": profile.model, "temperature": 0, "messages": messages},
+            payload,
             {"Authorization": f"Bearer {profile.api_key}"}, profile.timeout_seconds,
         )
         try:
@@ -1203,10 +1754,18 @@ def _model_action(
         endpoint = profile.endpoint.rstrip("/")
         if not endpoint.endswith("/api/chat"):
             endpoint += "/api/chat"
+        ollama_payload: dict[str, Any] = {
+            "model": profile.model, "stream": False, "format": "json", "messages": messages,
+            "options": {"temperature": 0},
+        }
+        model_name = profile.model.casefold()
+        if "gpt-oss" in model_name:
+            ollama_payload["think"] = reasoning_effort
+        elif any(name in model_name for name in ("qwen3", "deepseek-r1", "deepseek-v3.1")):
+            ollama_payload["think"] = reasoning_mode == "deep"
         raw = _post_json(
             endpoint,
-            {"model": profile.model, "stream": False, "format": "json", "messages": messages,
-             "options": {"temperature": 0}},
+            ollama_payload,
             {}, profile.timeout_seconds,
         )
         content = raw.get("message", {}).get("content", "")
@@ -1457,6 +2016,17 @@ def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str], timeo
     return value
 
 
+def _is_transient_model_error(message: str) -> bool:
+    text = message.casefold()
+    return bool(
+        re.search(r"http (?:408|425|429|5\d\d)\b", text)
+        or any(value in text for value in (
+            "could not be reached", "connection reset", "connection refused",
+            "server disconnected", "temporarily unavailable",
+        ))
+    )
+
+
 def _post_json_blocking(
     url: str, payload: dict[str, Any], headers: dict[str, str], timeout: float
 ) -> dict[str, Any]:
@@ -1588,6 +2158,12 @@ def _run_access_mode(project_root: Path, run_id: str) -> str:
     return str(snapshot.get("access_mode", "ask"))
 
 
+def _run_thread_id(project_root: Path, run_id: str) -> str:
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT thread_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    return str(row["thread_id"]) if row else ""
+
+
 def _plugin_tool_risk(project_root: Path, plugin_name: str, tool_name: str) -> str:
     plugin = next(
         (
@@ -1671,7 +2247,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "plugin.list", "plugin.call", "domain_pack.validate", "domain_pack.create", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note"}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -1684,7 +2260,27 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         )
         _append_run_event(connection, run_id, "tool_started", {"tool_call_id": call_id, "tool": tool_name})
     try:
-        if tool_name == "project.status":
+        if tool_name in COMPUTER_TOOL_ALIASES:
+            plugin_tool = COMPUTER_TOOL_ALIASES[tool_name]
+            risk = _plugin_tool_risk(project_root, "computer-use", plugin_tool)
+            access_mode = _run_access_mode(project_root, run_id)
+            request_payload = {
+                "plugin_name": "computer-use", "tool_name": plugin_tool,
+                "arguments": dict(arguments), "risk": risk,
+            }
+            if _must_pause_for_permission(access_mode, risk):
+                return _pause_tool_for_approval(
+                    project_root, run_id, call_id, tool_name, request_payload, risk
+                )
+            result = call_domain_plugin_tool(
+                find_config_root(project_root), "computer-use", plugin_tool, dict(arguments),
+            )
+            if risk != "read":
+                _record_auto_approval(
+                    project_root, run_id, call_id, tool_name, request_payload,
+                    result, access_mode, risk,
+                )
+        elif tool_name == "project.status":
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
             result = _compact_source_list(project_root, arguments)
@@ -1712,6 +2308,14 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 str(arguments.get("record_id", "")),
                 int(arguments.get("limit", 30)),
             )
+        elif tool_name == "research.search":
+            result = search_research(
+                project_root, str(arguments.get("provider", "crossref")),
+                str(arguments.get("query", "")), int(arguments.get("limit", 10)),
+            )
+            profile = _role_profile("web_research")
+            if profile is not None:
+                result["model_advice"] = _plain_model_call(profile, [{"role": "system", "content": "Organize these discovery records for a humanities researcher. Identify likely relevance, noise, missing searches and acquisition priorities. Do not claim any item was read and preserve every returned URL."},{"role": "user", "content": _json(result)[:30000]}])[:12000]
         elif tool_name == "plugin.list":
             state = plugin_state(find_config_root(project_root))
             result = {
@@ -1748,6 +2352,86 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                     project_root, run_id, call_id, tool_name, request_payload,
                     result, access_mode, risk,
                 )
+        elif tool_name == "domain_agent.list":
+            from .domain_agents import domain_agent_state
+            result = domain_agent_state(project_root)
+        elif tool_name == "domain_agent.consult":
+            from .domain_agents import send_domain_message
+            plugin_name = str(arguments.get("plugin_name", ""))
+            question = str(arguments.get("question", ""))
+            view = send_domain_message(
+                project_root, plugin_name, question,
+                main_thread_id=_run_thread_id(project_root, run_id),
+                access_mode=_run_access_mode(project_root, run_id),
+                parent_run_id=run_id,
+            )
+            result = {
+                "session": view["session"],
+                "latest_message": view["messages"][-1] if view["messages"] else None,
+                "latest_run": view["runs"][0] if view["runs"] else None,
+                "candidate_artifacts": view["artifacts"][:10],
+                "boundary": "Specialist output is a candidate; the main agent retains final authority.",
+            }
+        elif tool_name == "skill.list":
+            result = {
+                "skills": [
+                    {
+                        "name": item["name"], "description": item["description"],
+                        "implicit": bool((item.get("agent_program") or {}).get("allow_implicit_invocation")),
+                    }
+                    for item in discover_skills() if item["placement"] == "user_action"
+                ]
+            }
+        elif tool_name == "skill.read":
+            skill = get_skill(str(arguments.get("name", "")))
+            if skill["placement"] != "user_action":
+                raise ValueError("only user-action research skills can be read by the main agent")
+            result = {
+                "name": skill["name"], "sha256": skill["sha256"],
+                "instructions": skill["instructions"],
+                "boundary": "Workbench evidence, permission and write gates take precedence.",
+            }
+        elif tool_name == "skill.create":
+            request_payload = {
+                "name": str(arguments.get("name", "")),
+                "display_name": str(arguments.get("display_name", "")),
+                "description": str(arguments.get("description", "")),
+                "instructions": str(arguments.get("instructions", "")),
+                "allow_implicit_invocation": bool(arguments.get("allow_implicit_invocation", True)),
+                "risk": "sensitive",
+            }
+            access_mode = _run_access_mode(project_root, run_id)
+            if _must_pause_for_permission(access_mode, "sensitive"):
+                return _pause_tool_for_approval(
+                    project_root, run_id, call_id, tool_name, request_payload, "sensitive"
+                )
+            result = create_local_skill(
+                find_config_root(project_root), request_payload["name"],
+                request_payload["description"], request_payload["instructions"],
+                request_payload["display_name"], request_payload["allow_implicit_invocation"],
+            )
+            _record_auto_approval(
+                project_root, run_id, call_id, tool_name, request_payload,
+                result, access_mode, "sensitive",
+            )
+        elif tool_name == "attachment.inspect":
+            result = inspect_attachment(project_root, str(arguments.get("attachment_id", "")))
+            if result["kind"] == "image":
+                profile = _role_profile("vision_ocr")
+                if profile is None:
+                    raise ValueError("no vision/OCR model is configured for image attachments")
+                result["analysis"] = _vision_file_call(
+                    profile, Path(result["absolute_path"]),
+                    str(arguments.get("prompt", "Describe the chart or image faithfully.")),
+                )
+                secondary = _role_profile("vision_secondary")
+                if secondary is not None:
+                    result["secondary_analysis"] = _vision_file_call(
+                        secondary, Path(result["absolute_path"]),
+                        "Independently review the same image and identify uncertain or conflicting readings.",
+                    )
+                    result["vision_review_required"] = True
+            result.pop("absolute_path", None)
         elif tool_name == "domain_pack.validate":
             result = validate_domain_plugin(Path(str(arguments.get("plugin_root", ""))))
         elif tool_name == "domain_pack.create":
@@ -1770,6 +2454,23 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             _record_auto_approval(
                 project_root, run_id, call_id, tool_name, request_payload,
                 result, access_mode, "sensitive",
+            )
+        elif tool_name == "browser.start":
+            url = str(arguments.get("url", "")).strip()
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError("browser URL must use http or https")
+            request_payload = {"url": url, "allowed_domain": parsed.hostname, "risk": "routine"}
+            access_mode = _run_access_mode(project_root, run_id)
+            if _must_pause_for_permission(access_mode, "routine"):
+                return _pause_tool_for_approval(
+                    project_root, run_id, call_id, tool_name, request_payload, "routine"
+                )
+            session = create_browser_session(project_root, url, parsed.hostname)
+            result = launch_controlled_browser(project_root, session["session_id"])
+            _record_auto_approval(
+                project_root, run_id, call_id, tool_name, request_payload,
+                result, access_mode, "routine",
             )
         elif tool_name == "browser.snapshot":
             result = inspect_controlled_browser(
@@ -2211,6 +2912,49 @@ def _search_source_blocks(project_root: Path, query: str, source_id: str = "", l
     ]
 
 
+def _resume_approved_run(project_root: Path, run_id: str) -> None:
+    with connect(project_root) as connection:
+        run = connection.execute(
+            """SELECT r.model_snapshot_json, g.objective
+               FROM runs r JOIN goals g ON g.goal_id=r.goal_id WHERE r.run_id=?""",
+            (run_id,),
+        ).fetchone()
+        calls = connection.execute(
+            """SELECT tool_name, input_json, output_json, error, status
+               FROM tool_calls WHERE run_id=? ORDER BY created_at""",
+            (run_id,),
+        ).fetchall()
+    if run is None:
+        raise KeyError(f"unknown run: {run_id}")
+    snapshot = _decode(run["model_snapshot_json"], {})
+    objective, active_skill, skill_context = _resolve_skill_invocation(str(run["objective"]))
+    planning_mode = str(snapshot.get("planning_mode", "independent_planning"))
+    history = _thread_history(project_root, _run_thread_id(project_root, run_id))[0] if planning_mode == "guided_execution" else []
+    shared_design = current_shared_design(project_root) if planning_mode == "guided_execution" else None
+    design_context = (
+        "APPROVED_SHARED_RESEARCH_DESIGN " + _json(shared_design) if shared_design
+        else "INDEPENDENT_PLANNING: Continue the approved run using its recorded tool receipts."
+    )
+    if active_skill and skill_context:
+        design_context += "\n\n" + skill_context
+    design_context += "\n\n" + agent_profile_prompt(project_root)
+    domain_catalog = _domain_agent_catalog(project_root)
+    if domain_catalog:
+        design_context += "\n\n" + domain_catalog
+    design_context += "\n\nAGENT_ACCESS_MODE " + str(snapshot.get("access_mode", "ask"))
+    observations = [{
+        "tool": str(call["tool_name"]), "arguments": _decode(call["input_json"], {}),
+        "result": _decode(call["output_json"], None) if call["status"] == "COMPLETED" else None,
+        "error": str(call["error"] or "") or None,
+    } for call in calls if call["status"] in {"COMPLETED", "FAILED"}]
+    _advance_run(
+        project_root, run_id, objective, _assigned_profile(project_root), design_context, history,
+        reasoning_mode=str(snapshot.get("reasoning_mode", "standard")),
+        reasoning_effort=str(snapshot.get("reasoning_effort", "medium")),
+        initial_observations=observations,
+    )
+
+
 def decide_approval(
     project_root: Path,
     approval_id: str,
@@ -2235,13 +2979,17 @@ def decide_approval(
             raise KeyError(f"unknown approval: {approval_id}")
         if row["status"] != "pending":
             raise ValueError(f"approval is already {row['status']}")
+        resume_after_approval = connection.execute(
+            "SELECT 1 FROM run_events WHERE run_id=? AND event_type='run_completed' LIMIT 1",
+            (row["run_id"],),
+        ).fetchone() is None
         request_payload = _decode(row["request_json"], {})
     final_request = edited_request if edited_request is not None else request_payload
     if not isinstance(final_request, dict):
         raise ValueError("edited request must be an object")
     output: dict[str, Any]
     if approved:
-        if row["tool_name"] == "plugin.call":
+        if row["tool_name"] == "plugin.call" or str(row["tool_name"]).startswith("computer."):
             output = call_domain_plugin_tool(
                 find_config_root(project_root),
                 str(final_request.get("plugin_name", "")),
@@ -2249,6 +2997,14 @@ def decide_approval(
                 dict(final_request.get("arguments", {})),
             )
             final_text = f"Computer Use 动作已由 {reviewer} 核准并执行。"
+        elif row["tool_name"] == "browser.start":
+            url = str(final_request.get("url", "")).strip()
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise ValueError("browser URL must use http or https")
+            session = create_browser_session(project_root, url, parsed.hostname)
+            output = launch_controlled_browser(project_root, session["session_id"])
+            final_text = f"受控浏览器已由 {reviewer} 核准并打开。"
         elif row["tool_name"] == "browser.open":
             output = navigate_controlled_browser(
                 project_root,
@@ -2263,15 +3019,18 @@ def decide_approval(
                 str(final_request.get("display_name", "")),
                 str(final_request.get("description", "")),
             )
-            final_text = f"中立领域包工程已由 {reviewer} 核准并创建：{output['plugin_root']}"
-        else:
+            final_text = f"领域包工程骨架已由 {reviewer} 核准并创建：{output['plugin_root']}"
+        elif row["tool_name"] == "save_research_note":
             title = str(final_request.get("title", "")).strip()
             content = str(final_request.get("content", "")).strip()
             if not title or not content:
                 raise ValueError("approved note requires title and content")
             output = _write_note(project_root, approval_id, title, content)
             final_text = f"研究札记已由 {reviewer} 核准并保存：{output['project_path']}"
-        tool_status, approval_status, run_status, goal_status = "COMPLETED", "approved", "COMPLETED", "complete"
+        else:
+            raise ValueError(f"approval execution is not implemented for tool: {row['tool_name']}")
+        tool_status, approval_status = "COMPLETED", "approved"
+        run_status, goal_status = ("RUNNING", "active") if resume_after_approval else ("COMPLETED", "complete")
     else:
         output = {"saved": False, "reason": reason}
         final_text = f"待执行动作已被 {reviewer} 拒绝；没有改变电脑或项目。理由：{reason}"
@@ -2296,21 +3055,37 @@ def decide_approval(
         )
         connection.execute(
             """UPDATE runs SET status = ?, updated_at = ?, completed_at = ? WHERE run_id = ?""",
-            (run_status, now, now, row["run_id"]),
+            (run_status, now, None if approved and resume_after_approval else now, row["run_id"]),
         )
         connection.execute(
             "UPDATE goals SET status = ?, completed_at = ? WHERE goal_id = ?",
-            (goal_status, now, row["goal_id"]),
+            (goal_status, None if approved and resume_after_approval else now, row["goal_id"]),
         )
-        message_id = _id("MSG")
-        connection.execute(
-            "INSERT INTO messages(message_id, thread_id, role, content_json, created_at) VALUES (?, ?, 'assistant', ?, ?)",
-            (message_id, row["thread_id"], _json({"text": final_text}), now),
-        )
-        connection.execute("UPDATE threads SET updated_at = ? WHERE thread_id = ?", (now, row["thread_id"]))
         _append_run_event(connection, row["run_id"], "approval_decided", {"approval_id": approval_id, **decision})
-        _append_run_event(connection, row["run_id"], "assistant_message", {"message_id": message_id})
-        _append_run_event(connection, row["run_id"], "run_completed", {"approved": approved})
+        if approved:
+            _append_run_event(connection, row["run_id"], "tool_completed", {"tool_call_id": row["tool_call_id"], "tool": row["tool_name"]})
+            if not resume_after_approval:
+                message_id = _id("MSG")
+                connection.execute(
+                    "INSERT INTO messages(message_id, thread_id, role, content_json, created_at) VALUES (?, ?, 'assistant', ?, ?)",
+                    (message_id, row["thread_id"], _json({"text": final_text}), now),
+                )
+                _append_run_event(connection, row["run_id"], "assistant_message", {"message_id": message_id})
+        else:
+            message_id = _id("MSG")
+            connection.execute(
+                "INSERT INTO messages(message_id, thread_id, role, content_json, created_at) VALUES (?, ?, 'assistant', ?, ?)",
+                (message_id, row["thread_id"], _json({"text": final_text}), now),
+            )
+            connection.execute("UPDATE threads SET updated_at = ? WHERE thread_id = ?", (now, row["thread_id"]))
+            _append_run_event(connection, row["run_id"], "assistant_message", {"message_id": message_id})
+            _append_run_event(connection, row["run_id"], "run_completed", {"approved": False})
+    if approved and resume_after_approval:
+        try:
+            _resume_approved_run(project_root, str(row["run_id"]))
+        except Exception as error:
+            _fail_run(project_root, str(row["run_id"]), error)
+            raise
     return thread_view(project_root, str(row["thread_id"]))
 
 
@@ -2330,7 +3105,7 @@ def _write_note(project_root: Path, approval_id: str, title: str, content: str) 
 
 
 def _complete_run(project_root: Path, run_id: str, content: str) -> None:
-    text = content.strip() or "Agent 已完成本次检查。"
+    text = _clean_final_text(content) or "Agent 已完成本次检查。"
     now = utc_now()
     with connect(project_root) as connection:
         row = connection.execute("SELECT thread_id, goal_id, status FROM runs WHERE run_id = ?", (run_id,)).fetchone()

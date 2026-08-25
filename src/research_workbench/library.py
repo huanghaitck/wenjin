@@ -16,8 +16,12 @@ from .skill_registry import discover_skills, get_skill
 from .content_graph import project_content_graph
 
 
-SUPPORTED_SUFFIXES = {".pdf", ".md", ".txt", ".docx"}
-CANDIDATE_SUFFIXES = SUPPORTED_SUFFIXES | {".doc", ".docx", ".epub", ".caj", ".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+SUPPORTED_SUFFIXES = {
+    ".pdf", ".md", ".txt", ".docx", ".xlsx", ".xlsm", ".csv", ".tsv",
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff",
+    ".geojson", ".gpkg", ".kml", ".kmz", ".mbtiles",
+}
+CANDIDATE_SUFFIXES = SUPPORTED_SUFFIXES | {".doc", ".epub", ".caj"}
 HISTORY_TERMS = (
     "历史", "史料", "档案", "地方志", "编年", "朝代", "帝国", "革命", "战争", "考察",
     "history", "historical", "archive", "chronicle", "century", "empire", "revolution", "war",
@@ -202,7 +206,7 @@ def _inspect_file(path: Path) -> dict[str, Any]:
             title, author, publisher, year = _pdf_bibliography(
                 sample, title, author, publisher, year
             )
-    elif suffix in {".md", ".txt"}:
+    elif suffix in {".md", ".txt", ".csv", ".tsv"}:
         sample = path.read_text(encoding="utf-8", errors="replace")[:50000]
         first_line = next((line.strip(" #\t") for line in sample.splitlines() if line.strip()), "")
         title = first_line or title
@@ -218,6 +222,21 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         title = first_line or title
         inspected_pages = 1
         text_layer = "present" if sample.strip() else "absent"
+    elif suffix in {".xlsx", ".xlsm"}:
+        from .attachments import _xlsx_preview
+
+        previews = _xlsx_preview(path)
+        sample = "\n".join(
+            "\t".join(str(value) for value in row)
+            for sheet in previews for row in sheet.get("rows", [])[:20]
+        )[:50000]
+        if previews and previews[0].get("sheet"):
+            title = _clean_title(path.stem, previews[0]["sheet"])
+        inspected_pages = len(previews) or 1
+        text_layer = "present" if sample.strip() else "absent"
+    elif suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"}:
+        inspected_pages = 1
+        text_layer = "absent"
 
     title = _clean_title(title, path.stem)
     year = year or _year(f"{path.stem} {title}")
@@ -450,6 +469,51 @@ def scan_directory(
     session = create_scan_session(project_root, source_root, library_root, skill_name)
     run_scan_session(project_root, session["session_id"], library_root)
     return scan_session(project_root, session["session_id"], library_root)
+
+
+def archive_uploaded_file(
+    project_root: Path,
+    source_path: Path,
+    library_root: Path | None = None,
+    display_name: str = "",
+) -> dict[str, Any]:
+    """Register one chat-uploaded file immediately, reusing the library hash/version rules."""
+    source_path = source_path.expanduser().resolve()
+    session = scan_directory(project_root, source_path.parent, library_root)
+    candidate = next(
+        (item for item in session["candidates"] if Path(item["path"]).resolve() == source_path),
+        None,
+    )
+    if candidate is None:
+        raise RuntimeError("uploaded file was not found in its library intake session")
+    result = approve_candidates(project_root, session["session_id"], [candidate["candidate_id"]], library_root)
+    approved = result["approved"][0] if result["approved"] else {
+        "work_id": candidate.get("existing_work_id", ""), "version_id": "",
+    }
+    work_id = str(approved.get("work_id", ""))
+    title = Path(display_name).stem.strip()
+    if work_id and title:
+        root = library_root_for(project_root, library_root)
+        with connect_library(root) as connection:
+            current = connection.execute(
+                "SELECT canonical_title FROM works WHERE work_id=?", (work_id,),
+            ).fetchone()
+            if current and (
+                candidate["proposed_action"] != "unchanged"
+                or
+                str(current["canonical_title"]) == source_path.stem
+                or re.fullmatch(r"[0-9a-f]{64}", str(current["canonical_title"]), re.IGNORECASE)
+            ):
+                connection.execute(
+                    "UPDATE works SET canonical_title=?,updated_at=? WHERE work_id=?",
+                    (title, utc_now(), work_id),
+                )
+                _refresh_search(connection, work_id)
+                _sync_work_graph(connection, work_id)
+    return {
+        "session_id": session["session_id"], "candidate_id": candidate["candidate_id"],
+        "action": candidate["proposed_action"], **approved,
+    }
 
 
 def scan_session(
@@ -729,6 +793,30 @@ def search_library(
     if required_tags:
         results = [item for item in results if required_tags <= {tag["name"] for tag in item["tags"]}]
     return results
+
+
+def library_assets(
+    project_root: Path, kind: str, library_root: Path | None = None,
+) -> list[dict[str, Any]]:
+    suffixes = {
+        "tables": {"xlsx", "xlsm", "csv", "tsv"},
+        "maps": {"geojson", "gpkg", "kml", "kmz", "mbtiles"},
+        "images": {"png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"},
+    }.get(kind)
+    if suffixes is None:
+        raise ValueError("unknown library asset category")
+    root = library_root_for(project_root, library_root)
+    with connect_library(root) as connection:
+        rows = connection.execute(
+            """SELECT w.work_id,w.canonical_title,w.author,f.file_id,f.path,v.format,v.byte_count
+               FROM works w JOIN library_files f ON f.work_id=w.work_id
+               JOIN file_versions v ON v.file_id=f.file_id AND v.is_current=1
+               ORDER BY w.updated_at DESC,f.path"""
+        ).fetchall()
+    return [
+        {**dict(row), "available": Path(row["path"]).is_file()}
+        for row in rows if str(row["format"]).casefold() in suffixes
+    ]
 
 
 def work_detail(project_root: Path, work_id: str, library_root: Path | None = None) -> dict[str, Any]:

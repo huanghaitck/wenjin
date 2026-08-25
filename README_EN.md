@@ -22,6 +22,7 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 - Evidence, a source-linked event chronicle, and a two-layer knowledge graph for literature relations and Markdown-grounded content entities.
 - Main and auxiliary models, Ollama, OpenAI-compatible APIs, and optional Mixture of Agents.
 - Versioned research persona, Skills, MCP, CLI, and a two-way Codex bridge.
+- Parent-aware research threads, direct chat attachments, and automatic loading of eligible versioned Skills.
 - Sixteen bundled Historical Research Skills plus an evidence-preserving Chinese historical-prose revision Skill.
 - A structured writing studio with notes, references, DOCX import/export, and multi-role review.
 - Chinese and English core navigation, model settings, and writing templates; layered project knowledge and optional local long-term-memory adapters.
@@ -32,7 +33,9 @@ The current release is **0.1.1 Public Preview** for Windows 10/11.
 
 Download `wenjin-0.1.1-x64-setup.exe` from the [v0.1.1 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1). It includes the components required to run Wenjin. End users do not need Python, Node.js, PowerShell 7, or Rust.
 
-Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.1-win64-complete-20260821-1210.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
+On a fresh installation with no real main model, Wenjin first offers to connect local Ollama or an OpenAI-compatible API. Mock is test-only: it is absent from the production client and never silently replaces a failed configuration. Every new project receives an empty research thread automatically; library, project organization, and manual verification remain usable without a model.
+
+Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.1-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
 
 The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
@@ -60,9 +63,11 @@ Password controls, hidden credential extraction, CAPTCHA solving, and payment co
 
 ## Domain packs
 
-Wenjin core is not tied to one discipline. In 0.1.1 a domain pack can add a specialist Skill, permission-bounded MCP tools, and local-data bindings. Schema, processor, graph-adapter, and panel entries may be declared for development, but they do not automatically change Wenjin screens yet.
+Wenjin core is not tied to one discipline. In 0.1.1 a domain pack can become a Domain Agent with its own thread and isolated memory, specialist Skills, permission-bounded MCP tools, and local-data bindings. It may declare separate roles for domain reasoning, primary vision, secondary vision review, and fallback review; Wenjin injects the selected models at runtime without modifying the pack.
 
-The public repository contains a neutral scaffold rather than a preinstalled disciplinary sample or user dataset. Install a downloaded ZIP or folder from **AI & Agent > Domain packs**. If a pack declares a user-owned SQLite, CSV, or directory source, bind it after installation. Wenjin records an identity receipt and does not copy or rewrite that database.
+The public repository contains an orchestration tutorial and engineering scaffold rather than a preinstalled disciplinary sample or user dataset. Begin with the question and stopping rule, materials and licences, operations and permissions, the Wenjin workspace that owns each contribution, and runtime verification. Only then generate a scaffold. Install a downloaded ZIP or folder from the **Domain Agent** workspace. If a pack declares a user-owned SQLite, CSV, or directory source, bind it after installation. Wenjin records an identity receipt and does not copy or rewrite that database.
+
+End users do not need a separately installed Python interpreter. Core data and SQLite operations run inside the frozen Wenjin sidecar. A domain pack that needs Python, spreadsheet libraries, or specialist database drivers should ship a self-contained MCP executable rather than depend on a developer environment. Source development still requires Python 3.13.
 
 Create a new scaffold with:
 

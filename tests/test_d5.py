@@ -13,12 +13,19 @@ from docx import Document
 from research_workbench.authoring import import_manuscript
 from research_workbench.desktop_runtime import bootstrap_desktop
 from research_workbench.document_model import ensure_document, reimport_docx
-from research_workbench.model_settings import discover_models, public_settings, save_role
+from research_workbench.model_settings import discover_models, public_settings, reasoning_controls, save_role
 from research_workbench.service import initialize_project
 from research_workbench.web import build_server
+from research_workbench.agent_runtime import list_threads
 
 
 class D5DesktopPackagingTests(unittest.TestCase):
+    def test_reasoning_controls_follow_the_selected_model(self) -> None:
+        self.assertEqual(reasoning_controls("openai_compatible", "deepseek-v4-flash", "https://api.deepseek.com")["efforts"], ["low", "high", "max"])
+        self.assertEqual(reasoning_controls("openai_compatible", "deepseek-v4-pro", "https://api.deepseek.com")["efforts"], ["high", "max"])
+        self.assertEqual(reasoning_controls("ollama", "gpt-oss:20b")["modes"], ["deep"])
+        self.assertEqual(reasoning_controls("openai_compatible", "unknown-model")["modes"], [])
+
     def test_serve_infers_desktop_roots_from_a_registered_project(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = bootstrap_desktop(Path(directory))
@@ -38,6 +45,8 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertTrue((Path(first["project_root"]) / "project.sqlite3").is_file())
             self.assertTrue((Path(first["workspace_root"]) / "workspace.json").is_file())
             self.assertTrue(Path(first["library_root"]).is_dir())
+            self.assertEqual(len(list_threads(Path(first["project_root"]))), 1)
+            self.assertEqual(list_threads(Path(first["project_root"]))[0]["title"], "新的研究讨论")
 
     def test_desktop_recovers_an_existing_unregistered_project_before_empty_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -66,18 +75,22 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertNotIn("api_key", text.lower())
             self.assertEqual(os.environ["HRW_AGENT_MODEL"], "local-history-model")
             self.assertEqual(os.environ["HRW_AGENT_BASE_URL"], "http://127.0.0.1:11434")
-            self.assertEqual(len(result["roles"]), 7)
+            self.assertEqual(len(result["roles"]), 9)
             self.assertEqual(public_settings(root)["credential_backend"], "windows_credential_manager")
 
     def test_model_settings_distinguish_direct_and_reserved_auxiliary_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             roles = {item["role"]: item for item in public_settings(Path(directory))["roles"]}
+        self.assertEqual(roles["main_reasoning"]["model"], "deepseek-v4-flash")
+        self.assertEqual(roles["main_reasoning"]["preset_id"], "deepseek")
+        self.assertEqual(roles["main_reasoning"]["provider"], "disabled")
         self.assertTrue(roles["vision_ocr"]["direct_route"])
+        self.assertTrue(roles["domain_agent"]["direct_route"])
         self.assertTrue(roles["translation_helper"]["direct_route"])
         self.assertTrue(roles["review_secondary"]["direct_route"])
-        self.assertFalse(roles["web_research"]["direct_route"])
-        self.assertFalse(roles["context_compression"]["direct_route"])
-        self.assertFalse(roles["title_generation"]["direct_route"])
+        self.assertTrue(roles["web_research"]["direct_route"])
+        self.assertTrue(roles["context_compression"]["direct_route"])
+        self.assertTrue(roles["title_generation"]["direct_route"])
 
     def test_word_reimport_creates_a_new_revision_without_overwriting(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -157,6 +170,8 @@ class D5DesktopPackagingTests(unittest.TestCase):
         self.assertIn("打开启动日志", shell)
         self.assertIn("open_sidecar_log", script)
         self.assertIn("open_sidecar_log", rust)
+        self.assertIn("'open_path'", script)
+        self.assertIn("fn open_path", rust)
         self.assertIn("CommandEvent::Terminated", rust)
 
     def test_desktop_shell_does_not_reload_workbench_during_startup(self) -> None:

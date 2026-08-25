@@ -295,10 +295,11 @@ def event_chronicle(
 
 def export_event_chronicle(
     project_root: Path, query: str = "", year: str = "", case_id: str = "",
-    source_id: str = "",
+    source_id: str = "", name: str = "史料长编",
 ) -> dict[str, Any]:
     chronicle = event_chronicle(project_root, query, year, case_id, source_id, limit=5000)
-    lines = ["# 史料长编", ""]
+    name = name.strip() or "史料长编"
+    lines = [f"# {name}", ""]
     for entry in chronicle["entries"]:
         pages = "、".join(str(value) for value in entry["printed_pages"] or entry["physical_pages"])
         lines.extend([
@@ -312,13 +313,14 @@ def export_event_chronicle(
             f"来源：{entry['source_title']}，页码 {pages or '待核'}。",
             f"回链：{entry['source_id']} / {entry['source_version_id']} / {entry['event_id']}", "",
         ])
-    target = project_root / "exports" / "source-chronicle.md"
+    safe_name = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", name).strip("-") or "史料长编"
+    target = project_root / "exports" / f"{safe_name}.md"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     receipt = {
         "project_path": target.relative_to(project_root).as_posix(),
         "row_count": chronicle["returned_count"],
-        "filters": chronicle["filters"],
+        "filters": chronicle["filters"], "name": name,
     }
     with connect(project_root) as connection:
         append_audit(

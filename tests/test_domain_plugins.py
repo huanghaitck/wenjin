@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest.mock import patch
 
 from research_workbench.domain_plugins import (
-    bind_domain_plugin_data, call_domain_plugin_tool, install_domain_plugin, plugin_state,
-    remove_domain_plugin,
+    _plugin_model_environment, bind_domain_plugin_data, call_domain_plugin_tool,
+    install_domain_plugin, plugin_state, public_domain_model_settings,
+    remove_domain_plugin, save_domain_model_role,
 )
 
 
@@ -26,6 +30,7 @@ class DomainPluginTests(unittest.TestCase):
             "schema_version": 1, "name": "sample-domain", "version": "0.1.0",
             "display_name": "Sample domain", "description": "Test plugin", "kind": "domain",
             "runtime": {"type": "mcp_stdio", "command": "missing-sample-command", "args": []},
+            "model_roles": [{"id": "domain_reasoning", "label": "Domain reasoning", "env_prefix": "TEXT_API", "required": True}],
             "skills": ["skills/sample/SKILL.md"], "agent_tools": ["safe_read"],
             "data_packs": [{"id": "pack", "downloads": []}],
             "local_data_sources": [{
@@ -46,11 +51,25 @@ class DomainPluginTests(unittest.TestCase):
         self.assertTrue(Path(installed["installed_path"]).is_dir())
         self.assertFalse(installed["package_changed"])
 
+    def test_reinstall_keeps_an_existing_runtime_override(self) -> None:
+        install_domain_plugin(self.config, self.plugin, runtime_command=__file__)
+        data = json.loads((self.plugin / "wenjin-plugin.json").read_text(encoding="utf-8"))
+        data["version"] = "0.1.1"
+        (self.plugin / "wenjin-plugin.json").write_text(json.dumps(data), encoding="utf-8")
+        state = install_domain_plugin(self.config, self.plugin)
+        self.assertEqual(state["plugins"][0]["runtime_command"], str(Path(__file__).resolve()))
+        self.assertEqual(state["plugins"][0]["status"], "ready")
+
     def test_remove_deletes_only_the_named_plugin_copy(self) -> None:
         install_domain_plugin(self.config, self.plugin)
-        state = remove_domain_plugin(self.config, "sample-domain")
+        (self.config / "domain-model-settings.json").write_text(json.dumps({"schema_version": 1, "plugins": {"sample-domain": {"domain_reasoning": {"provider": "inherit"}}}}), encoding="utf-8")
+        with patch("research_workbench.domain_plugins.delete_credential") as delete:
+            state = remove_domain_plugin(self.config, "sample-domain")
         self.assertEqual(state["count"], 0)
         self.assertTrue(self.plugin.is_dir())
+        delete.assert_called_once()
+        saved = json.loads((self.config / "domain-model-settings.json").read_text(encoding="utf-8"))
+        self.assertNotIn("sample-domain", saved["plugins"])
 
     def test_manifest_skill_must_stay_inside_plugin(self) -> None:
         data = json.loads((self.plugin / "wenjin-plugin.json").read_text())
@@ -65,6 +84,7 @@ class DomainPluginTests(unittest.TestCase):
             call_domain_plugin_tool(self.config, "sample-domain", "paid_write", {})
 
     def test_self_contained_runtime_resolves_inside_installed_copy(self) -> None:
+        install_domain_plugin(self.config, self.plugin, runtime_command=__file__)
         runtime = self.plugin / "runtime" / "sample.exe"
         runtime.parent.mkdir()
         runtime.write_bytes(b"runtime")
@@ -106,6 +126,49 @@ class DomainPluginTests(unittest.TestCase):
             bind_domain_plugin_data(
                 self.config, "sample-domain", "local-corpus", str(wrong)
             )
+
+    def test_wenjin_model_roles_are_injected_into_portable_plugin_environment(self) -> None:
+        configured = {
+            "HRW_DOMAIN_MODEL_BASE_URL": "https://text.example/v1",
+            "HRW_DOMAIN_MODEL_API_KEY": "text-secret",
+            "HRW_DOMAIN_MODEL_MODEL": "deepseek-v4-flash",
+            "HRW_OCR_MODEL": "deepseek-v4-flash-vision-exp",
+            "HRW_VISION_REVIEW_MODEL": "glm-4.6v",
+            "HRW_REVIEW_MODEL": "fallback-model",
+        }
+        with patch.dict(os.environ, configured, clear=True):
+            environment = _plugin_model_environment()
+        self.assertEqual(environment["TEXT_API_MODEL"], "deepseek-v4-flash")
+        self.assertEqual(environment["VISION_API_MODEL"], "deepseek-v4-flash-vision-exp")
+        self.assertEqual(environment["VISION_QA_API_MODEL"], "glm-4.6v")
+        self.assertEqual(environment["FALLBACK_API_MODEL"], "fallback-model")
+        self.assertEqual(environment["TEXT_API_KEY"], "text-secret")
+
+    def test_each_domain_agent_keeps_an_independent_model_override(self) -> None:
+        install_domain_plugin(self.config, self.plugin)
+        other = self.root / "other-plugin"
+        shutil.copytree(self.plugin, other)
+        manifest = json.loads((other / "wenjin-plugin.json").read_text(encoding="utf-8"))
+        manifest["name"] = "other-domain"
+        (other / "wenjin-plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+        install_domain_plugin(self.config, other)
+        secrets: dict[str, str] = {}
+        with patch("research_workbench.domain_plugins.save_credential", side_effect=lambda target, secret, *_: secrets.__setitem__(target, secret)), patch("research_workbench.domain_plugins.read_credential", side_effect=lambda target: secrets.get(target, "")):
+            save_domain_model_role(self.config, "sample-domain", "domain_reasoning", {
+                "provider": "openai_compatible", "model": "sample-model",
+                "base_url": "https://sample.example/v1", "api_key": "sample-key",
+            })
+            save_domain_model_role(self.config, "other-domain", "domain_reasoning", {
+                "provider": "openai_compatible", "model": "other-model",
+                "base_url": "https://other.example/v1", "api_key": "other-key",
+            })
+            sample = _plugin_model_environment(self.config, "sample-domain")
+            other_env = _plugin_model_environment(self.config, "other-domain")
+            self.assertEqual(public_domain_model_settings(self.config, "sample-domain")["roles"][0]["effective_model"], "sample-model")
+        self.assertEqual(sample["TEXT_API_MODEL"], "sample-model")
+        self.assertEqual(other_env["TEXT_API_MODEL"], "other-model")
+        self.assertEqual(sample["TEXT_API_KEY"], "sample-key")
+        self.assertEqual(other_env["TEXT_API_KEY"], "other-key")
 
 
 if __name__ == "__main__":

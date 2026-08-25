@@ -34,6 +34,7 @@
       "../THIRD_PARTY_NOTICES.md": "licenses/THIRD_PARTY_NOTICES.md",
       "../licenses/Tencent-openclaw-weixin-MIT.txt": "licenses/Tencent-openclaw-weixin-MIT.txt",
       "../licenses/python-qrcode-BSD-3-Clause.txt": "licenses/python-qrcode-BSD-3-Clause.txt",
+      "../licenses/cytoscape-MIT.txt": "licenses/cytoscape-MIT.txt",
       "../node_modules/agent-browser/bin/agent-browser-win32-x64.exe": "tools/agent-browser.exe",
       "../node_modules/agent-browser/LICENSE": "licenses/agent-browser-APACHE-2.0.txt"
     },

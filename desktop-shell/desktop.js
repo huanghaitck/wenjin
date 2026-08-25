@@ -1,6 +1,6 @@
 const frame = document.getElementById('workbench');
 const startup = document.getElementById('startup');
-const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word', 'open_data_directory', 'open_sidecar_log']);
+const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word', 'open_path', 'open_data_directory', 'open_sidecar_log']);
 let workbenchOrigin = '';
 let frameTimeout = 0;
 const invoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;

@@ -31,6 +31,7 @@ PyMuPDF官方说明其开放源码许可为AGPL，同时提供商业许可。问
 | tauri-plugin-shell | 受控桌面命令 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | rfd | Windows文件与目录选择器 | MIT | https://github.com/PolyMeilex/rfd |
 | windows-sys | Windows API绑定 | Apache-2.0 OR MIT | https://github.com/microsoft/windows-rs |
+| Cytoscape.js 3.34.1 | 书目与内容知识图谱交互渲染 | MIT | https://github.com/cytoscape/cytoscape.js |
 
 Node.js和Rust只属于源码构建链；普通用户运行安装包不需要另装Node.js、Rust或Python。
 
@@ -45,7 +46,7 @@ Windows安装包只携带`agent-browser`的Windows原生可执行文件，不携
 - openai/codex（Apache-2.0）：线程事件、审批、Skills、MCP与app-server边界；
 - Model Context Protocol specification：prompts、resources、tools和控制边界。
 
-`src/research_workbench/weixin_gateway.py`依据Tencent `openclaw-weixin` 2.4.6（上游提交`cef0bfc390393f716903e16d50408118047f87e0`）公开的iLink请求结构和登录状态实现了问津自有Python网关，并修改了运行方式、凭据存储、权限与消息路由。问津不内置OpenClaw宿主，也不通过Hermes转发。腾讯MIT许可证全文见`licenses/Tencent-openclaw-weixin-MIT.txt`。
+`src/research_workbench/weixin_gateway.py`依据Tencent `openclaw-weixin` 2.4.6（上游提交`cef0bfc390393f716903e16d50408118047f87e0`）公开的iLink请求结构和登录状态实现了问津自有Python网关，并修改了运行方式、凭据存储、权限与消息路由。问津不内置OpenClaw宿主，也不通过Hermes转发。腾讯MIT许可证全文见`licenses/Tencent-openclaw-weixin-MIT.txt`；Cytoscape.js MIT许可证全文见`licenses/cytoscape-MIT.txt`。
 
 问津内置`Historical Research Skill Pack 0.3.0`，来源为`huanghaitck/historical-research-codex-plugin`，按Apache License 2.0再分发。完整Apache许可证与NOTICE随Skill Pack源码和安装包保留。问津自身继续采用AGPL-3.0-only；内置Skill Pack文件不因此改变其原有Apache-2.0许可。
 

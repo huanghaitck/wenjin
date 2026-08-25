@@ -19,6 +19,32 @@ def _module(name: str) -> str:
     return name.replace("-", "_")
 
 
+def create_local_skill(
+    config_root: Path, name: str, description: str, instructions: str,
+    display_name: str = "", allow_implicit_invocation: bool = True,
+) -> dict[str, Any]:
+    name, description, instructions = _name(name), description.strip(), instructions.strip()
+    if not description or not instructions:
+        raise ValueError("skill description and instructions are required")
+    root = config_root.resolve() / "skills" / name
+    if root.exists():
+        raise FileExistsError(f"skill already exists: {root}")
+    (root / "agents").mkdir(parents=True)
+    skill = (
+        f"---\nname: {name}\ndescription: {description}\n---\n\n"
+        f"# {display_name.strip() or name}\n\n{instructions}\n"
+    )
+    (root / "SKILL.md").write_text(skill, encoding="utf-8")
+    (root / "agents" / "openai.yaml").write_text(
+        f"display_name: {display_name.strip() or name}\n"
+        f"short_description: {description}\n"
+        f"default_prompt: Use the {name} skill for the current task.\n"
+        f"allow_implicit_invocation: {'true' if allow_implicit_invocation else 'false'}\n",
+        encoding="utf-8",
+    )
+    return {"name": name, "skill_root": str(root), "skill_file": str(root / "SKILL.md")}
+
+
 def create_plugin_project(
     parent: Path, name: str, display_name: str, description: str,
 ) -> dict[str, Any]:
@@ -98,7 +124,7 @@ def create_plugin_project(
     )
     (root / "README.md").write_text(
         f"# {display_name}\n\n{description}\n\n"
-        "This neutral Wenjin domain-pack scaffold contains a versioned manifest, one Skill, "
+        "This Wenjin domain-pack engineering scaffold contains a versioned manifest, one Skill, "
         "an MCP stdio runtime, permission declarations, contribution slots, local-data slots, "
         "and a manifest test. Replace the sample status tool with bounded domain tools; keep "
         "formal evidence and manuscript writes behind Wenjin approvals.\n\n"

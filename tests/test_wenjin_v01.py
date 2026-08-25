@@ -57,7 +57,7 @@ class WenjinV01Tests(unittest.TestCase):
         })
         self.assertTrue(settings["moa"]["enabled"])
         self.assertEqual(settings["moa"]["aggregator_role"], "main_reasoning")
-        self.assertEqual(len(public_settings(Path(self.temporary.name) / "config")["roles"]), 7)
+        self.assertEqual(len(public_settings(Path(self.temporary.name) / "config")["roles"]), 9)
 
     def test_moa_reference_failure_is_reported_without_aborting_other_advice(self) -> None:
         environment = {
@@ -121,8 +121,10 @@ class WenjinV01Tests(unittest.TestCase):
         with patch("research_workbench.desktop_runtime.sys.frozen", True, create=True):
             _install_builtin_computer_use(config)
         plugin = next(item for item in plugin_state(config)["plugins"] if item["name"] == "computer-use")
+        self.assertEqual(plugin["version"], "0.1.2")
         self.assertEqual(plugin["tool_permissions"]["run_command"], "sensitive")
         self.assertIn("desktop_snapshot", plugin["agent_tools"])
+        self.assertIn("file_search", plugin["agent_tools"])
 
     def test_bundled_browser_runtime_uses_explicit_chromium_executable(self) -> None:
         root = Path(self.temporary.name)
@@ -197,6 +199,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertNotIn("研究者保留证据与写作决定权", script)
         self.assertNotIn("等待你的决定", script)
         self.assertIn('id="languageToggle"', html)
+        self.assertIn('id="modelOnboarding"', html)
+        self.assertIn("问津不会用 Mock 冒充模型", html)
         self.assertIn("/api/agent-profile/save", script)
         self.assertIn("/api/model-settings/moa", script)
         self.assertIn('id="agentAccessMode"', html)
@@ -205,6 +209,7 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("Mixture of Agents", script)
         self.assertIn("Codex 双向桥接", script)
         self.assertIn("/api/codex/register-mcp", script)
+        self.assertIn("领域包编排教程", script)
 
     def test_english_ui_has_an_english_history_template_and_domain_pack_copy(self) -> None:
         ensure_journal_templates(self.project)
@@ -224,11 +229,10 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertEqual(history["requirements"]["language"], "zh-CN")
         script = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js").read_text(encoding="utf-8")
         html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")
-        self.assertIn("Install a domain pack", script)
-        self.assertIn("What works in 0.1.1", script)
-        self.assertIn("Normally leave this empty", script)
-        self.assertIn("Create a neutral domain-pack project", script)
-        self.assertIn("/api/plugins/create-project", script)
+        self.assertIn("Import one or start the guided creator", script)
+        self.assertIn('id="domainImportPanel"', html)
+        self.assertIn('id="domainCreatePanel"', html)
+        self.assertNotIn("Create a neutral domain-pack project", script)
         self.assertNotIn("You may install the Gazetteer Disaster History plugin", script)
         self.assertIn("builtin-english-history-chicago-nb", script)
         self.assertIn("/api/codex/task/start", script)
@@ -254,8 +258,11 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn('id="projectMode"', html)
         self.assertIn('/api/project/workspace', script)
         self.assertIn('/api/project/register', script)
-        for tab in ("models", "routing", "persona", "memory", "connectors", "plugins", "runtime"):
+        for tab in ("models", "routing", "persona", "memory", "connectors", "runtime"):
             self.assertIn(f'data-settings-tab="{tab}"', html)
+        self.assertNotIn('data-settings-tab="plugins"', html)
+        for control in ("domainImportToggle", "domainCreateToggle", "domainAttachmentInput", "domainReasoningMode", "domainReasoningEffort", "domainConfigureModel"):
+            self.assertIn(f'id="{control}"', html)
         self.assertIn('id="libraryViews"', html)
         for view in ("list", "chronicle", "graph", "intake"):
             self.assertIn(f'data-library-view="{view}"', html)
@@ -268,6 +275,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("Project content graph", script)
         self.assertIn("Open anchored source page", script)
         self.assertIn("/api/plugins/install", script)
+        self.assertIn("/api/thread/attachment/file", script)
+        self.assertIn("open_path", script)
         self.assertIn("mode-intake", script)
         self.assertIn("createElementNS('http://www.w3.org/2000/svg'", script)
         self.assertIn("graph-stage", styles)

@@ -47,6 +47,9 @@ def _skill_roots(extra_roots: list[Path] | None = None) -> list[Path]:
         roots.extend(path / "skills" for path in sorted(plugin_cache.iterdir()) if (path / "skills").is_dir())
     configured = os.getenv("HRW_SKILL_ROOTS", "")
     roots.extend(Path(item) for item in configured.split(os.pathsep) if item.strip())
+    config_root = os.getenv("WENJIN_CONFIG_ROOT", "").strip()
+    if config_root:
+        roots.append(Path(config_root) / "skills")
     roots.extend(extra_roots or [])
     return roots
 

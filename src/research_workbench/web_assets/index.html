@@ -12,6 +12,7 @@
     <div class="importer">
       <button id="agentMode" class="mode-active" data-i18n="nav_agent">研究对话</button>
       <button id="projectMode" data-i18n="nav_project">项目工作区</button>
+      <button id="domainMode" data-i18n="nav_domain">领域 Agent</button>
       <button id="libraryMode" data-i18n="nav_library">研究图书馆</button>
       <button id="articleMode" data-i18n="nav_article">文章工作台</button>
       <button id="skillsMode" data-i18n="nav_skills">技能与插件</button>
@@ -21,9 +22,10 @@
   </header>
 
   <div id="notice" role="status">正在读取本地项目……</div>
+  <dialog id="imagePreviewDialog" class="image-preview-dialog"><button id="closeImagePreview" aria-label="关闭大图">×</button><img id="imagePreviewLarge" alt=""><a id="openImageOriginal" target="_blank" rel="noreferrer">打开原图</a></dialog>
   <main id="projectWorkbench" class="project-workbench" hidden>
     <aside class="project-list-panel surface">
-      <header class="agent-heading"><div><h2 data-zh="研究项目" data-en="Research projects">研究项目</h2><p data-zh="项目之间的材料、证据和稿件相互隔离" data-en="Sources, evidence, and manuscripts remain separated by project">项目之间的材料、证据和稿件相互隔离</p></div></header>
+      <header class="agent-heading"><div><h2 data-zh="研究项目" data-en="Research projects">研究项目</h2><p data-zh="项目之间的材料、证据和稿件相互隔离" data-en="Sources, evidence, and manuscripts remain separated by project">项目之间的材料、证据和稿件相互隔离</p></div><button id="toggleProjectActivity">隐藏动态</button></header>
       <div id="projectWorkspaceList" class="project-workspace-list"></div>
       <button id="projectWorkspaceCreate" class="primary-inline" data-zh="新建研究项目" data-en="New research project">新建研究项目</button>
     </aside>
@@ -32,16 +34,60 @@
       <div id="projectWorkspaceObjects" class="project-object-grid"></div>
       <div id="projectWorkspaceSources"></div>
     </section>
-    <aside class="project-activity-panel surface">
+    <div id="projectActivityResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整项目动态侧栏宽度"></div><aside id="projectActivityPanel" class="project-activity-panel surface">
       <div id="projectWorkspaceNext"></div>
       <div id="projectWorkspaceActivity"></div>
+    </aside>
+  </main>
+  <main id="domainWorkbench" class="domain-workbench" hidden>
+    <aside class="domain-list-panel surface">
+      <header class="agent-heading"><div><h2 data-zh="领域 Agent" data-en="Domain agents">领域 Agent</h2><p data-zh="导入、创建或选择专业智能体" data-en="Import, create, or choose a specialist agent">导入、创建或选择专业智能体</p></div><button id="toggleDomainActivity">隐藏产物</button></header>
+      <div class="domain-manager-actions"><button id="domainImportToggle" data-zh="导入 Agent" data-en="Import agent">导入 Agent</button><button id="domainCreateToggle" data-zh="创建 Agent" data-en="Create agent">创建 Agent</button></div>
+      <section id="domainImportPanel" class="domain-manager-panel" hidden>
+        <strong data-zh="导入已有领域 Agent" data-en="Import an existing domain agent">导入已有领域 Agent</strong>
+        <input id="domainImportPath" placeholder="选择 .zip 或已解压目录">
+        <div class="button-row"><button id="domainChooseZip" data-zh="选择 ZIP" data-en="Choose ZIP">选择 ZIP</button><button id="domainChooseFolder" data-zh="选择目录" data-en="Choose folder">选择目录</button></div>
+        <button id="domainInstall" class="primary-inline" data-zh="安装并校验" data-en="Install and validate">安装并校验</button>
+      </section>
+      <section id="domainCreatePanel" class="domain-manager-panel" hidden>
+        <strong data-zh="跟着主 Agent 一步步创建" data-en="Create step by step with the main Agent">跟着主 Agent 一步步创建</strong>
+        <ol><li>想解决什么研究问题？</li><li>材料来自上传文件还是研究图书馆？</li><li>需要哪些确定性工具和数据库？</li><li>哪些动作必须请求批准？</li><li>输出什么，何时停止并转人工？</li></ol>
+        <textarea id="domainAgentIdea" placeholder="例如：我想创建一个碑刻整理 Agent。我有若干拓片和释文，希望它能识字、拆条、核地名并导出表格。"></textarea>
+        <button id="domainStartGuide" class="primary-inline" data-zh="与主 Agent 开始创建" data-en="Start with the main Agent">与主 Agent 开始创建</button>
+      </section>
+      <h3 class="domain-list-title" data-zh="已安装 Agent" data-en="Installed agents">已安装 Agent</h3>
+      <div id="domainAgentList" class="domain-agent-list"></div>
+    </aside>
+    <section class="domain-conversation-panel surface">
+      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
+      <div id="domainFunctions" class="domain-functions"></div>
+      <div id="domainMessages" class="messages domain-messages"></div>
+      <div class="composer domain-compose">
+        <div id="domainAttachmentChips" class="attachment-chips"></div>
+        <input id="domainAttachmentInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles" hidden>
+        <div class="composer-main"><textarea id="domainMessageInput" placeholder="直接向当前领域 Agent 提出任务"></textarea><button id="sendDomainMessage" class="primary-inline" data-zh="发送" data-en="Send">发送</button></div>
+        <div class="composer-toolbar">
+          <div class="composer-left"><button id="addDomainAttachment" data-zh="＋ 加入文件" data-en="＋ Attach files">＋ 加入文件</button><label>Agent 权限<select id="domainAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label></div>
+          <div class="composer-right"><button id="domainConfigureModel"><span id="domainModelLabel">跟随主模型</span></button><label id="domainReasoningModeLabel">推理模式<select id="domainReasoningMode"></select></label><label id="domainReasoningEffortLabel">思考强度<select id="domainReasoningEffort"></select></label></div>
+        </div>
+      </div>
+    </section>
+    <div id="domainActivityResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整领域产物侧栏宽度"></div><aside id="domainActivityPanel" class="domain-activity-panel surface">
+      <header class="agent-heading"><div><h2 data-zh="运行与产物" data-en="Runs and artifacts">运行与产物</h2><p data-zh="本轮过程优先，旧产物折叠显示" data-en="Current run first; older artifacts are collapsed">本轮过程优先，旧产物折叠显示</p></div></header>
+      <section id="domainModelPanel" class="domain-model-panel" hidden></section>
+      <div id="domainActivity"></div>
+      <div id="domainArtifacts"></div>
     </aside>
   </main>
   <nav id="libraryViews" class="subview-tabs library-viewbar" aria-label="图书馆子页面" hidden>
     <button id="showLibraryList" data-library-view="list" class="selected" data-zh="书目与书架" data-en="Catalog and shelves">书目与书架</button>
     <button id="showLibraryChronicle" data-library-view="chronicle" data-zh="史料长编" data-en="Source chronicle">史料长编</button>
     <button id="showLibraryGraph" data-library-view="graph" data-zh="知识图谱" data-en="Knowledge graph">知识图谱</button>
+    <button id="showLibraryTables" data-library-view="tables" data-zh="数据图表" data-en="Data tables">数据图表</button>
+    <button id="showLibraryMaps" data-library-view="maps" data-zh="地图" data-en="Maps">地图</button>
+    <button id="showLibraryImages" data-library-view="images" data-zh="图片" data-en="Images">图片</button>
     <button id="showLibraryIntake" data-library-view="intake" data-zh="文件盘点与入库" data-en="File intake">文件盘点与入库</button>
+    <button id="toggleLibraryDetail" data-zh="隐藏详情" data-en="Hide details">隐藏详情</button>
   </nav>
   <main id="libraryWorkbench" class="library-workbench" hidden>
     <aside class="inventory-panel surface">
@@ -51,6 +97,8 @@
         <label>单份 PDF（项目私有兼容导入）<input id="pdfFile" type="file" accept="application/pdf"></label>
         <button id="choosePdf" class="desktop-only">从电脑选择 PDF</button>
         <button id="importButton">导入、清洗并登记页面关系</button>
+        <input id="libraryUploadInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles" hidden>
+        <button id="libraryUploadButton">手动上传到图书馆</button>
         <label>材料所在文件夹<input id="scanRoot" placeholder="例如 D:\History\Books"></label>
         <button id="chooseFolder" class="desktop-only">从电脑选择文件夹</button>
         <label>验收 Skill<select id="intakeSkill"></select></label>
@@ -71,9 +119,11 @@
       <div id="workList" class="work-list"></div>
       <div id="sourceChronicle" class="source-chronicle" hidden></div>
       <div id="libraryGraph" class="library-graph" hidden></div>
+      <div id="libraryAssetView" class="library-assets" hidden></div>
     </section>
 
-    <aside class="work-detail-panel surface">
+    <div id="libraryDetailResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整作品详情侧栏宽度"></div>
+    <aside id="libraryDetailPanel" class="work-detail-panel surface">
       <header class="agent-heading"><div><h2>作品与版本</h2><p>文件指纹只标识精确文件版本</p></div></header>
       <div id="workDetail" class="work-detail"></div>
       <section class="project-source-box">
@@ -98,24 +148,39 @@
     <section class="conversation-panel surface">
       <header class="agent-heading">
         <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
-        <div>
+        <div class="conversation-heading-actions">
           <details id="planningOptions" class="conversation-options">
             <summary>上下文选项</summary>
             <label>本轮使用<select id="planningMode"><option value="independent_planning">只处理当前问题</option><option value="guided_execution">沿用已批准研究计划</option></select></label>
             <small>项目已有批准计划时，可以选择沿用；历史版本继续保留。</small>
           </details>
-          <label>Agent 权限<select id="agentAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label>
-          <label>主模型<select id="modelProfile"></select></label>
+          <button id="toggleContextPanel">隐藏侧栏</button>
         </div>
       </header>
       <div id="messages" class="messages"></div>
       <div class="composer">
-        <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
+        <div id="attachmentChips" class="attachment-chips"></div>
+        <div class="composer-main">
+          <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
+          <button id="sendMessage" class="primary-inline">发送</button>
+        </div>
+        <div class="composer-toolbar">
+          <div class="composer-left">
+            <button id="attachFiles" type="button" data-zh="＋ 加入文件" data-en="＋ Attach files">＋ 加入文件</button>
+            <input id="chatAttachmentInput" type="file" multiple hidden accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles">
+            <label>Agent 权限<select id="agentAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label>
+          </div>
+          <div class="composer-right">
+            <label id="reasoningModeLabel">推理模式<select id="reasoningMode"></select></label>
+            <label id="reasoningEffortLabel">思考强度<select id="reasoningEffort"></select></label>
+            <label>主模型<select id="modelProfile"></select></label>
+          </div>
+        </div>
         <div id="slashMenu" class="slash-menu" hidden></div>
-        <button id="sendMessage" class="primary-inline">发送</button>
       </div>
     </section>
 
+    <div id="contextResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整研究上下文侧栏宽度"></div>
     <aside class="activity-panel surface">
       <header class="agent-heading"><div><h2>研究上下文</h2><p>项目材料与研究记录</p></div></header>
       <nav id="contextTabs" class="context-tabs">
@@ -147,7 +212,7 @@
 
   <main id="articleWorkbench" class="article-workbench" hidden>
     <aside class="manuscript-panel surface">
-      <header class="agent-heading"><div><h2>稿件与章节</h2><p>稿件结构与历史版本</p></div></header>
+      <header class="agent-heading"><div><h2>稿件与章节</h2><p>稿件结构与历史版本</p></div><button id="toggleAuthoringControl">隐藏研究侧栏</button></header>
       <details class="import-manuscript">
         <summary>新建或导入稿件</summary>
         <label>稿件题名<input id="manuscriptTitle" placeholder="论文题目"></label>
@@ -179,7 +244,7 @@
       <footer id="manuscriptStats" class="manuscript-status">尚未选择稿件</footer>
     </section>
 
-    <aside class="authoring-control surface">
+    <div id="authoringControlResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整文章研究侧栏宽度"></div><aside id="authoringControlPanel" class="authoring-control surface">
       <header class="agent-heading"><div><h2>研究侧栏</h2><p id="selectionContext">当前稿件、修订、章节与选区会随消息保存</p></div></header>
       <nav id="authoringTabs" class="context-tabs">
         <button data-authoring="dialogue" class="selected">研究对话</button>
@@ -213,8 +278,7 @@
         <button data-settings-tab="routing" data-zh="辅助与 MoA" data-en="Routing & MoA">辅助与 MoA</button>
         <button data-settings-tab="persona" data-zh="研究人格" data-en="Persona">研究人格</button>
         <button data-settings-tab="memory" data-zh="记忆" data-en="Memory">记忆</button>
-        <button data-settings-tab="connectors" data-zh="连接器与 MCP" data-en="Connectors & MCP">连接器与 MCP</button>
-        <button data-settings-tab="plugins" data-zh="领域包" data-en="Domain packs">领域包</button>
+        <button data-settings-tab="connectors" data-zh="连接器、MCP与微信" data-en="Connectors, MCP & Weixin">连接器、MCP与微信</button>
         <button data-settings-tab="runtime" data-zh="当前状态" data-en="Status">当前状态</button>
       </nav>
       <div id="settingsContent" class="settings-grid"></div>
@@ -280,6 +344,15 @@
       <section class="anomaly-section"><h2>待复核项</h2><div id="anomalies"></div></section>
     </section>
   </main>
+  <dialog id="modelOnboarding" class="onboarding-dialog">
+    <h2 id="modelOnboardingTitle">先连接一个主模型</h2>
+    <p id="modelOnboardingText">研究对话需要真实模型。可以连接本机 Ollama，或填写 DeepSeek 等 OpenAI 兼容接口；问津不会用 Mock 冒充模型。</p>
+    <div class="button-row">
+      <button id="configureMainModel" class="primary-inline">设置主模型</button>
+      <button id="continueWithoutModel">暂不设置，只使用图书馆和项目功能</button>
+    </div>
+  </dialog>
+  <script src="/vendor/cytoscape.min.js"></script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import deque
 import subprocess
 import tempfile
 import uuid
@@ -130,6 +131,105 @@ def screen_capture() -> dict[str, Any]:
     return {
         "path": str(path), "width": image.width, "height": image.height,
         "sha256": hashlib.sha256(data).hexdigest(), "size": len(data),
+    }
+
+
+@server.tool(annotations=READ)
+def filesystem_roots() -> dict[str, Any]:
+    """List available local drive roots and common user folders without enumerating their contents."""
+    drives = [f"{letter}:\\" for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{letter}:\\").exists()]
+    user = Path.home()
+    common = []
+    for name in ("Desktop", "Documents", "Downloads"):
+        path = user / name
+        if path.is_dir():
+            common.append({"name": name, "path": str(path.resolve())})
+    common.insert(0, {"name": "User home", "path": str(user.resolve())})
+    for drive in drives:
+        root = Path(drive)
+        for name in (user.name, "AI_Workflows"):
+            path = root / name
+            if path.is_dir() and str(path.resolve()) not in {item["path"] for item in common}:
+                common.append({"name": f"{root.drive} {name}", "path": str(path.resolve())})
+    return {"drives": drives, "common_folders": common}
+
+
+@server.tool(annotations=READ)
+def file_search(
+    roots: list[str], query: str = "", extensions: list[str] | None = None,
+    max_results: int = 200, max_scanned: int = 50000, include_hidden: bool = False,
+) -> dict[str, Any]:
+    """Search explicitly named local folders with bounded traversal and no file-content reads."""
+    if not roots or len(roots) > 8:
+        raise ValueError("roots must contain 1-8 explicit folders")
+    selected = []
+    for value in roots:
+        path = Path(value).expanduser().resolve()
+        if not path.is_absolute() or not path.is_dir():
+            raise FileNotFoundError(f"search root is unavailable: {path}")
+        selected.append(path)
+    needle = query.strip().casefold()
+    suffixes = {
+        value.casefold() if value.startswith(".") else "." + value.casefold()
+        for value in (extensions or []) if value.strip()
+    }
+    max_results = max(1, min(int(max_results), 500))
+    max_scanned = max(1, min(int(max_scanned), 200000))
+    matches: list[dict[str, Any]] = []
+    scanned = 0
+    skipped = 0
+    priority = [Path(item["path"]) for item in filesystem_roots()["common_folders"]]
+    queue = deque([path for path in priority if any(path == root or root in path.parents for root in selected)] + selected)
+    visited: set[Path] = set()
+    while queue and scanned < max_scanned and len(matches) < max_results:
+        directory = queue.popleft()
+        if directory in visited:
+            continue
+        visited.add(directory)
+        try:
+            entries = sorted(os.scandir(directory), key=lambda item: item.name.casefold())
+        except (OSError, PermissionError):
+            skipped += 1
+            continue
+        directories: list[Path] = []
+        for entry in entries:
+            if scanned >= max_scanned or len(matches) >= max_results:
+                break
+            if not include_hidden and entry.name.startswith("."):
+                continue
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    directories.append(Path(entry.path))
+                    continue
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                scanned += 1
+                path = Path(entry.path)
+                if suffixes and path.suffix.casefold() not in suffixes:
+                    continue
+                if needle and needle not in entry.name.casefold() and needle not in str(path.parent).casefold():
+                    continue
+                stat = entry.stat(follow_symlinks=False)
+                matches.append({
+                    "name": entry.name, "path": str(path.resolve()),
+                    "extension": path.suffix.casefold(), "size": stat.st_size,
+                    "modified_ns": stat.st_mtime_ns,
+                })
+            except (OSError, PermissionError):
+                skipped += 1
+        priority_terms = ("wechat", "wx", "download", "document", "desktop", "project", "research", "msg", "file", "资料", "文档", "下载", "桌面", "项目")
+        for child in reversed(directories):
+            if any(term in child.name.casefold() for term in priority_terms):
+                queue.appendleft(child)
+            else:
+                queue.append(child)
+    return {
+        "roots": [str(path) for path in selected], "query": query,
+        "extensions": sorted(suffixes), "matches": matches,
+        "returned_count": len(matches), "scanned_files": scanned,
+        "skipped_entries": skipped,
+        "truncated": bool(queue) or scanned >= max_scanned or len(matches) >= max_results,
+        "boundary": "File names and metadata only; file contents were not opened.",
     }
 
 

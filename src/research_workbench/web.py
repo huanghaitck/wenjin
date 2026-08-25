@@ -12,10 +12,13 @@ from urllib.parse import parse_qs, urlparse
 
 from . import authoring as authoring_module
 from .agent_runtime import (
-    assign_model,
+    assign_model, clear_model_assignment,
     create_thread,
+    ensure_default_thread,
     decide_approval,
     list_threads,
+    queue_run_control,
+    revise_run_control,
     recover_interrupted_runs,
     send_message,
     sync_model_profiles,
@@ -49,7 +52,9 @@ from .codex_bridge import (
 )
 from .domain_plugins import (
     bind_domain_plugin_data, install_domain_plugin, plugin_state, remove_domain_plugin,
+    discover_domain_models, public_domain_model_settings, save_domain_model_role,
 )
+from .domain_agents import domain_agent_state, domain_agent_view, send_domain_message
 from .plugin_sdk import create_plugin_project
 from .backups import backup_project, list_backups, restore_backup
 from .memory_adapter import (
@@ -60,6 +65,7 @@ from .source_documents import export_reading_markdown
 from .library import (
     LIBRARY_SHELVES, approve_candidates,
     library_file_path, library_graph,
+    library_assets,
     decide_literature_relation,
     library_status,
     link_work_to_project,
@@ -133,6 +139,7 @@ from .workspace import (
 )
 from .project_workspace import project_workspace_state
 from .weixin_gateway import gateway as weixin_gateway
+from .attachments import MAX_ATTACHMENT_BYTES, archive_bytes_in_library, get_attachment, save_attachment
 
 
 WEB_ROOT = Path(__file__).parent / "web_assets"
@@ -187,6 +194,11 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "agent_profile": public_agent_profile(self.server.project_root),
                     "library": library_status(self.server.project_root, self.server.library_root),
                     "library_works": search_library(self.server.project_root, library_root=self.server.library_root),
+                    "library_assets": {
+                        "tables": library_assets(self.server.project_root, "tables", self.server.library_root),
+                        "maps": library_assets(self.server.project_root, "maps", self.server.library_root),
+                        "images": library_assets(self.server.project_root, "images", self.server.library_root),
+                    },
                     "library_shelves": LIBRARY_SHELVES,
                     "workspace": workspace_view(self.server.workspace_root),
                     "retrievals": list_retrievals(self.server.project_root),
@@ -216,6 +228,21 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/project/workspace":
                 self._json(project_workspace_state(self.server.project_root))
+                return
+            if parsed.path == "/api/domain-agents":
+                self._json(domain_agent_state(self.server.project_root))
+                return
+            if parsed.path == "/api/domain-agent":
+                params = parse_qs(parsed.query)
+                self._json(domain_agent_view(
+                    self.server.project_root, params.get("id", [""])[0]
+                ))
+                return
+            if parsed.path == "/api/domain-model-settings":
+                params = parse_qs(parsed.query)
+                self._json(public_domain_model_settings(
+                    self.server.config_root, params.get("plugin", [""])[0]
+                ))
                 return
             if parsed.path == "/api/weixin/status":
                 self._json(weixin_gateway(self.server.config_root, self.server.project_root).status())
@@ -332,6 +359,15 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 }.get(source.suffix.lower(), "application/octet-stream")
                 self._send(200, source.read_bytes(), content_type)
                 return
+            if parsed.path == "/api/thread/attachment/file":
+                attachment = get_attachment(
+                    self.server.project_root, parse_qs(parsed.query).get("id", [""])[0]
+                )
+                self._send(
+                    200, Path(attachment["absolute_path"]).read_bytes(),
+                    str(attachment.get("media_type") or "application/octet-stream"),
+                )
+                return
             if parsed.path == "/api/page-image":
                 page_id = parse_qs(parsed.query).get("id", [""])[0]
                 image = page_image_path(self.server.project_root, page_id)
@@ -350,7 +386,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._send(200, target.read_bytes(), content_type)
                 return
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
-            if name not in {"index.html", "app.js", "styles.css"}:
+            if name not in {"index.html", "app.js", "styles.css", "vendor/cytoscape.min.js"}:
                 self._json({"error": "not_found"}, 404)
                 return
             content_type = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}[Path(name).suffix]
@@ -390,6 +426,35 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 if not data.startswith(b"PK"):
                     raise ValueError("uploaded file is not a DOCX package")
                 self._json(import_docx(self.server.project_root, title, data), 201)
+                return
+            if parsed.path == "/api/thread/attachment":
+                query = parse_qs(parsed.query)
+                filename = query.get("filename", ["attachment"])[0]
+                thread_id = query.get("thread_id", [""])[0]
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 1 or length > MAX_ATTACHMENT_BYTES:
+                    raise ValueError("attachment must be between 1 byte and 100 MB")
+                self._json(
+                    save_attachment(
+                        self.server.project_root, thread_id, filename, self.rfile.read(length),
+                        self.server.library_root,
+                    ),
+                    201,
+                )
+                return
+            if parsed.path == "/api/library/upload":
+                query = parse_qs(parsed.query)
+                filename = query.get("filename", ["upload"])[0]
+                length = int(self.headers.get("Content-Length", "0"))
+                if length < 1 or length > MAX_ATTACHMENT_BYTES:
+                    raise ValueError("library upload must be between 1 byte and 100 MB")
+                self._json(
+                    archive_bytes_in_library(
+                        self.server.project_root, filename, self.rfile.read(length),
+                        self.server.library_root,
+                    ),
+                    201,
+                )
                 return
             payload = self._body_json()
             if parsed.path == "/api/desktop/bridge-ready":
@@ -493,7 +558,33 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     str(payload["reason"]),
                 )
             elif parsed.path == "/api/thread/create":
-                result = create_thread(self.server.project_root, str(payload["title"]))
+                result = create_thread(
+                    self.server.project_root, str(payload["title"]),
+                    str(payload.get("parent_thread_id", "")),
+                )
+            elif parsed.path == "/api/domain-agent/message":
+                result = send_domain_message(
+                    self.server.project_root, str(payload["plugin_name"]), str(payload["content"]),
+                    main_thread_id=str(payload.get("main_thread_id", "")),
+                    access_mode=str(payload.get("access_mode", "ask")),
+                    attached_refs=list(payload.get("attached_refs") or []),
+                    reasoning_mode=str(payload.get("reasoning_mode", "standard")),
+                    reasoning_effort=str(payload.get("reasoning_effort", "medium")),
+                )
+            elif parsed.path == "/api/run/control":
+                result = queue_run_control(
+                    self.server.project_root,
+                    str(payload["run_kind"]), str(payload["action"]),
+                    str(payload.get("content", "")),
+                    thread_id=str(payload.get("thread_id", "")),
+                    session_id=str(payload.get("session_id", "")),
+                )
+            elif parsed.path == "/api/run/control/revise":
+                result = revise_run_control(
+                    self.server.project_root, str(payload["control_id"]),
+                    content=str(payload.get("content", "")),
+                    delete=bool(payload.get("delete", False)),
+                )
             elif parsed.path == "/api/model/assign":
                 result = assign_model(
                     self.server.project_root,
@@ -509,10 +600,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 profiles = sync_model_profiles(self.server.project_root)
                 if role == "main_reasoning":
                     configured = next(item for item in settings["roles"] if item["role"] == role)
-                    target = "environment-main" if configured["provider"] != "disabled" and (
+                    if configured["provider"] != "disabled" and (
                         configured["provider"] == "ollama" or configured["has_secret"]
-                    ) else "builtin-mock"
-                    assign_model(self.server.project_root, target)
+                    ):
+                        assign_model(self.server.project_root, "environment-main")
+                    else:
+                        clear_model_assignment(self.server.project_root)
                     profiles = sync_model_profiles(self.server.project_root)
                 result = {"settings": settings, "model_profiles": profiles}
             elif parsed.path == "/api/model-settings/probe":
@@ -534,6 +627,22 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self._json({"error": "invalid local session"}, 403)
                     return
                 result = {"settings": save_moa(self.server.config_root, payload)}
+            elif parsed.path == "/api/domain-model-settings/save":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                result = save_domain_model_role(
+                    self.server.config_root, str(payload["plugin_name"]),
+                    str(payload["role_id"]), payload,
+                )
+            elif parsed.path == "/api/domain-model-settings/models":
+                if self.headers.get("X-HRW-Session", "") != self.server.session_token:
+                    self._json({"error": "invalid local session"}, 403)
+                    return
+                result = discover_domain_models(
+                    self.server.config_root, str(payload["plugin_name"]),
+                    str(payload["role_id"]), payload,
+                )
             elif parsed.path == "/api/weixin/login/start":
                 if self.headers.get("X-HRW-Session", "") != self.server.session_token:
                     self._json({"error": "invalid local session"}, 403)
@@ -589,6 +698,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     payload.get("context") if isinstance(payload.get("context"), dict) else None,
                     str(payload.get("planning_mode", "guided_execution")),
                     str(payload.get("access_mode", "ask")),
+                    str(payload.get("reasoning_mode", "standard")),
+                    str(payload.get("reasoning_effort", "medium")),
                 )
             elif parsed.path == "/api/source/reject-identity":
                 result = reject_source_identity(
@@ -693,15 +804,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 parent = Path(str(payload["parent_path"])) if payload.get("parent_path") else None
                 result = create_workspace_project(self.server.workspace_root, str(payload["title"]), parent)
                 self.server.project_root = Path(result["project_root"])
+                ensure_default_thread(self.server.project_root)
             elif parsed.path == "/api/project/register":
                 result = register_workspace_project(
                     self.server.workspace_root, Path(str(payload["project_root"])),
                 )
                 self.server.project_root = Path(result["project_root"])
+                ensure_default_thread(self.server.project_root)
             elif parsed.path == "/api/project/select":
                 self.server.project_root = select_workspace_project(
                     self.server.workspace_root, str(payload["project_id"])
                 )
+                ensure_default_thread(self.server.project_root)
                 result = {"project_root": str(self.server.project_root), "project": project_status(self.server.project_root)}
             elif parsed.path == "/api/library/add-to-project":
                 result = add_library_file_to_project(
@@ -830,6 +944,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self.server.project_root = select_workspace_project(
                     self.server.workspace_root, restored_status["project_id"],
                 )
+                ensure_default_thread(self.server.project_root)
                 result["project"] = restored_status
             elif parsed.path == "/api/memory/settings":
                 result = save_memory_settings(
@@ -849,6 +964,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     year=str(payload.get("year", "")),
                     case_id=str(payload.get("case_id", "")),
                     source_id=str(payload.get("source_id", "")),
+                    name=str(payload.get("name", "史料长编")),
                 )
             elif parsed.path == "/api/source/reading-markdown":
                 result = export_reading_markdown(
@@ -1075,6 +1191,7 @@ def build_server(
     server.desktop_bridge_ready = False
     registry = initialize_workspace(server.workspace_root, project_root)
     server.project_root = Path(registry["current_project"])
+    ensure_default_thread(server.project_root)
     recover_interrupted_runs(server.project_root)
     return server
 
