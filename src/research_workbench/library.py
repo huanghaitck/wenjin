@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import os
 import re
 import threading
@@ -29,7 +30,7 @@ HISTORY_TERMS = (
 LIBRARY_SHELVES = {
     "primary_sources": "原始史料", "academic_articles": "学术论文",
     "monographs": "学术专著", "personal_manuscripts": "个人论文与稿件",
-    "reference_works": "工具书与目录", "unclassified": "待分类",
+    "reading_notes": "读书笔记", "reference_works": "工具书与目录", "unclassified": "待分类",
 }
 SUGGESTED_SHELVES = {
     "archival_source": "primary_sources",
@@ -37,6 +38,7 @@ SUGGESTED_SHELVES = {
     "thesis": "academic_articles",
     "monograph": "monographs",
     "personal_manuscript": "personal_manuscripts",
+    "reading_note": "reading_notes",
     "reference_work": "reference_works",
 }
 SCAN_PAGE_SIZE = 50
@@ -102,6 +104,60 @@ def _clean_title(value: str, fallback: str) -> str:
     return title[:300] or fallback
 
 
+def _filename_bibliography(path: Path) -> tuple[str, str, str]:
+    """Return a conservative title/year/publisher suggestion from the file name."""
+    raw = html.unescape(path.stem).replace("\u3000", " ")
+    raw = re.sub(r"^\d{6,8}[\s_-]+(?=[\u4e00-\u9fff])", "", raw)
+    raw = re.sub(r"^\d{8,}(?=[A-Za-z])", "", raw)
+    raw = re.sub(r"^\d{1,2}[.\s_-]+(?=[\u4e00-\u9fff《])", "", raw)
+    raw = re.sub(r"[_\s-]+20\d{10,}$", "", raw)
+    raw = re.sub(r"[_\s-]+B0[A-Z0-9]{7,}$", "", raw, flags=re.IGNORECASE)
+    raw = raw.replace("_", " ")
+    raw = re.sub(r"\s*[（(](?:Z[- ]?Library|张莉(?:批注|勾画)|批注版|无水印)[^）)]*[）)]\s*", " ", raw, flags=re.IGNORECASE)
+    raw = re.sub(r"(?:\s*[（(]\d+[）)])+$", "", raw)
+    raw = re.sub(r"(?:\s+|[-_])*(?:[0-9]{7,})$", "", raw)
+    title = _clean_title(raw, path.stem)
+
+    year = ""
+    publisher = ""
+    source = re.search(
+        r"[（(](?:原载于)?\s*([^（）()]{2,40}?)(1[89][0-9]{2}|20[0-9]{2})年(?:[0-9]{1,2}月|第[0-9]+期)",
+        path.stem,
+    )
+    if source:
+        publisher = _clean_title(source.group(1), "")
+        publisher = re.sub(r"^(?:出版商|出版者)\s*[:：]\s*", "", publisher)
+        year = source.group(2)
+    if not year:
+        dated_issue = re.search(r"(?<![-—–])(?<!\d)(1[89][0-9]{2}|20[0-9]{2})年\s*(?:第[0-9]+期|[0-9]{1,2}月)", path.stem)
+        year = dated_issue.group(1) if dated_issue else ""
+    return title, year, publisher
+
+
+def _filename_is_identifier(title: str) -> bool:
+    compact = re.sub(r"[^0-9A-Za-z]", "", title)
+    return bool(
+        re.fullmatch(r"[0-9a-fA-F]{24,}", compact)
+        or re.fullmatch(r"[0-9.]+v?[0-9]*", title, re.IGNORECASE)
+        or (len(compact) >= 8 and not re.search(r"[\u4e00-\u9fff]", title) and not re.search(r"[A-Za-z]{5,}", title))
+    )
+
+
+def _clean_author(value: str) -> str:
+    author = _clean_title(str(value or ""), "")
+    folded = author.casefold()
+    invalid = {"cnki", "administrator", "unknown", "author", "anonymous", "n/a"}
+    if folded in invalid or not re.search(r"[A-Za-z\u4e00-\u9fff]", author):
+        return ""
+    return author
+
+
+def _deduplication_key(title: str) -> str:
+    normalized = " ".join(str(title).split()).casefold()
+    generic = {"file", "document", "untitled", "附件", "读书报告", "国际", "rp", "mmexport"}
+    return "" if len(normalized) < 4 or normalized in generic else normalized
+
+
 def _year(text: str) -> str:
     match = re.search(r"(?<!\d)(1[0-9]{3}|20[0-9]{2})(?!\d)", text)
     return match.group(1) if match else ""
@@ -115,8 +171,9 @@ def _language(text: str) -> str:
 
 def _material_type(title: str, sample: str, path: str = "") -> str:
     combined = f"{path}\n{title}\n{sample[:5000]}".lower()
-    identity = f"{path}\n{title}".lower()
-    if any(term in identity for term in (
+    if any(term in combined for term in ("读书报告", "读书笔记", "读书报", "阅读札记")) or ("课程" in combined and "作业" in combined):
+        return "reading_note"
+    if any(term in combined for term in (
         "个人论文与稿件", "我的文章", "我的论文", "手稿", "草稿", "返修稿", "投稿稿", "未刊稿",
     )):
         return "personal_manuscript"
@@ -152,10 +209,11 @@ def _pdf_bibliography(
         authored = re.search(r"^([^\n]{2,40}(?:著|撰|编|校点))\s*$", sample[:4000], re.MULTILINE)
         author = authored.group(1).strip() if authored else ""
     if not publisher:
-        published = re.search(r"^([^\n]{2,60}出版社[^\n]{0,20})$", sample[:8000], re.MULTILINE)
+        published = re.search(r"^([^\n]{2,50}出版社)\s*$", sample[:3000], re.MULTILINE)
         publisher = published.group(1).strip() if published else ""
+    publisher = re.sub(r"^(?:出版商|出版者)\s*[:：]\s*", "", publisher)
     if not year:
-        dated = re.search(r"(?:出版|版次|CIP)[^\n]{0,80}(1[0-9]{3}|20[0-9]{2})", sample[:10000])
+        dated = re.search(r"(?:出版日期|版次|CIP)[^\n]{0,50}(1[0-9]{3}|20[0-9]{2})", sample[:3000])
         year = dated.group(1) if dated else ""
     return title, author, publisher, year
 
@@ -180,10 +238,10 @@ def _inspect_file(path: Path) -> dict[str, Any]:
     stat = path.stat()
     suffix = path.suffix.lower()
     supported = suffix in SUPPORTED_SUFFIXES
-    title = path.stem
+    title, filename_year, filename_publisher = _filename_bibliography(path)
     author = ""
-    publisher = ""
-    year = ""
+    publisher = filename_publisher
+    year = filename_year
     page_count: int | None = None
     inspected_pages = 0
     text_layer = "not_applicable"
@@ -193,23 +251,19 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         with fitz.open(path) as document:
             page_count = document.page_count
             metadata = document.metadata or {}
-            title = metadata.get("title") or title
+            embedded_title = _clean_title(str(metadata.get("title") or ""), "")
+            if embedded_title and _filename_is_identifier(title):
+                title = embedded_title
             author = metadata.get("author") or ""
-            publisher = metadata.get("producer") or ""
-            year = _year(" ".join(str(value) for value in metadata.values()))
             chunks: list[str] = []
             for index in range(min(10, page_count)):
                 chunks.append(document.load_page(index).get_text("text"))
                 inspected_pages += 1
             sample = "\n".join(chunks).strip()[:50000]
             text_layer = "present" if sample else "absent"
-            title, author, publisher, year = _pdf_bibliography(
-                sample, title, author, publisher, year
-            )
+            _, author, publisher, year = _pdf_bibliography(sample, title, author, publisher, year)
     elif suffix in {".md", ".txt", ".csv", ".tsv"}:
         sample = path.read_text(encoding="utf-8", errors="replace")[:50000]
-        first_line = next((line.strip(" #\t") for line in sample.splitlines() if line.strip()), "")
-        title = first_line or title
         inspected_pages = 1
         text_layer = "present" if sample.strip() else "absent"
     elif suffix == ".docx":
@@ -218,8 +272,6 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         document = Document(path)
         chunks = [" ".join(paragraph.text.split()) for paragraph in document.paragraphs if paragraph.text.strip()]
         sample = "\n".join(chunks)[:50000]
-        first_line = next((line for line in chunks if line), "")
-        title = first_line or title
         inspected_pages = 1
         text_layer = "present" if sample.strip() else "absent"
     elif suffix in {".xlsx", ".xlsm"}:
@@ -239,7 +291,6 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         text_layer = "absent"
 
     title = _clean_title(title, path.stem)
-    year = year or _year(f"{path.stem} {title}")
     state, reason = _triage_state(sample, supported, text_layer, page_count)
     return {
         "path": str(path.resolve()),
@@ -248,7 +299,7 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         "modified_ns": stat.st_mtime_ns,
         "sha256": _file_hash(path),
         "suggested_title": title,
-        "suggested_author": _clean_title(author, "") if author else "",
+        "suggested_author": _clean_author(author),
         "suggested_year": year,
         "suggested_publisher": _clean_title(publisher, "") if publisher else "",
         "suggested_language": _language(f"{title}\n{sample[:4000]}"),
@@ -298,12 +349,28 @@ def _candidate_action(connection: Any, item: dict[str, Any]) -> dict[str, Any]:
     ).fetchone()
     if duplicate is not None:
         return {"proposed_action": "exact_duplicate", **dict(duplicate)}
+    same_work = _existing_work_for_title(connection, item["suggested_title"])
+    if same_work is not None:
+        return {"proposed_action": "same_work", **dict(same_work), "file_id": None}
     return {
         "proposed_action": "register_new",
         "file_id": None,
         "work_id": None,
         "edition_id": None,
     }
+
+
+def _existing_work_for_title(connection: Any, title: str) -> Any:
+    key = _deduplication_key(title)
+    if not key:
+        return None
+    return connection.execute(
+        """SELECT w.work_id, e.edition_id
+           FROM works w JOIN editions e ON e.work_id = w.work_id
+           WHERE w.canonical_title = ? COLLATE NOCASE
+           ORDER BY w.updated_at DESC, e.created_at LIMIT 1""",
+        (" ".join(str(title).split()),),
+    ).fetchone()
 
 
 def create_scan_session(
@@ -656,6 +723,8 @@ def approve_candidates(
             if candidate["status"] != "preview" or candidate["triage_state"] in {"error", "unsupported"}:
                 continue
             action = candidate["proposed_action"]
+            if action == "register_new" and _existing_work_for_title(connection, candidate["suggested_title"]):
+                action = "same_work"
             if action == "unchanged":
                 connection.execute(
                     "UPDATE library_files SET last_seen_at = ? WHERE file_id = ?",
@@ -670,9 +739,13 @@ def approve_candidates(
                 connection.execute("UPDATE library_files SET last_seen_at = ? WHERE file_id = ?", (utc_now(), file_id))
             else:
                 now = utc_now()
-                if action == "exact_duplicate":
-                    work_id = candidate["existing_work_id"]
-                    edition_id = candidate["existing_edition_id"]
+                if action in {"exact_duplicate", "same_work"}:
+                    existing = (
+                        _existing_work_for_title(connection, candidate["suggested_title"])
+                        if action == "same_work" else candidate
+                    )
+                    work_id = existing["work_id"] if action == "same_work" else existing["existing_work_id"]
+                    edition_id = existing["edition_id"] if action == "same_work" else existing["existing_edition_id"]
                 else:
                     work_id = f"WRK_{uuid.uuid4().hex}"
                     edition_id = f"ED_{uuid.uuid4().hex}"
@@ -905,11 +978,28 @@ def update_work(
 LITERATURE_RELATION_TYPES = {"cites", "uses_material_from", "reviews", "translates", "mentions_work"}
 
 
+def _derived_literature_relation(block_type: str, text: str) -> str:
+    folded = text.casefold()
+    if any(term in folded for term in ("翻译", "译本", "译自", "translation of", "translated")):
+        return "translates"
+    if any(term in folded for term in ("评介", "书评", "评述", "review of", "reviewed")):
+        return "reviews"
+    if any(term in folded for term in ("材料据自", "材料来自", "采用其材料", "转引自", "uses material from")):
+        return "uses_material_from"
+    if block_type in {"footnote", "bottom_note", "note", "bibliography", "reference"}:
+        return "cites"
+    return "mentions_work"
+
+
 def _literature_relation_candidates(
     project_root: Path, library_connection: Any, query: str = "", limit: int = 300,
 ) -> list[dict[str, Any]]:
     works = [dict(row) for row in library_connection.execute(
-        "SELECT work_id, canonical_title, author FROM works ORDER BY updated_at DESC"
+        """SELECT w.work_id, w.canonical_title, w.author FROM works w
+           WHERE NOT EXISTS (
+             SELECT 1 FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+             WHERE wt.work_id=w.work_id AND t.name='shelf:reading_notes'
+           ) ORDER BY w.updated_at DESC"""
     ).fetchall() if len(str(row["canonical_title"]).strip()) >= 4]
     work_lookup = {item["work_id"]: item for item in works}
     with connect(project_root) as connection:
@@ -919,10 +1009,8 @@ def _literature_relation_candidates(
                       COALESCE(b.human_text, b.machine_text) AS text
                FROM source_library_links l JOIN sources s ON s.source_id = l.source_id
                JOIN pages p ON p.source_id = s.source_id JOIN blocks b ON b.page_id = p.page_id
-               WHERE b.use_state = 'research_usable' AND (
-                   b.block_type IN ('footnote','bottom_note','note','bibliography','reference')
-                   OR p.physical_page >= (SELECT MAX(p2.physical_page) - 10 FROM pages p2 WHERE p2.source_id = s.source_id)
-               ) ORDER BY s.created_at, p.physical_page, b.block_order LIMIT 5000"""
+               WHERE b.use_state = 'research_usable'
+               ORDER BY s.created_at, p.physical_page, b.block_order LIMIT 5000"""
         ).fetchall()
         decisions = {
             row["relation_key"]: dict(row) for row in connection.execute(
@@ -946,6 +1034,7 @@ def _literature_relation_candidates(
                 f"{block['source_work_id']}\0{target['work_id']}\0{block['block_id']}".encode("utf-8")
             ).hexdigest()
             decision = decisions.get(relation_key, {})
+            derived_type = _derived_literature_relation(block["block_type"], text)
             item = {
                 "relation_key": relation_key,
                 "source_work_id": block["source_work_id"], "source_work_title": source_work["canonical_title"],
@@ -953,9 +1042,9 @@ def _literature_relation_candidates(
                 "target_author": target["author"], "source_id": block["source_id"],
                 "page_id": block["page_id"], "block_id": block["block_id"],
                 "physical_page": block["physical_page"], "printed_page": block["printed_page"] or "",
-                "quote": text[:1200], "origin": "exact_registered_title_in_note_or_reference_zone",
-                "status": decision.get("status", "candidate"),
-                "relation_type": decision.get("relation_type", "mentions_work"),
+                "quote": text[:1200], "origin": "exact_registered_title_in_markdown",
+                "status": decision.get("status", "derived"),
+                "relation_type": decision.get("relation_type", derived_type),
                 "decided_by": decision.get("decided_by", ""),
                 "decision_reason": decision.get("decision_reason", ""),
             }
@@ -1045,8 +1134,19 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             work_ids = work_ids[:limit]
         else:
             work_ids = [row["work_id"] for row in connection.execute(
-                "SELECT work_id FROM works ORDER BY updated_at DESC LIMIT ?", (limit,)
+                """SELECT w.work_id FROM works w WHERE NOT EXISTS (
+                       SELECT 1 FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                       WHERE wt.work_id=w.work_id AND t.name='shelf:reading_notes'
+                   ) ORDER BY w.updated_at DESC LIMIT ?""", (limit,)
             ).fetchall()]
+        if work_ids:
+            placeholders = ",".join("?" for _ in work_ids)
+            excluded = {row["work_id"] for row in connection.execute(
+                f"""SELECT DISTINCT wt.work_id FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                    WHERE t.name='shelf:reading_notes' AND wt.work_id IN ({placeholders})""",
+                tuple(work_ids),
+            )}
+            work_ids = [work_id for work_id in work_ids if work_id not in excluded]
         if not work_ids:
             fallback_nodes = [
                 {"node_id": item["node_id"], "node_type": item["node_type"], "label": item["label"],
@@ -1091,9 +1191,88 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             tuple(connected_ids),
         )]
         work_lookup = {work_id.casefold(): work_id for work_id in work_ids}
+        work_categories = {row["work_id"]: row["shelf"] for row in connection.execute(
+            f"""SELECT w.work_id, COALESCE((
+                       SELECT substr(t.name,7) FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                       WHERE wt.work_id=w.work_id AND t.name LIKE 'shelf:%' LIMIT 1
+                   ),'unclassified') AS shelf
+                FROM works w
+                WHERE w.work_id IN ({','.join('?' for _ in work_ids)})""",
+            tuple(work_ids),
+        )}
         for node in nodes:
             node["work_id"] = work_lookup.get(node["normalized_label"], "") if node["node_type"] == "work" else ""
+            node["graph_category"] = work_categories.get(node["work_id"], "unclassified") if node["work_id"] else node["node_type"]
             node.pop("normalized_label", None)
+        work_nodes = {node["node_id"]: node for node in nodes if node["node_type"] == "work"}
+        metadata_nodes = {node["node_id"]: node for node in nodes if node["node_type"] != "work"}
+        related: dict[str, set[str]] = {}
+        for edge in edges:
+            if edge["source_node_id"] in work_nodes and edge["target_node_id"] in metadata_nodes:
+                related.setdefault(edge["target_node_id"], set()).add(edge["source_node_id"])
+            elif edge["target_node_id"] in work_nodes and edge["source_node_id"] in metadata_nodes:
+                related.setdefault(edge["source_node_id"], set()).add(edge["target_node_id"])
+        direct_edges: dict[str, dict[str, str]] = {}
+        for metadata_id, work_node_ids in related.items():
+            metadata = metadata_nodes[metadata_id]
+            node_type = metadata["node_type"]
+            if node_type in {"material_type", "tag", "year"}:
+                continue
+            ordered = sorted(work_node_ids, key=lambda node_id: work_nodes[node_id]["label"].casefold())
+            pairs = [(ordered[left], ordered[right]) for left in range(len(ordered)) for right in range(left + 1, len(ordered))]
+            for source_id, target_id in pairs:
+                if node_type == "person":
+                    relation = "same_author"
+                elif node_type == "organization":
+                    relation = (
+                        "same_journal"
+                        if work_nodes[source_id]["graph_category"] == "academic_articles"
+                        and work_nodes[target_id]["graph_category"] == "academic_articles"
+                        else "same_publisher"
+                    )
+                else:
+                    continue
+                edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation}\0{target_id}".encode("utf-8")).hexdigest()[:24]
+                direct_edges[edge_id] = {
+                    "edge_id": edge_id, "source_node_id": source_id, "relation": relation,
+                    "target_node_id": target_id, "work_id": "", "origin": "collapsed_bibliographic_metadata",
+                }
+        decade_groups: dict[int, set[str]] = {}
+        for metadata_id, work_node_ids in related.items():
+            metadata = metadata_nodes[metadata_id]
+            if metadata["node_type"] != "year" or not str(metadata["label"]).isdigit():
+                continue
+            year = int(metadata["label"])
+            decade_groups.setdefault(year // 10 * 10, set()).update(work_node_ids)
+        for decade, work_node_ids in decade_groups.items():
+            ordered = sorted(work_node_ids, key=lambda node_id: work_nodes[node_id]["label"].casefold())
+            pairs = list(zip(ordered, ordered[1:])) if len(ordered) > 8 else [
+                (ordered[left], ordered[right]) for left in range(len(ordered)) for right in range(left + 1, len(ordered))
+            ]
+            for source_id, target_id in pairs:
+                relation = "same_decade"
+                edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation}\0{target_id}\0{decade}".encode("utf-8")).hexdigest()[:24]
+                direct_edges[edge_id] = {
+                    "edge_id": edge_id, "source_node_id": source_id, "relation": relation,
+                    "target_node_id": target_id, "work_id": "", "origin": f"publication_decade:{decade}",
+                }
+        work_node_by_work_id = {node["work_id"]: node["node_id"] for node in work_nodes.values()}
+        for relation in literature_relations:
+            if relation["status"] not in {"approved", "derived"}:
+                continue
+            source_id = work_node_by_work_id.get(relation["source_work_id"])
+            target_id = work_node_by_work_id.get(relation["target_work_id"])
+            if not source_id or not target_id:
+                continue
+            relation_type = relation["relation_type"]
+            edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation_type}\0{target_id}".encode("utf-8")).hexdigest()[:24]
+            direct_edges[edge_id] = {
+                "edge_id": edge_id, "source_node_id": source_id, "relation": relation_type,
+                "target_node_id": target_id, "work_id": relation["source_work_id"],
+                "origin": "approved_literature_relation" if relation["status"] == "approved" else "markdown_derived_literature_relation",
+            }
+        nodes = list(work_nodes.values())
+        edges = list(direct_edges.values())
         work_cards = []
         for work_id in work_ids:
             work = _work_summary(connection, work_id)

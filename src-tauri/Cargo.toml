@@ -1,6 +1,6 @@
 [package]
 name = "historical-research-workbench"
-version = "0.1.1"
+version = "0.1.2"
 description = "Wenjin local-first humanities and social science research workbench"
 authors = ["Wenjin contributors"]
 license = "AGPL-3.0-only"

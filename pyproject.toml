@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "historical-research-workbench"
-version = "0.1.1"
+version = "0.1.2"
 description = "Wenjin: a local-first, model-selectable humanities and social science research workbench"
 requires-python = ">=3.13"
 license = "AGPL-3.0-only"
@@ -25,6 +25,7 @@ research_workbench = [
   "web_assets/*.html",
   "web_assets/*.js",
   "web_assets/*.css",
+  "web_assets/vendor/*.js",
   "builtin_skills/*/SKILL.md",
   "builtin_skills/*/agents/*.yaml",
   "builtin_skills/*/references/*.md",

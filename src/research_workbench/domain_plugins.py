@@ -92,7 +92,7 @@ def _manifest(plugin_root: Path) -> tuple[dict[str, Any], str]:
         raise ValueError("plugin version must use semantic versioning")
     runtime = value["runtime"]
     if not isinstance(runtime, dict) or runtime.get("type") != "mcp_stdio" or not runtime.get("command"):
-        raise ValueError("0.1.1 plugins require an mcp_stdio runtime command")
+        raise ValueError("Wenjin 0.1.x plugins require an mcp_stdio runtime command")
     for relative in value.get("skills", []):
         candidate = (root / relative).resolve()
         if root not in candidate.parents or not candidate.is_file():

@@ -143,6 +143,9 @@ class ResearchEventTests(unittest.TestCase):
         for event in events:
             decide_event(self.project, event["event_id"], True, "Professor", "approved normalized place")
         graph = project_content_graph(self.project)
+        page_labels = [node["label"] for node in graph["nodes"] if node["node_type"] == "page"]
+        self.assertTrue(page_labels)
+        self.assertTrue(all(label.startswith("Test source · ") for label in page_labels))
         places = [
             node for node in graph["nodes"]
             if node["node_type"] == "entity" and node.get("entity_type") == "place"

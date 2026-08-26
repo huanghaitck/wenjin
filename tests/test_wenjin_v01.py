@@ -92,6 +92,20 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', cli)
         self.assertIn("raise SystemExit(main())", cli)
 
+    def test_knowledge_graph_bundles_force_layout_and_disconnected_node_scatter(self) -> None:
+        root = Path(__file__).parents[1]
+        vendor = root / "src" / "research_workbench" / "web_assets" / "vendor"
+        for name in ("cytoscape.min.js", "layout-base.js", "cose-base.js", "cytoscape-fcose.js"):
+            self.assertTrue((vendor / name).is_file(), name)
+        index = (vendor.parent / "index.html").read_text(encoding="utf-8")
+        self.assertLess(index.index("/vendor/cytoscape.min.js"), index.index("/vendor/cytoscape-fcose.js"))
+        script = (vendor.parent / "app.js").read_text(encoding="utf-8")
+        self.assertIn("name:'fcose'", script)
+        self.assertIn("components()", script)
+        self.assertIn("placeIsolated", script)
+        package = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"web_assets/vendor/*.js"', package)
+
     def test_evidence_preserving_historical_humanizer_is_bundled_for_clean_installs(self) -> None:
         root = Path(__file__).parents[1] / "src" / "research_workbench" / "builtin_skills" / "historical-humanizer-zh"
         self.assertTrue((root / "SKILL.md").is_file())

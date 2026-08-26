@@ -32,6 +32,8 @@ PyMuPDF官方说明其开放源码许可为AGPL，同时提供商业许可。问
 | rfd | Windows文件与目录选择器 | MIT | https://github.com/PolyMeilex/rfd |
 | windows-sys | Windows API绑定 | Apache-2.0 OR MIT | https://github.com/microsoft/windows-rs |
 | Cytoscape.js 3.34.1 | 书目与内容知识图谱交互渲染 | MIT | https://github.com/cytoscape/cytoscape.js |
+| cytoscape-fcose 2.2.0 | Obsidian式力导向布局，使关系紧密的作品自然聚集 | MIT | https://github.com/iVis-at-Bilkent/cytoscape.js-fcose |
+| cose-base 2.2.x / layout-base 2.x | fCoSE布局基础算法 | MIT | https://github.com/iVis-at-Bilkent |
 
 Node.js和Rust只属于源码构建链；普通用户运行安装包不需要另装Node.js、Rust或Python。
 

@@ -12,6 +12,9 @@ from urllib.request import Request, urlopen
 import fitz
 
 from research_workbench.library import (
+    _filename_bibliography,
+    _filename_is_identifier,
+    _clean_author,
     _material_type,
     _pdf_bibliography,
     approve_candidates,
@@ -114,6 +117,8 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(candidate["page_count"], 12)
         self.assertEqual(candidate["triage_state"], "likely_historical")
         self.assertEqual(candidate["format"], "pdf")
+        self.assertEqual(candidate["suggested_title"], "history")
+        self.assertEqual(candidate["suggested_publisher"], "")
 
         updated = update_work(
             self.project,
@@ -135,12 +140,10 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(moved["shelf_label"], "学术专著")
         graph = library_graph(self.project, library_root=self.library)
         labels = {node["label"] for node in graph["nodes"]}
-        relations = {edge["relation"] for edge in graph["edges"]}
         self.assertIn("Imperial Archive Revised", labels)
-        self.assertIn("Professor A", labels)
-        self.assertIn("1908", labels)
-        self.assertIn("authored_by", relations)
-        self.assertIn("shelved_as", relations)
+        self.assertEqual({node["node_type"] for node in graph["nodes"]}, {"work"})
+        self.assertEqual(graph["nodes"][0]["graph_category"], "monographs")
+        self.assertEqual(graph["edges"], [])
         self.assertEqual(len(graph["work_cards"]), 1)
         self.assertIn("Historical archive empire chronicle page 8", graph["work_cards"][0]["content_excerpt"])
         self.assertEqual(graph["work_cards"][0]["preview_pages"], 10)
@@ -213,7 +216,25 @@ class M5ResearchLibraryTests(unittest.TestCase):
             ("廿二史考异", "(清)钱大昕撰", "凤凰出版社", "2008"),
         )
 
-    def test_note_title_match_requires_human_decision_before_formal_literature_relation(self) -> None:
+    def test_file_name_is_the_intake_title_and_copy_suffixes_are_cleaned(self) -> None:
+        self.assertEqual(
+            _filename_bibliography(Path("清代西北史料_12940532 (2).pdf")),
+            ("清代西北史料", "", ""),
+        )
+        self.assertEqual(
+            _filename_bibliography(Path("秦岭葡萄（农业未来报1883年5月13日）.docx")),
+            ("秦岭葡萄（农业未来报1883年5月13日）", "1883", "农业未来报"),
+        )
+        self.assertEqual(
+            _filename_bibliography(Path("20241358_研究者_谭卫道秦岭考察(1).docx"))[0],
+            "研究者 谭卫道秦岭考察",
+        )
+        self.assertTrue(_filename_is_identifier("2604.24690v1"))
+        self.assertFalse(_filename_is_identifier("Catholic Missionaries on the Shu Roads"))
+        self.assertEqual(_clean_author("CNKI"), "")
+        self.assertEqual(_clean_author("Tiziana Lioi"), "Tiziana Lioi")
+
+    def test_exact_registered_title_in_markdown_creates_a_traceable_relation(self) -> None:
         target = self.materials / "target.md"
         target.write_text("# Referenced Monograph\n\nHistorical methods and archives." * 10, encoding="utf-8")
         target_work, _ = self._approve_one(target)
@@ -230,23 +251,24 @@ class M5ResearchLibraryTests(unittest.TestCase):
         add_library_file_to_project(self.project, self.library, source_work, detail["files"][0]["file_id"])
         graph = library_graph(self.project, library_root=self.library)
         candidate = next(item for item in graph["literature_relations"] if item["target_work_id"] == target_work)
-        self.assertEqual(candidate["status"], "candidate")
+        self.assertEqual(candidate["status"], "derived")
+        self.assertIn(candidate["relation_type"], {edge["relation"] for edge in graph["edges"]})
         decided = decide_literature_relation(
-            self.project, candidate["relation_key"], True, "cites", "researcher", "checked reference page",
+            self.project, candidate["relation_key"], False, candidate["relation_type"], "researcher", "false match",
             self.library,
         )
-        self.assertEqual(decided["status"], "approved")
+        self.assertEqual(decided["status"], "rejected")
         refreshed = library_graph(self.project, library_root=self.library)
-        approved = next(item for item in refreshed["literature_relations"] if item["relation_key"] == candidate["relation_key"])
-        self.assertEqual(approved["relation_type"], "cites")
-        self.assertEqual(approved["status"], "approved")
+        rejected = next(item for item in refreshed["literature_relations"] if item["relation_key"] == candidate["relation_key"])
+        self.assertEqual(rejected["status"], "rejected")
 
-    def test_scan_suggests_all_six_shelves_and_bulk_approval_keeps_files_in_place(self) -> None:
+    def test_scan_suggests_library_shelves_and_bulk_approval_keeps_files_in_place(self) -> None:
         samples = {
             "source.md": ("# 地方志史料\n\n地方志日记与档案。", "primary_sources"),
             "article.md": ("# 区域史研究论文\n\n某大学学报期刊论文。", "academic_articles"),
             "book.md": ("# 区域史专著\n\n某某出版社 ISBN 978-7。", "monographs"),
             "draft.md": ("# 我的返修稿\n\n尚未刊行的论文稿。", "personal_manuscripts"),
+            "notes.md": ("# 环境史读书笔记\n\n本周阅读札记。", "reading_notes"),
             "catalog.md": ("# 地方文献目录索引\n\n工具书与目录。", "reference_works"),
             "unknown.md": ("# 普通材料\n\n内容尚待研究者判断。", "unclassified"),
         }
@@ -264,6 +286,24 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertTrue(all(path.read_bytes() == value for path, value in original.items()))
         works = search_library(self.project, library_root=self.library)
         self.assertEqual({work["shelf"] for work in works}, set(shelves.values()))
+        graph = library_graph(self.project, library_root=self.library)
+        self.assertNotIn("notes", {node["label"] for node in graph["nodes"] if node["node_type"] == "work"})
+        self.assertEqual({node["node_type"] for node in graph["nodes"]}, {"work"})
+        self.assertIn("academic_articles", {node.get("graph_category") for node in graph["nodes"]})
+
+    def test_same_clean_title_registers_one_work_with_multiple_files(self) -> None:
+        first = self.materials / "first"
+        second = self.materials / "second"
+        first.mkdir(); second.mkdir()
+        (first / "Shared historical study.md").write_text("# A\n\nHistory archive material." * 20, encoding="utf-8")
+        (second / "Shared historical study.md").write_text("# B\n\nHistory archive material revised." * 20, encoding="utf-8")
+        session = scan_directory(self.project, self.materials, self.library)
+        approved = approve_candidates(self.project, session["session_id"], None, self.library)
+        self.assertEqual(len(approved["approved"]), 2)
+        work_ids = {item["work_id"] for item in approved["approved"]}
+        self.assertEqual(len(work_ids), 1)
+        detail = work_detail(self.project, work_ids.pop(), self.library)
+        self.assertEqual(detail["file_count"], 2)
 
     def test_material_type_uses_project_location_only_as_a_classification_hint(self) -> None:
         self.assertEqual(_material_type("未定名", "内容", r"D:\\研究\\个人论文与稿件\\草稿.docx"), "personal_manuscript")

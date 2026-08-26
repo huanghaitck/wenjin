@@ -1,7 +1,7 @@
 {
   "name": "historical-research-workbench-desktop",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "license": "AGPL-3.0-only",
   "scripts": {
     "tauri": "tauri"
@@ -11,6 +11,7 @@
     "agent-browser": "0.33.0"
   },
   "dependencies": {
-    "cytoscape": "^3.34.1"
+    "cytoscape": "^3.34.1",
+    "cytoscape-fcose": "^2.2.0"
   }
 }

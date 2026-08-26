@@ -91,7 +91,11 @@ def project_content_graph(project_root: Path, query: str = "", limit: int = 160)
             if source_node is None:
                 source_node = add_node("source", row["source_id"], row["title"], source_id=row["source_id"], status="project_source")
                 source_nodes[row["source_id"]] = source_node
-            page_label = str(row["printed_page"] or f"PDF {row['physical_page']}")
+            source_title = " ".join(str(row["title"] or "").split())
+            if len(source_title) > 28:
+                source_title = source_title[:28] + "…"
+            page_reference = str(row["printed_page"] or f"PDF第{row['physical_page']}页")
+            page_label = f"{source_title} · {page_reference}"
             page_node = page_nodes.get(row["page_id"])
             if page_node is None:
                 page_node = add_node(

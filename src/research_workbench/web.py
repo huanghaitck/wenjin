@@ -386,7 +386,11 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._send(200, target.read_bytes(), content_type)
                 return
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
-            if name not in {"index.html", "app.js", "styles.css", "vendor/cytoscape.min.js"}:
+            if name not in {
+                "index.html", "app.js", "styles.css", "vendor/cytoscape.min.js",
+                "vendor/layout-base.js", "vendor/cose-base.js",
+                "vendor/cytoscape-fcose.js",
+            }:
                 self._json({"error": "not_found"}, 404)
                 return
             content_type = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}[Path(name).suffix]

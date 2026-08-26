@@ -49,7 +49,7 @@ def handle_request(project_root: Path, library_root: Path | None, request: dict[
         return None
     try:
         if method == "initialize":
-            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": "0.1.1"}}
+            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": "0.1.2"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":

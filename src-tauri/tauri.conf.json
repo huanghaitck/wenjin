@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "问津",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "cn.hrw.historical-research-workbench",
   "build": {
     "frontendDist": "../desktop-shell"
@@ -35,6 +35,9 @@
       "../licenses/Tencent-openclaw-weixin-MIT.txt": "licenses/Tencent-openclaw-weixin-MIT.txt",
       "../licenses/python-qrcode-BSD-3-Clause.txt": "licenses/python-qrcode-BSD-3-Clause.txt",
       "../licenses/cytoscape-MIT.txt": "licenses/cytoscape-MIT.txt",
+      "../licenses/layout-base-MIT.txt": "licenses/layout-base-MIT.txt",
+      "../licenses/cose-base-MIT.txt": "licenses/cose-base-MIT.txt",
+      "../licenses/cytoscape-fcose-MIT.txt": "licenses/cytoscape-fcose-MIT.txt",
       "../node_modules/agent-browser/bin/agent-browser-win32-x64.exe": "tools/agent-browser.exe",
       "../node_modules/agent-browser/LICENSE": "licenses/agent-browser-APACHE-2.0.txt"
     },

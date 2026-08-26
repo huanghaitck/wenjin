@@ -2,7 +2,7 @@
 
 English | [中文](USER_MANUAL_ZH.md)
 
-Version: 0.1.1 Public Preview (the installer is not code-signed)
+Version: 0.1.2 Public Preview (the installer is not code-signed)
 
 Verified: 2026-08-26
 
@@ -39,7 +39,7 @@ The Project Workspace is the default home. It lists registered local projects, s
 
 The desktop application can create a project under a folder chosen by the researcher or register an existing Wenjin directory that contains `project.sqlite3`. The ordinary create button uses Wenjin's default application-data folder. Conversations, evidence, manuscripts, and run records remain project-specific, while the research library can reuse the same work and exact file version across projects.
 
-Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. Version 0.1.1 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
+Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. Version 0.1.2 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
 
 ### 2.2 Research chat
 
@@ -148,7 +148,7 @@ wenjin mcp-server C:\Research\my-project
 
 The MCP server provides bounded project status, source details, pages, library results, and manuscript structure. Formal writes remain approval-gated.
 
-Version 0.1.1 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
+Version 0.1.2 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
 
 Source developers can create the neutral engineering scaffold with:
 
@@ -162,7 +162,7 @@ This workspace shows software and schema versions, main and auxiliary models, Mo
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
-The **Weixin connection** is experimental in 0.1.1. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
+The **Weixin connection** is experimental in 0.1.2. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.2 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
 The **Runtime** page can create an immediate backup. Wenjin first uses SQLite's online backup API for a consistent database, then bundles source copies, cleaned derivatives, research notes, manuscripts, reviews, and exports. Logs and temporary files are excluded. Registered projects outside the default Wenjin directory are included in startup backup checks. Restore creates a new project copy and never overwrites the active project.
 
@@ -286,7 +286,7 @@ The main reasoning model and visual/OCR role may be configured separately.
 
 ## 5. Models, MoA, persona, and permissions
 
-Configure the main model first. Version 0.1.1 has direct workflows for vision/OCR, translation, and secondary review. Web-material organization, context compression, and title/abstract naming are marked reserved: they are not routed automatically and currently participate only when selected as MoA advisers. Roles can be disabled, follow the main model, use local Ollama, or use an OpenAI-compatible endpoint.
+Configure the main model first. Version 0.1.2 has direct workflows for vision/OCR, translation, and secondary review. Web-material organization, context compression, and title/abstract naming are marked reserved: they are not routed automatically and currently participate only when selected as MoA advisers. Roles can be disabled, follow the main model, use local Ollama, or use an OpenAI-compatible endpoint.
 
 Provider presets fill common base URLs. **Refresh model list** reads the endpoint's current model IDs for Ollama and compatible `/models` APIs; manual entry remains available. Use **Test connection** before research work.
 

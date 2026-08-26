@@ -24,7 +24,7 @@ from .credential_store import delete_credential, read_credential, save_credentia
 
 FIXED_BASE_URL = "https://ilinkai.weixin.qq.com"
 SETTINGS_FILE = "weixin-gateway.json"
-CHANNEL_VERSION = "0.1.1"
+CHANNEL_VERSION = "0.1.2"
 APP_ID = "bot"
 CLIENT_VERSION = 257
 TOKEN_TARGET = "Wenjin/Weixin/iLinkBotToken"
@@ -38,7 +38,7 @@ WELCOME_TEXT = (
 
 
 def _base_info() -> dict[str, Any]:
-    return {"channel_version": CHANNEL_VERSION, "bot_agent": "Wenjin/0.1.1"}
+    return {"channel_version": CHANNEL_VERSION, "bot_agent": "Wenjin/0.1.2"}
 
 
 def _headers(token: str = "") -> dict[str, str]:
