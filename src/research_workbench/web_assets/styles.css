@@ -14,6 +14,7 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { max-width: 100%; overflow-x: hidden; }
+body.library-workspace-active { overflow-y: hidden; }
 body { margin: 0; color: var(--ink); background: var(--ground); }
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
@@ -58,7 +59,7 @@ button:hover { border-color: var(--accent); }
 .skill-group { display: grid; align-content: start; gap: 8px; }
 .skill-group > h2 { margin: 0; font: 600 16px Georgia, "Songti SC", serif; }
 .library-viewbar { margin: 0 12px 10px; border: 1px solid var(--line); border-radius: 10px; }
-.library-workbench { height: calc(100vh - 153px); display: grid; gap: 10px; padding: 0 12px 12px; }
+.library-workbench { height: calc(100dvh - 160px); display: grid; gap: 10px; overflow: hidden; padding: 0 12px 12px; }
 .library-workbench.mode-list, .library-workbench.mode-graph, .library-workbench.mode-tables, .library-workbench.mode-maps, .library-workbench.mode-images { grid-template-columns: minmax(430px, 1fr) 6px var(--library-detail-width,380px); }
 .library-workbench.mode-list > .inventory-panel, .library-workbench.mode-graph > .inventory-panel, .library-workbench.mode-tables > .inventory-panel, .library-workbench.mode-maps > .inventory-panel, .library-workbench.mode-images > .inventory-panel { display: none; }
 .library-workbench.mode-chronicle { grid-template-columns: minmax(0, 1fr); }
@@ -66,11 +67,12 @@ button:hover { border-color: var(--accent); }
 .library-workbench.mode-intake { grid-template-columns: minmax(0, 1fr); }
 .library-workbench.mode-intake > .catalog-panel, .library-workbench.mode-intake > .work-detail-panel, .library-workbench.mode-intake > .panel-resize-handle { display: none; }
 .library-workbench.right-collapsed.mode-list,.library-workbench.right-collapsed.mode-graph,.library-workbench.right-collapsed.mode-tables,.library-workbench.right-collapsed.mode-maps,.library-workbench.right-collapsed.mode-images{grid-template-columns:minmax(0,1fr) 0 0}.library-workbench.right-collapsed>.panel-resize-handle,.library-workbench.right-collapsed>.work-detail-panel{display:none}
-.library-workbench.mode-graph .library-graph{padding:8px}.library-workbench.mode-graph .graph-stage{width:100%;min-width:0;min-height:calc(100vh - 330px)}
+.library-workbench.mode-graph .library-graph{padding:8px;overflow:hidden}.library-workbench.mode-graph .graph-stage{width:100%;min-width:0;min-height:calc(100dvh - 310px)}
 .entity-graph-stage{background:#e6edf0!important;border-color:#9aadb5!important}.entity-graph-stage .graph-edge{stroke:#748b96}.entity-graph-stage .graph-item rect{fill:#f8fbfc;stroke:#5e7782}
-.cytoscape-stage{width:100%;height:min(720px,calc(100vh - 300px));min-height:460px;margin:10px 0;border:1px solid #c8bca9;border-radius:12px}.content-cytoscape-stage{background:#e5edf0;border-color:#91a6af}.content-cytoscape-stage+.entity-graph-stage{display:none}
+.cytoscape-stage{width:100%;height:calc(100dvh - 310px);min-height:460px;margin:10px 0;border:1px solid #c8bca9;border-radius:12px}.content-cytoscape-stage{background:#e5edf0;border-color:#91a6af}
+.cytoscape-stage.layout-pending{opacity:.18;pointer-events:none}
 .graph-toolbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:8px 0 2px;color:#6f675d;font-size:13px}.graph-zoom-controls{display:flex;gap:5px}.graph-zoom-controls button{min-width:32px;padding:4px 8px;font-size:16px;line-height:1;border:1px solid #c9bca9;background:#fffdf8;color:#3f352d;border-radius:7px}.graph-zoom-controls button:hover{background:#efe4d6}
-.graph-filter-panel{position:relative;margin-left:auto}.graph-filter-panel>summary{cursor:pointer;padding:5px 9px;border:1px solid #c9bca9;border-radius:7px;background:#fffdf8;white-space:nowrap}.graph-filter-body{position:absolute;right:0;top:34px;z-index:12;display:flex;gap:12px;min-width:420px;padding:10px;border:1px solid #c9bca9;border-radius:9px;background:#fffdf8;box-shadow:0 8px 24px #3f352d26}.graph-filter-body fieldset{display:flex;flex-wrap:wrap;gap:6px 10px;min-width:180px;border:0;padding:0}.graph-filter-body legend{font-weight:700;margin-bottom:5px}.graph-filter-body label{display:flex;align-items:center;gap:4px;white-space:nowrap}.graph-filter-body input{width:auto}
+.graph-filter-panel{position:relative;margin-left:auto}.graph-filter-panel>summary{cursor:pointer;min-width:32px;padding:5px 9px;border:1px solid #c9bca9;border-radius:7px;background:#fffdf8;text-align:center;white-space:nowrap}.graph-filter-body{position:absolute;right:0;top:34px;z-index:12;display:flex;gap:12px;min-width:420px;padding:10px;border:1px solid #c9bca9;border-radius:9px;background:#fffdf8;box-shadow:0 8px 24px #3f352d26}.graph-filter-body fieldset{display:flex;flex-wrap:wrap;gap:6px 10px;min-width:180px;border:0;padding:0}.graph-filter-body legend{font-weight:700;margin-bottom:5px}.graph-filter-body label{display:flex;align-items:center;gap:4px;white-space:nowrap}.graph-filter-body input{width:auto}
 .library-workbench > *, .settings-main > * { min-width: 0; }
 .article-workbench { height: calc(100vh - 102px); display: grid; grid-template-columns: 240px minmax(500px, 1fr) 360px; gap: 10px; padding: 0 12px 12px; }
 .manuscript-panel, .section-editor, .authoring-control { display: grid; min-height: 0; }
@@ -121,7 +123,7 @@ button:hover { border-color: var(--accent); }
 .graph-stage { min-width: 760px; margin-top: 10px; border: 1px solid #c8bca9; border-radius: 10px; background: #f2eee6; }
 .graph-edge { stroke: #b8ad9d; stroke-width: 1.2; opacity: .65; }
 .relation-same_author{stroke:#3e73a8}.relation-same_publisher{stroke:#a87821}.relation-same_journal{stroke:#2b8c8c}.relation-cites{stroke:#b23b32}
-.graph-color-legend{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:10px 0;padding:8px 10px;border:1px solid #d7ccba;border-radius:9px;background:#faf7f1}.graph-color-legend span{display:inline-flex;align-items:center;gap:6px;font-size:13px}.legend-node::before{content:"";width:12px;height:12px;border-radius:50%;background:#999}.legend-primary_sources::before{background:#8b5a2b}.legend-academic_articles::before{background:#3e73a8}.legend-monographs::before{background:#6b4c9a}.legend-personal_manuscripts::before{background:#2f7d5d}.legend-reference_works::before{background:#a87821}.legend-unclassified::before{background:#7f8790}.legend-edge::before{content:"";width:22px;height:3px;border-radius:3px;background:#999}.legend-same_author::before{background:#3e73a8}.legend-same_publisher::before{background:#a87821}.legend-same_journal::before{background:#2b8c8c}.legend-cites::before{background:#b23b32}.legend-uses_material_from::before{background:#8b5a2b}.legend-reviews::before{background:#d47521}.legend-translates::before{background:#2b8c8c}.legend-mentions_work::before{background:#8c8c8c}
+.graph-color-legend{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:10px 0;padding:8px 10px;border:1px solid #d7ccba;border-radius:9px;background:#faf7f1}.graph-color-legend span{display:inline-flex;align-items:center;gap:6px;font-size:13px}.legend-node::before{content:"";width:12px;height:12px;border-radius:50%;background:#999}.legend-primary_sources::before{background:#8b5a2b}.legend-academic_articles::before{background:#3e73a8}.legend-monographs::before{background:#6b4c9a}.legend-personal_manuscripts::before{background:#2f7d5d}.legend-reading_notes::before{background:#b97879}.legend-reference_works::before{background:#a87821}.legend-unclassified::before{background:#7f8790}.legend-edge::before{content:"";width:22px;height:3px;border-radius:3px;background:#999}.legend-same_author::before{background:#3e73a8}.legend-same_publisher::before{background:#a87821}.legend-same_journal::before{background:#2b8c8c}.legend-cites::before{background:#b23b32}.legend-uses_material_from::before{background:#8b5a2b}.legend-reviews::before{background:#d47521}.legend-translates::before{background:#2b8c8c}.legend-mentions_work::before{background:#8c8c8c}
 .graph-item { cursor: pointer; }
 .graph-item,.graph-edge{transition:opacity .16s,filter .16s}.graph-dimmed{opacity:.12}.graph-item.graph-active rect{stroke:var(--accent);stroke-width:3;filter:drop-shadow(0 2px 4px #5c3d2977)}
 .graph-item rect { stroke: #8f806f; stroke-width: 1; fill: #fff; }

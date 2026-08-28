@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 Wenjin is a local-first, model-selectable Agent workbench for humanities and social science research. Each study lives in an independent local project workspace, which connects research conversations, a personal library, source-page repair, bounded web research, evidence, historiography, drafting, Word round trips, Skills, CLI, and MCP through one auditable project data model.
 
-The current candidate is **0.1.3 RC1** for Windows 10/11.
+The current stable release is **0.1.3** for Windows 10/11.
 
 ![Wenjin Project Workspace](docs/screenshots/wenjin-project-workspace-en.png)
 
@@ -19,7 +19,7 @@ The current candidate is **0.1.3 RC1** for Windows 10/11.
 - A research library that separates works, editions, files, and exact byte versions.
 - Read-only folder inventory, suggested classification, and human-approved bulk registration.
 - PDF page images, text blocks, cross-page relations, printed-page mapping, and human repair.
-- Evidence, a source-linked event chronicle, and a two-layer knowledge graph for literature relations and Markdown-grounded content entities.
+- Evidence, a source-linked event chronicle, and switchable graphs for work relations, bibliographic entities, and Markdown-grounded project content.
 - Main and auxiliary models, Ollama, OpenAI-compatible APIs, and optional Mixture of Agents.
 - A bundled Codex app-server lifecycle, versioned research persona, Skills, MCP, and a first-class CLI.
 - Parent-aware research threads, direct chat attachments, and automatic loading of eligible versioned Skills.
@@ -32,11 +32,11 @@ The current candidate is **0.1.3 RC1** for Windows 10/11.
 
 ## Installation
 
-Download `wenjin-0.1.3-rc.1-x64-setup.exe` from the [v0.1.3-rc.1 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.3-rc.1). It includes the frozen Wenjin Python core, Codex app-server, and desktop runtime. End users do not need Python, Node.js, PowerShell 7, Rust, or a separate Codex installation to run Wenjin or a self-contained Domain Agent.
+Download `wenjin-0.1.3-x64-setup.exe` from the [v0.1.3 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.3). It includes the frozen Wenjin Python core, Codex app-server, and desktop runtime. End users do not need Python, Node.js, PowerShell 7, Rust, or a separate Codex installation to run Wenjin or a self-contained Domain Agent.
 
 On a fresh installation with no real main model, Wenjin first offers to connect local Ollama or an OpenAI-compatible API. Mock is test-only: it is absent from the production client and never silently replaces a failed configuration. Every new project receives an empty research thread automatically; library, project organization, and manual verification remain usable without a model.
 
-Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.3-rc.1-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
+Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.3-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
 
 The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
@@ -50,7 +50,7 @@ Inventory and registration are separate operations:
 4. Suggested shelves remain editable.
 5. Registration does not mean that a work has been read, is citable, or has become formal evidence.
 
-The built-in shelves are Primary Sources, Articles, Monographs, Personal Papers and Drafts, Reference Works and Catalogs, and Unclassified.
+The built-in shelves are Primary Sources, Articles, Monographs, Personal Papers and Drafts, Reading Notes, Reference Works and Catalogs, and Unclassified. Reading notes are excluded from every graph by default and are included only when the researcher explicitly requests them for the current query.
 
 ## Agent access modes
 
@@ -115,11 +115,11 @@ The MCP server exposes qualified project status, source pages, library results, 
 
 Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin to try the experimental private-text connection. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
 
-Version 0.1.3 RC1 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
+Version 0.1.3 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
 
 ## Platform support
 
-Version 0.1.3 RC1 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
+Version 0.1.3 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
 
 ## Data, privacy, and credentials
 

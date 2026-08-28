@@ -77,7 +77,7 @@ from .library import (
     update_work,
     work_detail,
 )
-from .library_store import resolve_library_root
+from .library_store import bind_library_root, resolve_library_root
 from .project_library import add_library_file_to_project
 from .research import (
     add_authenticated_results, connector_capabilities, create_authenticated_search_task,
@@ -255,6 +255,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._json(library_graph(
                     self.server.project_root, params.get("query", [""])[0],
                     int(params.get("limit", ["200"])[0]), self.server.library_root,
+                    params.get("include_reading_notes", ["0"])[0] == "1",
                 ))
                 return
             if parsed.path == "/api/capabilities":
@@ -813,17 +814,20 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 parent = Path(str(payload["parent_path"])) if payload.get("parent_path") else None
                 result = create_workspace_project(self.server.workspace_root, str(payload["title"]), parent)
                 self.server.project_root = Path(result["project_root"])
+                bind_library_root(self.server.project_root, self.server.library_root)
                 ensure_default_thread(self.server.project_root)
             elif parsed.path == "/api/project/register":
                 result = register_workspace_project(
                     self.server.workspace_root, Path(str(payload["project_root"])),
                 )
                 self.server.project_root = Path(result["project_root"])
+                bind_library_root(self.server.project_root, self.server.library_root)
                 ensure_default_thread(self.server.project_root)
             elif parsed.path == "/api/project/select":
                 self.server.project_root = select_workspace_project(
                     self.server.workspace_root, str(payload["project_id"])
                 )
+                bind_library_root(self.server.project_root, self.server.library_root)
                 ensure_default_thread(self.server.project_root)
                 result = {"project_root": str(self.server.project_root), "project": project_status(self.server.project_root)}
             elif parsed.path == "/api/library/add-to-project":
@@ -1203,6 +1207,7 @@ def build_server(
     server.desktop_bridge_ready = False
     registry = initialize_workspace(server.workspace_root, project_root)
     server.project_root = Path(registry["current_project"])
+    bind_library_root(server.project_root, server.library_root)
     ensure_default_thread(server.project_root)
     recover_interrupted_runs(server.project_root)
     return server

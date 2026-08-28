@@ -28,6 +28,7 @@ _NATIVE_TOOLS = {
     "library.search": "按 query、tags 和 limit 检索图书馆书目。",
     "library.assets": "按 kind=tables、maps 或 images 查看图书馆资料。",
     "library.work": "按 work_id 读取作品、版本、文件与项目关联详情。",
+    "library.add_to_project": "把明确的图书馆 work_id 与 file_id 采用到当前项目，并自动建立可回查的 PDF 页面或 DOCX 定位文本。",
     "library.graph": "按 query 和 limit 读取书目与实体知识图谱。",
     "research.state": "读取论点、证据冻结、阅读任务和研究产物的紧凑索引。",
     "research.plan_context": "读取项目当前研究规划所需的紧凑上下文。",
@@ -72,7 +73,8 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "library.search": {"type": "object", "properties": {"query": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}}, "limit": {"type": "integer"}}, "additionalProperties": False},
     "library.assets": {"type": "object", "properties": {"kind": {"type": "string", "enum": ["tables", "maps", "images"]}}, "required": ["kind"], "additionalProperties": False},
     "library.work": {"type": "object", "properties": {"work_id": {"type": "string"}}, "required": ["work_id"], "additionalProperties": False},
-    "library.graph": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}}, "additionalProperties": False},
+    "library.add_to_project": {"type": "object", "properties": {"work_id": {"type": "string"}, "file_id": {"type": "string"}}, "required": ["work_id", "file_id"], "additionalProperties": False},
+    "library.graph": {"type": "object", "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}, "include_reading_notes": {"type": "boolean"}}, "additionalProperties": False},
     "research.state": {"type": "object", "properties": {}, "additionalProperties": False},
     "research.plan_context": {"type": "object", "properties": {}, "additionalProperties": False},
     "retrieval.list": {"type": "object", "properties": {"record_id": {"type": "string"}, "limit": {"type": "integer"}}, "additionalProperties": False},
@@ -108,7 +110,7 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 
 _EAGER_TOOLS = {
     "harness.status", "project.status", "source.list", "source.search", "source.page",
-    "library.status", "library.search", "library.assets", "library.work", "library.graph",
+    "library.status", "library.search", "library.assets", "library.work", "library.add_to_project", "library.graph",
     "research.state", "research.plan_context", "retrieval.list", "research.search",
     "plugin.list", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read",
     "attachment.inspect", "browser.start", "browser.snapshot", "browser.read", "browser.open",

@@ -14,6 +14,7 @@ LIBRARY_SCHEMA_VERSION = 4
 LIBRARY_DATABASE_NAME = "library.sqlite3"
 _INITIALIZE_LOCK = threading.Lock()
 _INITIALIZED_PATHS: set[Path] = set()
+_ACTIVE_LIBRARY_ROOTS: dict[Path, Path] = {}
 
 SCHEMA = """
 PRAGMA foreign_keys = ON;
@@ -185,9 +186,16 @@ CREATE INDEX idx_knowledge_edges_target ON knowledge_edges(target_node_id);
 """
 
 
+def bind_library_root(project_root: Path, library_root: Path) -> None:
+    _ACTIVE_LIBRARY_ROOTS[project_root.expanduser().resolve()] = library_root.expanduser().resolve()
+
+
 def resolve_library_root(project_root: Path, library_root: Path | None = None) -> Path:
     if library_root is not None:
         return library_root.expanduser().resolve()
+    bound = _ACTIVE_LIBRARY_ROOTS.get(project_root.expanduser().resolve())
+    if bound is not None:
+        return bound
     configured = os.getenv("HRW_LIBRARY_ROOT")
     if configured:
         return Path(configured).expanduser().resolve()
