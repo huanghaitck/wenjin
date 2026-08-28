@@ -26,8 +26,8 @@ class CodexHarnessTests(unittest.TestCase):
                 host = _Host(project_root, "test", None)  # type: ignore[arg-type]
                 host.active_runs["codex-thread"] = run_id
                 receipt = host.handle_request("item/tool/call", {
-                    "threadId": "codex-thread", "namespace": "wenjin",
-                    "tool": "project__status", "arguments": {},
+                    "threadId": "codex-thread", "namespace": None,
+                    "tool": "wenjin__project__status", "arguments": {},
                 })
                 status = json.loads(receipt["contentItems"][0]["text"])
                 return f"{status['title']} / {status['source_count']}"

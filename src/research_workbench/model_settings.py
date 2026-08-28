@@ -261,7 +261,7 @@ def save_moa(config_root: Path, payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("MoA reference roles must be configured auxiliary roles")
     reference_roles = list(dict.fromkeys(reference_roles))
     fanout = str(payload.get("fanout", "user_turn"))
-    if fanout not in {"user_turn", "per_iteration"}:
+    if fanout != "user_turn":
         raise ValueError("unsupported MoA fanout policy")
     enabled = bool(payload.get("enabled", False))
     if enabled and not reference_roles:

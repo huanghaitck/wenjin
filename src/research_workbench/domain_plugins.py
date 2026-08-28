@@ -504,6 +504,122 @@ def install_domain_plugin(
     return plugin_state(config_root)
 
 
+def install_codex_plugin(config_root: Path, source_root: Path) -> dict[str, Any]:
+    """Adapt a local Codex Skill/MCP plugin without modifying its source copy."""
+    source_root = source_root.resolve()
+    if source_root.is_file():
+        if source_root.suffix.casefold() != ".zip":
+            raise ValueError("Codex plugin package must be a folder or .zip file")
+        with tempfile.TemporaryDirectory(prefix="codex-plugin-") as directory:
+            extracted = Path(directory)
+            with zipfile.ZipFile(source_root) as archive:
+                for member in archive.infolist():
+                    target = (extracted / member.filename).resolve()
+                    if extracted not in target.parents and target != extracted:
+                        raise ValueError("plugin zip contains a path outside the package root")
+                archive.extractall(extracted)
+            candidates = list(dict.fromkeys(
+                path.parent.parent for path in extracted.rglob(".codex-plugin/plugin.json")
+            ))
+            if len(candidates) != 1:
+                raise ValueError("Codex plugin zip must contain exactly one .codex-plugin/plugin.json")
+            return install_codex_plugin(config_root, candidates[0])
+    manifest_path = source_root / ".codex-plugin" / "plugin.json"
+    if not manifest_path.is_file():
+        raise FileNotFoundError("Codex plugin manifest is missing: .codex-plugin/plugin.json")
+    codex = json.loads(manifest_path.read_text(encoding="utf-8"))
+    name = re.sub(r"[^a-z0-9]+", "-", str(codex.get("name", "")).casefold()).strip("-")
+    if not PLUGIN_NAME.fullmatch(name):
+        raise ValueError("Codex plugin name cannot be normalized to lower-case hyphen-case")
+    version = str(codex.get("version", "0.1.0"))
+    if not SEMVER.fullmatch(version):
+        version = "0.1.0"
+    description = str(codex.get("description", "")).strip() or name
+    display_name = str((codex.get("interface") or {}).get("displayName", "")).strip() or name
+    skills_value = codex.get("skills", "./skills/")
+    skill_roots = [skills_value] if isinstance(skills_value, str) else list(skills_value or [])
+    skill_files: list[str] = []
+    for value in skill_roots:
+        path = (source_root / str(value)).resolve()
+        if source_root not in path.parents and path != source_root:
+            raise ValueError("Codex plugin skill path escapes the package root")
+        if path.is_file() and path.name == "SKILL.md":
+            skill_files.append(path.relative_to(source_root).as_posix())
+        elif path.is_dir():
+            skill_files.extend(
+                item.relative_to(source_root).as_posix() for item in path.glob("*/SKILL.md")
+            )
+    mcp_value = codex.get("mcpServers", "./.mcp.json")
+    if isinstance(mcp_value, str):
+        mcp_path = (source_root / mcp_value).resolve()
+        mcp = json.loads(mcp_path.read_text(encoding="utf-8")) if mcp_path.is_file() else {}
+    else:
+        mcp = {"mcpServers": mcp_value} if isinstance(mcp_value, dict) else {}
+    servers = dict(mcp.get("mcpServers") or {})
+    if not servers:
+        installed_skills = []
+        for relative in skill_files:
+            source = (source_root / relative).parent
+            destination = config_root.resolve() / "skills" / source.name
+            if destination.exists():
+                raise FileExistsError(f"Skill already exists: {destination}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, destination)
+            installed_skills.append(str(destination))
+        return {"adapter": "codex-skill-only", "name": name, "version": version,
+                "installed_skills": installed_skills, "plugins": plugin_state(config_root)}
+    if len(servers) != 1:
+        raise ValueError("RC1 Codex plugin adapter supports exactly one MCP server per plugin")
+    _, server = next(iter(servers.items()))
+    if not isinstance(server, dict) or not str(server.get("command", "")).strip():
+        raise ValueError("Codex MCP server needs a command")
+    if server.get("env"):
+        raise ValueError("Codex plugin environments are not imported; configure credentials in Wenjin")
+    config_root.resolve().mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="wenjin-codex-adapter-", dir=config_root.resolve()) as directory:
+        staged = Path(directory) / name
+        shutil.copytree(source_root, staged)
+        runtime = {"type": "mcp_stdio", "command": str(server["command"]),
+                   "args": [str(value) for value in server.get("args", [])],
+                   "cwd": str(server.get("cwd", ".")), "self_contained": False}
+        command = _runtime_command(staged, runtime)
+        cwd = (staged / runtime["cwd"]).resolve()
+        specs = _cached_mcp_tool_specs(
+            command, tuple(runtime["args"]), str(cwd), str(config_root.resolve()), name,
+        )
+        tool_names = [str(item["name"]) for item in specs]
+        wenjin = {
+            "schema_version": 1, "name": name, "version": version,
+            "display_name": display_name, "description": description,
+            "license": str(codex.get("license", "upstream")), "kind": "domain",
+            "compatible_wenjin": ">=0.1.3-rc.1,<0.2.0", "runtime": runtime,
+            "skills": skill_files, "agent_tools": tool_names,
+            "tool_permissions": {tool: "sensitive" for tool in tool_names},
+            "local_data_sources": [], "contributions": {},
+            "permissions": {"network": "upstream_mcp", "filesystem": "upstream_mcp", "formal_evidence_write": "forbidden"},
+            "data_packs": [],
+            "boundaries": ["Imported Codex MCP tools default to sensitive and cannot bypass Wenjin evidence or writing gates."],
+            "agent": {"id": f"{name}-agent", "display_name": display_name,
+                      "memory_mode": "project_plugin_isolated", "authority": "candidate_only"},
+        }
+        (staged / "wenjin-plugin.json").write_text(
+            json.dumps(wenjin, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        return {"adapter": "codex-skill-mcp", "name": name, "version": version,
+                "tool_count": len(tool_names), "plugins": install_domain_plugin(config_root, staged)}
+
+
+def is_codex_plugin_package(path: Path) -> bool:
+    path = path.resolve()
+    if path.is_dir():
+        return (path / ".codex-plugin" / "plugin.json").is_file() and not (path / "wenjin-plugin.json").is_file()
+    if path.is_file() and path.suffix.casefold() == ".zip":
+        with zipfile.ZipFile(path) as archive:
+            names = [name.replace("\\", "/") for name in archive.namelist()]
+        return any(name.endswith(".codex-plugin/plugin.json") for name in names) and not any(name.endswith("wenjin-plugin.json") for name in names)
+    return False
+
+
 def repair_domain_plugin(config_root: Path, plugin_name: str) -> dict[str, Any]:
     """Reinstall one plugin from its recorded local source and revalidate its runtime."""
     current = next((item for item in _load_registry(config_root)["plugins"] if item.get("name") == plugin_name), None)

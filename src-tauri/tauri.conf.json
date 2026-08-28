@@ -38,6 +38,7 @@
       "../licenses/layout-base-MIT.txt": "licenses/layout-base-MIT.txt",
       "../licenses/cose-base-MIT.txt": "licenses/cose-base-MIT.txt",
       "../licenses/cytoscape-fcose-MIT.txt": "licenses/cytoscape-fcose-MIT.txt",
+      "../src/research_workbench/builtin_skillpacks/historical-research/LICENSE-APACHE-2.0": "licenses/openai-codex-APACHE-2.0.txt",
       "../node_modules/agent-browser/bin/agent-browser-win32-x64.exe": "tools/agent-browser.exe",
       "../node_modules/agent-browser/LICENSE": "licenses/agent-browser-APACHE-2.0.txt"
     },

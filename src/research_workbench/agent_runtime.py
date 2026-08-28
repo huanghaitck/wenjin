@@ -1294,9 +1294,18 @@ def send_message(project_root: Path, thread_id: str, content: str,
         if snapshot["harness_backend"] == "codex":
             from .codex_harness import run_turn
 
+            moa_guidance = _moa_guidance(objective, history)
+            if moa_guidance:
+                design_context += "\n\n" + _format_moa_guidance(moa_guidance)
+                with connect(project_root) as connection:
+                    _append_run_event(connection, run_id, "moa_advice_ready", {
+                        "reference_roles": [item["role"] for item in moa_guidance],
+                        "failed_roles": [item["role"] for item in moa_guidance if item.get("error")],
+                        "fanout": os.environ.get("HRW_MOA_FANOUT", "user_turn"),
+                    })
             result_text = run_turn(
                 project_root, thread_id, run_id, objective, profile, design_context,
-                access_mode, reasoning_effort,
+                access_mode, reasoning_mode, reasoning_effort, history,
             )
             with connect(project_root) as connection:
                 current = connection.execute(
@@ -2316,7 +2325,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
+    allowed = {"harness.status", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -2349,6 +2358,9 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                     project_root, run_id, call_id, tool_name, request_payload,
                     result, access_mode, risk,
                 )
+        elif tool_name == "harness.status":
+            from .codex_harness import harness_status
+            result = harness_status()
         elif tool_name == "project.status":
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
@@ -3060,7 +3072,9 @@ def _resume_approved_run(project_root: Path, run_id: str) -> None:
             project_root, _run_thread_id(project_root, run_id), run_id, continuation,
             _assigned_profile(project_root), design_context,
             str(snapshot.get("access_mode", "ask")),
+            str(snapshot.get("reasoning_mode", "standard")),
             str(snapshot.get("reasoning_effort", "medium")),
+            history,
         ))
         return
     _advance_run(

@@ -4,7 +4,7 @@ English | [中文](USER_MANUAL_ZH.md)
 
 Version: 0.1.3 RC1 (the installer is not code-signed)
 
-Verified: 2026-08-27
+Verified: 2026-08-28
 
 Scope: local literature organization, PDF repair, research dialogue, web discovery, evidence control, writing, and Word export
 
@@ -39,7 +39,7 @@ The Project Workspace is the default home. It lists registered local projects, s
 
 The desktop application can create a project under a folder chosen by the researcher or register an existing Wenjin directory that contains `project.sqlite3`. The ordinary create button uses Wenjin's default application-data folder. Conversations, evidence, manuscripts, and run records remain project-specific, while the research library can reuse the same work and exact file version across projects.
 
-Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. Version 0.1.2 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
+Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. RC1 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
 
 ### 2.2 Research chat
 
@@ -60,6 +60,14 @@ Two planning modes are available:
 Create a thread with the plus button before sending the first message. If no main model is available, configure and test one under **AI & Agent**.
 
 Each thread also has an Agent access mode: Ask for approval, Auto-approve routine research, or Full access. These modes are described in Section 5.
+
+#### Agent runtime and continuous threads
+
+**AI & Agent — Status** shows the bundled Codex app-server, SDK version, and runtime availability. Project, library, source, evidence, writing, and Domain Agent operations share this one thread/turn lifecycle, while the actual research data remains in Wenjin's project and library databases. Users do not install a separate Codex application and do not need to know MCP or internal tool names.
+
+Continuing with the same model reuses the app-server thread. A model switch, branch, or restored Wenjin thread seeds the new model thread with bounded recent discussion for continuity; conversation still does not become source evidence. Pressing Enter during a run steers the current turn. The stop symbol interrupts at a safe boundary and never restarts by itself. At about 90% of the model context window, app-server compaction runs automatically without deleting project sources, evidence, manuscripts, or the run ledger.
+
+DeepSeek and compatible hosted endpoints use the Responses API. Ollama uses Codex's built-in local provider. Model tool reliability varies; when a small local model does not pass the connection and tool-call checks, choose another configured model rather than allowing a mock or silent fallback. MoA runs once per user turn, and adviser models cannot call tools.
 
 #### Let the main Agent orchestrate existing capabilities
 
@@ -93,7 +101,7 @@ While a run is active, the Send button becomes a stop symbol. Clicking it reques
 
 The right sidebar shows the current tool activity and newest artifacts first; older artifacts are collapsed. In the desktop application, click **Open artifact** or double-click a supported artifact to open it with the system application. Access mode, model, reasoning mode, and reasoning effort remain in the composer; unsupported controls stay hidden.
 
-A self-contained Domain Agent may also be used by Codex or another MCP stdio host. Wenjin injects the selected model roles and local-data bindings when launching the MCP process. Other hosts may use the blank environment template shipped by the Agent; distributed packages must not contain populated credentials.
+A self-contained Domain Agent may also be used by Codex or another MCP stdio host. Inside Wenjin it uses an isolated app-server thread, private memory, and dynamic domain tools; MCP stdio is the external portability boundary. Wenjin injects the selected model roles and local-data bindings when launching an external MCP process. Other hosts may use the blank environment template shipped by the Agent; distributed packages must not contain populated credentials.
 
 The complete Gazetteer Disaster History Agent includes its standard 22-column template and a self-contained `gazetteer-agent-mcp.exe`. “Standard table”, “22 columns”, and “finished table” use that built-in template. A custom schema is used only when the researcher explicitly requests different fields. On a new computer the Agent does not require system Python or PowerShell. If a plugin copy is damaged, the main Agent can revalidate and reinstall it once from the recorded local ZIP after approval.
 
@@ -138,6 +146,8 @@ This workspace separates user-invoked Skills, internal harness workflows, and ex
 
 Natural-language requests also expose the versioned catalog of Skills that permit implicit use. The main Agent reads the smallest matching Skill before applying it; users do not have to know the slash command.
 
+**AI & Agent — Skills and plugins** can import a local Codex plugin folder or ZIP containing `.codex-plugin/plugin.json`. Skill-only plugins are copied into Wenjin's local Skill directory. A plugin declaring one standard MCP server receives a local adapter manifest without changing the upstream source; every imported MCP tool starts as sensitive. RC1 does not import populated environment blocks, account sessions, proprietary Codex Desktop bundled runtimes, or plugins with several MCP servers. Those cases stop with a configuration message instead of silently weakening permissions.
+
 Creating a thread from an existing conversation inherits bounded parent context without copying messages or reading unrelated threads. The chat composer accepts versioned PDF, DOCX, spreadsheet, text, and image attachments. Attachments remain conversational context until inspected and do not become verified sources or evidence automatically. Access mode is on the left of the composer and the main model is on the right; reasoning effort stays hidden unless a model explicitly advertises support.
 
 A Skill does not bypass page verification, source qualification, evidence approval, or writing approval. The run records the Skill and Agent-program fingerprints. Instruction packages do not receive arbitrary permission to execute every script in their folder.
@@ -150,7 +160,7 @@ wenjin mcp-server C:\Research\my-project
 
 The MCP server provides bounded project status, source details, pages, library results, and manuscript structure. Formal writes remain approval-gated.
 
-Version 0.1.2 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
+RC1 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
 
 Source developers can create the neutral engineering scaffold with:
 
@@ -164,7 +174,7 @@ This workspace shows software and schema versions, main and auxiliary models, Mo
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
-The **Weixin connection** is experimental in 0.1.2. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.2 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
+The **Weixin connection** is experimental in RC1. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. RC1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
 The **Runtime** page can create an immediate backup. Wenjin first uses SQLite's online backup API for a consistent database, then bundles source copies, cleaned derivatives, research notes, manuscripts, reviews, and exports. Logs and temporary files are excluded. Registered projects outside the default Wenjin directory are included in startup backup checks. Restore creates a new project copy and never overwrites the active project.
 

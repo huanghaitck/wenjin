@@ -16,9 +16,7 @@ from .domain_plugins import install_domain_plugin, plugin_state
 from .weixin_gateway import start_configured_gateway
 
 
-def _install_builtin_computer_use(config_root: Path) -> None:
-    if not getattr(sys, "frozen", False):
-        return
+def install_builtin_computer_use(config_root: Path) -> None:
     source = Path(__file__).resolve().parent / "builtin_plugins" / "computer-use"
     if not source.is_dir():
         return
@@ -34,6 +32,9 @@ def _install_builtin_computer_use(config_root: Path) -> None:
     ):
         return
     install_domain_plugin(config_root, source, runtime_command=sys.executable)
+
+
+_install_builtin_computer_use = install_builtin_computer_use
 
 
 def bootstrap_desktop(data_root: Path) -> dict[str, Any]:
@@ -59,7 +60,7 @@ def bootstrap_desktop(data_root: Path) -> dict[str, Any]:
     registry = initialize_workspace(workspace_root, project_root)
     project_root = Path(registry["current_project"])
     ensure_default_thread(project_root)
-    _install_builtin_computer_use(config_root)
+    install_builtin_computer_use(config_root)
     apply_settings(config_root)
     start_configured_gateway(config_root, project_root)
     return {

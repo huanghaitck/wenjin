@@ -430,9 +430,15 @@ def send_domain_message(
             final = _clean_final_text(run_domain_turn(
                 project_root, str(session["session_id"]), run_id, content, profile, plugin,
                 all_tool_specs, _domain_prompt(plugin, all_tool_specs, native_tools=True),
-                access_mode, reasoning_effort, parent_run_id,
+                access_mode, reasoning_effort, parent_run_id, reasoning_mode,
+                _domain_history(project_root, str(session["session_id"]), main_thread_id),
             ))
             with connect(project_root) as connection:
+                current = connection.execute(
+                    "SELECT status FROM domain_agent_runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                if current is not None and current["status"] == "STOPPED":
+                    return domain_agent_view(project_root, str(session["session_id"]))
                 connection.execute(
                     "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) "
                     "VALUES (?,?, 'assistant', ?, ?)",

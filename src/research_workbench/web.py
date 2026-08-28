@@ -50,9 +50,11 @@ from .citations import create_note, decide_note, revise_note
 from .codex_bridge import (
     codex_capability, codex_task_status, register_with_codex, start_codex_task,
 )
+from .codex_harness import close_hosts, harness_status
 from .domain_plugins import (
     bind_domain_plugin_data, install_domain_plugin, plugin_state, remove_domain_plugin,
-    discover_domain_models, public_domain_model_settings, save_domain_model_role,
+    discover_domain_models, install_codex_plugin, is_codex_plugin_package,
+    public_domain_model_settings, save_domain_model_role,
 )
 from .domain_agents import domain_agent_state, domain_agent_view, send_domain_message
 from .plugin_sdk import create_plugin_project
@@ -214,6 +216,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                         "mode": "desktop" if self.server.desktop_mode else "browser",
                         "desktop_build": os.getenv("HRW_DESKTOP_BUILD", ""),
                         "desktop_bridge_ready": self.server.desktop_bridge_ready,
+                        "harness": harness_status(),
                     },
                 })
                 return
@@ -601,6 +604,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     return
                 role = str(payload["role"])
                 settings = save_role(self.server.config_root, role, payload)
+                close_hosts()
                 profiles = sync_model_profiles(self.server.project_root)
                 if role == "main_reasoning":
                     configured = next(item for item in settings["roles"] if item["role"] == role)
@@ -639,6 +643,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.config_root, str(payload["plugin_name"]),
                     str(payload["role_id"]), payload,
                 )
+                close_hosts()
             elif parsed.path == "/api/domain-model-settings/models":
                 if self.headers.get("X-HRW-Session", "") != self.server.session_token:
                     self._json({"error": "invalid local session"}, 403)
@@ -908,10 +913,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     timeout_seconds=int(payload.get("timeout_seconds", 1800)),
                 )
             elif parsed.path == "/api/plugins/install":
-                result = install_domain_plugin(
-                    self.server.config_root,
-                    Path(str(payload["source_root"])),
-                    runtime_command=str(payload.get("runtime_command", "")),
+                source_root = Path(str(payload["source_root"]))
+                result = (
+                    install_codex_plugin(self.server.config_root, source_root)
+                    if is_codex_plugin_package(source_root) else install_domain_plugin(
+                        self.server.config_root, source_root,
+                        runtime_command=str(payload.get("runtime_command", "")),
+                    )
                 )
             elif parsed.path == "/api/plugins/remove":
                 result = remove_domain_plugin(

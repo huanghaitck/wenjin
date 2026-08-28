@@ -511,3 +511,28 @@ m4_agent_workspace_foundation:
   demo_url: http://127.0.0.1:8765/
   demo_pending_approval: created_for_human_review
   credentials_persisted: 0
+
+rc1_codex_app_server_harness:
+  status: implementation_and_packaged_sidecar_verified
+  date: 2026-08-28
+  sdk_and_runtime: openai-codex_0.147.0_bundled
+  sole_agent_loop: codex_app_server
+  native_wenjin_tools:
+    - project_and_source
+    - research_library_and_two_graph_layers
+    - research_state_and_writing_state
+    - retrieval_and_browser
+    - skills_and_computer_use
+    - domain_agent_delegation
+  internal_core_transport: direct_python_callbacks_not_mcp
+  external_portability: wenjin_mcp_and_domain_agent_mcp
+  approval_resume: same_codex_thread_verified
+  steer_and_stop: turn_steer_and_turn_interrupt_verified_in_ui
+  context_compaction: app_server_at_90_percent
+  moa: once_per_user_turn_non_acting_advisers
+  deepseek_real_native_tool_call: passed
+  packaged_sidecar_native_tool_call: passed
+  main_to_disaster_domain_agent_delegation: passed
+  cli_native_tool_call: passed
+  ollama_responses_transport: connected_tool_choice_model_dependent
+  regression_tests: 417_passed_before_final_packaging_pass

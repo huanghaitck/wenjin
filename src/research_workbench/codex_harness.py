@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,7 @@ _HOSTS_LOCK = threading.Lock()
 _THREAD_FILE_LOCK = threading.Lock()
 
 _NATIVE_TOOLS = {
+    "harness.status": "检查问津 Codex app-server 内核、SDK、内置二进制与活动主机状态。",
     "project.status": "读取当前项目题名、阶段、来源与处理数量。",
     "source.list": "按 source_ids、query 和 limit 查看有界来源目录。",
     "source.search": "按 query、可选 source_id 和 limit 检索已入库史料文本。",
@@ -60,6 +63,7 @@ _NATIVE_TOOLS = {
 }
 
 _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "harness.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "project.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "source.list": {"type": "object", "properties": {"source_ids": {"type": "array", "items": {"type": "string"}}, "query": {"type": "string"}, "limit": {"type": "integer"}}, "additionalProperties": False},
     "source.search": {"type": "object", "properties": {"query": {"type": "string"}, "source_id": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"], "additionalProperties": False},
@@ -102,6 +106,16 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "save_research_note": {"type": "object", "properties": {"title": {"type": "string"}, "content": {"type": "string"}}, "required": ["title", "content"], "additionalProperties": False},
 }
 
+_EAGER_TOOLS = {
+    "harness.status", "project.status", "source.list", "source.search", "source.page",
+    "library.status", "library.search", "library.assets", "library.work", "library.graph",
+    "research.state", "research.plan_context", "retrieval.list", "research.search",
+    "plugin.list", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read",
+    "attachment.inspect", "browser.start", "browser.snapshot", "browser.read", "browser.open",
+    "computer.status", "computer.runtime_status", "computer.roots", "computer.file_search",
+    "computer.windows", "computer.snapshot", "computer.capture", "authoring.state",
+}
+
 
 def _wire_name(tool_name: str) -> str:
     return tool_name.replace(".", "__")
@@ -127,20 +141,31 @@ def _dynamic_tools(project_root: Path) -> list[dict[str, Any]]:
         alias: computer_specs.get(plugin_name)
         for alias, plugin_name in COMPUTER_TOOL_ALIASES.items()
     }
-    return [{
-        "type": "namespace",
-        "name": "wenjin",
-        "description": "问津研究工作台的项目与研究资料工具。",
-        "tools": [
-            {
-                "type": "function",
-                "name": _wire_name(name),
-                "description": description,
-                "inputSchema": _TOOL_SCHEMAS.get(name) or computer_schemas.get(name)
-                or {"type": "object", "additionalProperties": True},
-            }
-            for name, description in tools.items()
-        ],
+    eager = [
+        {
+            "type": "function",
+            "name": "wenjin__" + _wire_name(name),
+            "description": description,
+            "inputSchema": _TOOL_SCHEMAS.get(name) or computer_schemas.get(name)
+            or {"type": "object", "additionalProperties": True},
+        }
+        for name, description in tools.items()
+        if name in _EAGER_TOOLS
+    ]
+    deferred = [
+        {
+            "type": "function", "name": _wire_name(name), "description": description,
+            "inputSchema": _TOOL_SCHEMAS.get(name) or computer_schemas.get(name)
+            or {"type": "object", "additionalProperties": True},
+            "deferLoading": True,
+        }
+        for name, description in tools.items()
+        if name not in _EAGER_TOOLS
+    ]
+    return eager + [{
+        "type": "namespace", "name": "wenjin",
+        "description": "问津按需加载的研究、写作、领域 Agent 与 Computer Use 工具。",
+        "tools": deferred,
     }]
 
 
@@ -191,20 +216,107 @@ def _tool_result(value: Any, success: bool = True) -> dict[str, Any]:
     }
 
 
+def _stream_turn(host: "_Host", thread_id: str, run_id: str, content: str,
+                 params: dict[str, Any], run_kind: str) -> tuple[str, bool]:
+    from .agent_runtime import _append_run_event, _consume_run_controls
+
+    started = host.client.turn_start(thread_id, content, params=params)
+    turn_id = started.turn.id
+    finished = threading.Event()
+    stopped = threading.Event()
+
+    def watch() -> None:
+        while not finished.wait(0.25):
+            controls = _consume_run_controls(host.project_root, run_kind, run_id)
+            for message in controls["steering"]:
+                if run_kind == "main":
+                    with connect(host.project_root) as connection:
+                        _append_run_event(connection, run_id, "user_steering", {"content": message})
+                host.client.turn_steer(thread_id, turn_id, message)
+            if not controls["stop"]:
+                continue
+            host.client.turn_interrupt(thread_id, turn_id)
+            now = utc_now()
+            with connect(host.project_root) as connection:
+                if run_kind == "main":
+                    connection.execute(
+                        "UPDATE runs SET status='STOPPED',updated_at=?,completed_at=? WHERE run_id=?",
+                        (now, now, run_id),
+                    )
+                    _append_run_event(connection, run_id, "run_stopped", {})
+                else:
+                    connection.execute(
+                        "UPDATE domain_agent_runs SET status='STOPPED',updated_at=? WHERE run_id=?",
+                        (now, run_id),
+                    )
+            stopped.set()
+            return
+
+    watcher = threading.Thread(target=watch, daemon=True)
+    watcher.start()
+    chunks: list[str] = []
+    compact_needed = False
+    try:
+        while True:
+            notification = host.client.next_turn_notification(turn_id)
+            if notification.method == "item/agentMessage/delta":
+                chunks.append(str(getattr(notification.payload, "delta", "")))
+            if notification.method == "thread/tokenUsage/updated":
+                usage = getattr(notification.payload, "token_usage", None)
+                total = getattr(getattr(usage, "total", None), "total_tokens", 0)
+                window = getattr(usage, "model_context_window", 0) or 0
+                compact_needed = bool(window and total >= int(window * 0.9))
+            if notification.method == "turn/completed":
+                turn = getattr(notification.payload, "turn", None)
+                error = getattr(turn, "error", None)
+                if error is not None and not stopped.is_set():
+                    raise RuntimeError(str(getattr(error, "message", error)))
+                break
+    finally:
+        finished.set()
+        watcher.join(timeout=1)
+        host.client.unregister_turn_notifications(turn_id)
+    if compact_needed and not stopped.is_set():
+        host.client.thread_compact(thread_id)
+        if run_kind == "main":
+            with connect(host.project_root) as connection:
+                _append_run_event(connection, run_id, "context_compaction_started", {"threshold": 0.9})
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline:
+            status = host.client.thread_read(thread_id).thread.status.root
+            if status.__class__.__name__ == "IdleThreadStatus":
+                break
+            time.sleep(0.25)
+    return "".join(chunks).strip(), stopped.is_set()
+
+
 @dataclass
 class _Host:
     project_root: Path
     profile_key: str
     client: CodexClient
+    model_provider: str = "wenjin"
     active_runs: dict[str, str] = field(default_factory=dict)
     domain_runs: dict[str, dict[str, Any]] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def handle_request(self, method: str, params: dict[str, Any] | None) -> dict[str, Any]:
         params = params or {}
+        if method in {"item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+            return {"decision": "decline"}
         if method != "item/tool/call":
             return {}
         thread_id = str(params.get("threadId", ""))
+        raw_tool = str(params.get("tool", ""))
+        if raw_tool.startswith("wenjin__"):
+            params = {**params, "namespace": "wenjin", "tool": raw_tool.removeprefix("wenjin__")}
+            raw_tool = str(params["tool"])
+        elif raw_tool.startswith("domain__"):
+            params = {**params, "namespace": "domain", "tool": raw_tool.removeprefix("domain__")}
+            raw_tool = str(params["tool"])
+        if not params.get("namespace") and "." in raw_tool:
+            namespace, raw_tool = raw_tool.split(".", 1)
+            params = {**params, "namespace": namespace, "tool": raw_tool}
         if thread_id in self.domain_runs:
             return self._handle_domain_tool(params, self.domain_runs[thread_id])
         run_id = self.active_runs.get(thread_id, "")
@@ -223,6 +335,8 @@ class _Host:
                 self.project_root, run_id, tool,
                 arguments if isinstance(arguments, dict) else {},
             )
+            if isinstance(result, dict) and isinstance(result.get("structuredContent"), dict):
+                result = result["structuredContent"]
             return _tool_result(result)
         except Exception as error:
             return _tool_result({"error": str(error)}, success=False)
@@ -280,32 +394,50 @@ class _Host:
 
 
 def _host(project_root: Path, profile: Any, purpose: str = "main") -> _Host:
-    key = (str(project_root.resolve()), profile.provider, profile.endpoint, f"{profile.model}:{purpose}")
+    credential_fingerprint = hashlib.sha256(profile.api_key.encode("utf-8")).hexdigest()[:12]
+    key = (
+        str(project_root.resolve()), profile.provider, profile.endpoint,
+        f"{profile.model}:{purpose}:{credential_fingerprint}",
+    )
     with _HOSTS_LOCK:
         existing = _HOSTS.get(key)
         if existing is not None:
             return existing
         runtime_home = project_root / "runtime" / "codex_home"
         runtime_home.mkdir(parents=True, exist_ok=True)
-        provider_id = "wenjin"
-        config = CodexConfig(
-            cwd=str(project_root),
-            env={"CODEX_HOME": str(runtime_home), "WENJIN_CODEX_API_KEY": profile.api_key},
-            config_overrides=(
+        provider_id = "ollama" if profile.provider == "ollama" else "wenjin"
+        endpoint = profile.endpoint.rstrip("/")
+        if provider_id == "ollama" and not endpoint.endswith("/v1"):
+            endpoint += "/v1"
+        overrides = (
+            ('model_provider="ollama"', 'oss_provider="ollama"')
+            if provider_id == "ollama" else (
                 f'model_provider="{provider_id}"',
                 f'model_providers.{provider_id}.name="Wenjin configured model"',
-                f'model_providers.{provider_id}.base_url={json.dumps(profile.endpoint.rstrip("/"))}',
+                f'model_providers.{provider_id}.base_url={json.dumps(endpoint)}',
                 f'model_providers.{provider_id}.env_key="WENJIN_CODEX_API_KEY"',
                 f'model_providers.{provider_id}.wire_api="responses"',
                 f'model_providers.{provider_id}.requires_openai_auth=false',
-            ),
+            )
+        )
+        runtime_env = {
+            "CODEX_HOME": str(runtime_home),
+            "WENJIN_CODEX_API_KEY": profile.api_key or "ollama",
+        }
+        if provider_id == "ollama":
+            runtime_env["CODEX_OSS_BASE_URL"] = endpoint
+        config = CodexConfig(
+            cwd=str(project_root),
+            env=runtime_env,
+            config_overrides=overrides,
             client_name="wenjin",
             client_title="Wenjin Research Workbench",
         )
         holder: dict[str, _Host] = {}
         client = CodexClient(config, approval_handler=lambda method, params: holder["host"].handle_request(method, params))
         created = _Host(
-            project_root.resolve(), f"{profile.provider}:{profile.endpoint}:{profile.model}:{purpose}", client,
+            project_root.resolve(), f"{profile.provider}:{profile.endpoint}:{profile.model}:{purpose}",
+            client, provider_id,
         )
         holder["host"] = created
         client.start()
@@ -315,7 +447,8 @@ def _host(project_root: Path, profile: Any, purpose: str = "main") -> _Host:
 
 
 def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: str,
-             profile: Any, instructions: str, access_mode: str, reasoning_effort: str) -> str:
+             profile: Any, instructions: str, access_mode: str, reasoning_mode: str,
+             reasoning_effort: str, history: list[dict[str, str]] | None = None) -> str:
     host = _host(project_root, profile)
     with host.lock:
         codex_thread_id = _load_thread_id(project_root, wenjin_thread_id, host.profile_key)
@@ -324,17 +457,21 @@ def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: 
                 host.client.thread_resume(codex_thread_id, {"cwd": str(project_root)})
             except Exception:
                 codex_thread_id = ""
-        if not codex_thread_id:
+        new_thread = not codex_thread_id
+        if new_thread:
             started = host.client.thread_start({
                 "cwd": str(project_root),
                 "model": profile.model,
-                "modelProvider": "wenjin",
+                "modelProvider": host.model_provider,
                 "approvalPolicy": "never" if access_mode == "full_computer" else "on-request",
                 "approvalsReviewer": "user",
                 "sandbox": "danger-full-access" if access_mode == "full_computer" else "read-only",
                 "baseInstructions": (
                     "你是问津研究工作台的主 Agent。根据用户的自然语言意图选择最小必要工具；"
                     "工具返回前不得声称已经读取项目、史料或网页。来源检索结果只是线索，原页与证据状态才可支持史实。"
+                    "本机文件、程序和命令必须使用问津 Computer Use 工具，以便权限代理和运行账本记录；不要调用内置 shell 或文件修改工具。"
+                    "如果明确需要的Computer Use工具因安装清单过旧而不可用，只能报告插件状态并修复一次；不要用反复文件搜索冒充运行时诊断。"
+                    "文件搜索已经返回用户明确要求的文件或足够匹配项后必须停止并回答；不要再逐个子目录重复同一查询。"
                     "最终用研究者可读的自然语言回答，不输出内部协议、工具名清单或隐藏思考。\n\n"
                     + instructions
                 ),
@@ -346,15 +483,25 @@ def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: 
         _event(project_root, run_id, "codex_turn_started", {"thread_id": codex_thread_id})
         try:
             effort = "high" if reasoning_effort == "max" else reasoning_effort
-            chunks = [item.delta for item in host.client.stream_text(
-                codex_thread_id,
-                objective,
-                params={"effort": effort},
-            )]
-            text = "".join(chunks).strip()
-            if not text:
+            turn_input = (
+                "先核对计划、工具选择与完成条件，再开始行动。\n\n" + objective
+                if reasoning_mode == "deep" else objective
+            )
+            if new_thread and history:
+                transcript = "\n".join(
+                    f"{item['role']}: {item['content']}" for item in history[-12:]
+                )
+                turn_input = (
+                    "以下是从问津本地线程恢复的近期对话，只用于保持讨论连续，不是来源证据：\n"
+                    + transcript + "\n\n当前任务：\n" + turn_input
+                )
+            text, stopped = _stream_turn(
+                host, codex_thread_id, run_id, turn_input, {"effort": effort}, "main",
+            )
+            if not text and not stopped:
                 raise RuntimeError("Codex app-server completed without an assistant message")
-            _event(project_root, run_id, "codex_turn_completed", {"thread_id": codex_thread_id})
+            if not stopped:
+                _event(project_root, run_id, "codex_turn_completed", {"thread_id": codex_thread_id})
             return text
         finally:
             host.active_runs.pop(codex_thread_id, None)
@@ -363,7 +510,8 @@ def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: 
 def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: str,
                     profile: Any, plugin: dict[str, Any], tool_specs: list[dict[str, Any]],
                     instructions: str, access_mode: str, reasoning_effort: str,
-                    parent_run_id: str = "") -> str:
+                    parent_run_id: str = "", reasoning_mode: str = "standard",
+                    history: list[dict[str, str]] | None = None) -> str:
     plugin_name = str(plugin["name"])
     host = _host(project_root, profile, f"domain:{plugin_name}")
     tools = [
@@ -381,16 +529,13 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
                 host.client.thread_resume(codex_thread_id, {"cwd": str(project_root)})
             except Exception:
                 codex_thread_id = ""
-        if not codex_thread_id:
+        new_thread = not codex_thread_id
+        if new_thread:
             started = host.client.thread_start({
-                "cwd": str(project_root), "model": profile.model, "modelProvider": "wenjin",
+                "cwd": str(project_root), "model": profile.model, "modelProvider": host.model_provider,
                 "approvalPolicy": "never", "sandbox": "read-only",
                 "baseInstructions": instructions,
-                "dynamicTools": [{
-                    "type": "namespace", "name": "domain",
-                    "description": f"{plugin.get('display_name') or plugin_name} 的确定性领域工具。",
-                    "tools": tools,
-                }],
+                "dynamicTools": [{**item, "name": "domain__" + item["name"]} for item in tools],
             })
             codex_thread_id = started.thread.id
             _save_thread_id(project_root, session_id, host.profile_key, codex_thread_id)
@@ -401,10 +546,22 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
         }
         try:
             effort = "high" if reasoning_effort == "max" else reasoning_effort
-            text = "".join(item.delta for item in host.client.stream_text(
-                codex_thread_id, content, params={"effort": effort},
-            )).strip()
-            if not text:
+            turn_input = (
+                "先核对计划、工具选择与完成条件，再开始行动。\n\n" + content
+                if reasoning_mode == "deep" else content
+            )
+            if new_thread and history:
+                transcript = "\n".join(
+                    f"{item['role']}: {item['content']}" for item in history[-12:]
+                )
+                turn_input = (
+                    "以下是该领域 Agent 隔离会话的近期对话，只用于任务连续性：\n"
+                    + transcript + "\n\n当前任务：\n" + turn_input
+                )
+            text, stopped = _stream_turn(
+                host, codex_thread_id, run_id, turn_input, {"effort": effort}, "domain",
+            )
+            if not text and not stopped:
                 raise RuntimeError("Codex domain turn completed without an assistant message")
             return text
         finally:
@@ -417,3 +574,20 @@ def close_hosts() -> None:
         _HOSTS.clear()
     for host in hosts:
         host.client.close()
+
+
+def harness_status() -> dict[str, Any]:
+    import openai_codex
+    from codex_cli_bin import bundled_codex_path
+
+    binary = bundled_codex_path()
+    with _HOSTS_LOCK:
+        active_hosts = len(_HOSTS)
+    return {
+        "backend": "codex-app-server",
+        "sdk_version": openai_codex.__version__,
+        "binary_available": binary.is_file(),
+        "binary_path": str(binary),
+        "active_hosts": active_hosts,
+        "forced_legacy": os.environ.get("WENJIN_HARNESS_BACKEND", "").strip().casefold() == "legacy",
+    }
