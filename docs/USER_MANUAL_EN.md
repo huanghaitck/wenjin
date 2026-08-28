@@ -2,7 +2,7 @@
 
 English | [中文](USER_MANUAL_ZH.md)
 
-Version: 0.1.3 RC1 (the installer is not code-signed)
+Version: 0.1.3 (the installer is not code-signed)
 
 Verified: 2026-08-28
 
@@ -39,7 +39,7 @@ The Project Workspace is the default home. It lists registered local projects, s
 
 The desktop application can create a project under a folder chosen by the researcher or register an existing Wenjin directory that contains `project.sqlite3`. The ordinary create button uses Wenjin's default application-data folder. Conversations, evidence, manuscripts, and run records remain project-specific, while the research library can reuse the same work and exact file version across projects.
 
-Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. RC1 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
+Phase labels and next actions are navigation derived from existing project objects; they are not claims that the research itself has reached a particular intellectual conclusion. Version 0.1.3 does not delete or move project folders from inside the application. If a project is moved, register its new folder; Wenjin replaces the stale path for that project identity.
 
 ### 2.2 Research chat
 
@@ -111,22 +111,25 @@ The library answers “What work is this, which edition is it, and where is the 
 
 One work may have multiple editions and file locations: an original-language scan, an abridged translation, an OCR locator, and a researcher-corrected working translation. Wenjin separates work, edition, file, and exact file version. A file fingerprint distinguishes exact copies; a one-character correction creates a new file version without necessarily creating a different work.
 
-Six editable shelves are provided:
+Seven editable shelves are provided:
 
 - Primary Sources
 - Articles
 - Monographs
 - Personal Papers and Drafts
+- Reading Notes
 - Reference Works and Catalogs
 - Unclassified
 
 Changing a shelf does not move the original file or change citation eligibility.
 
-The **Knowledge Graph** visualizes registered works, authors, dates, publishers, shelves, and human tags. Below the graph it lists each work's edition, bounded intake preview, and project-use status. Search by title, author, publisher, tag, or a phrase in the preview. Selecting a work opens Works and versions; a work already added to the current project can open its project source pages directly.
+Reading notes are excluded from every graph by default. They are included only for a query in which the researcher explicitly requests them; this does not change their shelf or evidence status.
+
+The **Knowledge Graph** has three switchable views. **Work relations** shows every registered work and projected same-author, same-journal, same-publisher, citation, material-use, review, translation, and mention relations. **Bibliographic entities** expands works, authors, journals or publishers, years, and material types. **Project content** shows sources, pages, Markdown blocks, events, entities, claims, and evidence. The graph chooses COSE, fCoSE, or a hierarchical layout according to graph size and structure. Click once to focus a neighborhood; double-click to open the same Works and versions card used by the catalog. A work already adopted into the current project can open that exact project source directly.
 
 The preview comes from the limited pages inspected during intake. Use it to decide what deserves further reading or which version fits the question. It does not mean that the complete work has been read and it is not evidence. Model-inferred causation, interpersonal relations, and events are not automatically promoted into the graph.
 
-The graph has two layers. The literature layer treats books and articles as nodes. Exact registered titles found in project-source notes, footnotes, and reference zones become candidates for cites, uses material from, reviews, translates, or mentions; they become formal only after the researcher opens the page and approves the relation. The project-content layer reads the source, page, and block structure behind the cleaned Markdown and connects approved events, shared entities, claims, and evidence. Identical researcher-normalized places, dates, cases, and investigation topics across works share an entity node. Aliases, homonyms, and translation variants are not merged automatically; normalize them in the event register first.
+Bibliographic relations and project content remain separate data layers. Exact registered titles found in page-linked Markdown create traceable citation or mention relations, while the project-content layer follows source, page, block, event, entity, claim, and evidence links. Aliases, homonyms, and translation variants are not merged automatically; normalize them in the event register or author-alias table first.
 
 The **Source Chronicle** contains only human-approved event records that retain an exact source version and page link. It can be filtered and exported as Markdown. A chronicle is not a claim that the surviving corpus has been exhausted.
 
@@ -146,7 +149,7 @@ This workspace separates user-invoked Skills, internal harness workflows, and ex
 
 Natural-language requests also expose the versioned catalog of Skills that permit implicit use. The main Agent reads the smallest matching Skill before applying it; users do not have to know the slash command.
 
-**AI & Agent — Skills and plugins** can import a local Codex plugin folder or ZIP containing `.codex-plugin/plugin.json`. Skill-only plugins are copied into Wenjin's local Skill directory. A plugin declaring one standard MCP server receives a local adapter manifest without changing the upstream source; every imported MCP tool starts as sensitive. RC1 does not import populated environment blocks, account sessions, proprietary Codex Desktop bundled runtimes, or plugins with several MCP servers. Those cases stop with a configuration message instead of silently weakening permissions.
+**AI & Agent — Skills and plugins** can import a local Codex plugin folder or ZIP containing `.codex-plugin/plugin.json`. Skill-only plugins are copied into Wenjin's local Skill directory. A plugin declaring one standard MCP server receives a local adapter manifest without changing the upstream source; every imported MCP tool starts as sensitive. Version 0.1.3 does not import populated environment blocks, account sessions, proprietary Codex Desktop bundled runtimes, or plugins with several MCP servers. Those cases stop with a configuration message instead of silently weakening permissions.
 
 Creating a thread from an existing conversation inherits bounded parent context without copying messages or reading unrelated threads. The chat composer accepts versioned PDF, DOCX, spreadsheet, text, and image attachments. Attachments remain conversational context until inspected and do not become verified sources or evidence automatically. Access mode is on the left of the composer and the main model is on the right; reasoning effort stays hidden unless a model explicitly advertises support.
 
@@ -160,7 +163,7 @@ wenjin mcp-server C:\Research\my-project
 
 The MCP server provides bounded project status, source details, pages, library results, and manuscript structure. Formal writes remain approval-gated.
 
-RC1 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
+Version 0.1.3 also supplies the manifest, Skill, permission-bounded MCP runtime, and local-data binding contract used by Domain Agents. Install, creation, model-role configuration, and specialist chat live in the separate **Domain Agent** workspace. This page lists reusable Skills, internal workflows, and external integrations. The public core does not preinstall a disciplinary Agent or user dataset.
 
 Source developers can create the neutral engineering scaffold with:
 
@@ -174,7 +177,7 @@ This workspace shows software and schema versions, main and auxiliary models, Mo
 
 The **two-way Codex bridge** has two directions. Codex can inspect the current Wenjin project through read-only MCP. Wenjin can start an explicitly requested, sandboxed Codex task while reusing the local Codex login; it never reads or stores Codex credentials.
 
-The **Weixin connection** is experimental in RC1. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. RC1 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
+The **Weixin connection** is experimental in version 0.1.3. It uses a QR code so approved private contacts can continue the current Wenjin research conversation through ordinary Weixin. Sign-in information is kept in Windows secure credentials. Version 0.1.3 replies only to inbound private text. Group chat, proactive push, scheduled messages, and files are not enabled. If an Agent action pauses for approval, the Weixin reply asks the researcher to review it in the desktop application.
 
 The **Runtime** page can create an immediate backup. Wenjin first uses SQLite's online backup API for a consistent database, then bundles source copies, cleaned derivatives, research notes, manuscripts, reviews, and exports. Logs and temporary files are excluded. Registered projects outside the default Wenjin directory are included in startup backup checks. Restore creates a new project copy and never overwrites the active project.
 

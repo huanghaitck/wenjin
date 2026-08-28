@@ -147,6 +147,7 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(updated["editions"][0]["publication_year"], "1908")
         self.assertEqual(search_library(self.project, "Professor A", library_root=self.library)[0]["work_id"], work_id)
         self.assertEqual(search_library(self.project, "知识", library_root=self.library)[0]["work_id"], work_id)
+        self.assertEqual(search_library(self.project, "Professor 蒙古", library_root=self.library)[0]["work_id"], work_id)
         self.assertEqual(search_library(self.project, tags=["知识史"], library_root=self.library)[0]["work_id"], work_id)
         moved = move_work_to_shelf(self.project, work_id, "monographs", self.library)
         self.assertEqual(moved["shelf"], "monographs")
@@ -182,6 +183,10 @@ class M5ResearchLibraryTests(unittest.TestCase):
         self.assertEqual(len(linked["project_links"]), 1)
         added = add_library_file_to_project(
             self.project, self.library, work_id, linked["files"][0]["file_id"]
+        )
+        self.assertEqual(
+            work_detail(self.project, work_id, self.library)["project_source"]["source_id"],
+            added["source"]["source_id"],
         )
         with connect(self.project) as connection:
             connection.execute(
@@ -484,6 +489,9 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
         self.assertNotIn("notes", {node["label"] for node in graph["nodes"] if node["node_type"] == "work"})
         self.assertEqual({node["node_type"] for node in graph["nodes"]}, {"work"})
         self.assertIn("academic_articles", {node.get("graph_category") for node in graph["nodes"]})
+        opted_in = library_graph(self.project, library_root=self.library, include_reading_notes=True)
+        self.assertIn("notes", {node["label"] for node in opted_in["nodes"] if node["node_type"] == "work"})
+        self.assertIn("reading_notes", {node.get("graph_category") for node in opted_in["nodes"]})
 
     def test_same_clean_title_registers_one_work_with_multiple_files(self) -> None:
         first = self.materials / "first"

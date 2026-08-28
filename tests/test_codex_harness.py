@@ -7,12 +7,53 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pymupdf as fitz
+
 from research_workbench.agent_runtime import create_thread, decide_approval, send_message
 from research_workbench.codex_harness import _Host
-from research_workbench.service import initialize_project
+from research_workbench.library import approve_candidates, scan_directory, work_detail
+from research_workbench.service import initialize_project, project_status
 
 
 class CodexHarnessTests(unittest.TestCase):
+    def test_library_adoption_pauses_then_ingests_the_selected_exact_file(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root, library, materials = Path(directory) / "project", Path(directory) / "library", Path(directory) / "materials"
+            materials.mkdir()
+            initialize_project(root, "Library adoption")
+            pdf = materials / "Qinling study.pdf"
+            document = fitz.open(); document.new_page().insert_text((72, 72), "Qinling historical study")
+            document.save(pdf); document.close()
+            scan = scan_directory(root, materials, library)
+            approved = approve_candidates(root, scan["session_id"], None, library)
+            work_id = approved["approved"][0]["work_id"]
+            file_id = work_detail(root, work_id, library)["files"][0]["file_id"]
+            thread = create_thread(root, "Adopt one work")
+            calls = 0
+
+            def fake_turn(project_root, _thread_id, run_id, *_args):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    host = _Host(project_root, "test", None)  # type: ignore[arg-type]
+                    host.active_runs["codex-thread"] = run_id
+                    host.handle_request("item/tool/call", {
+                        "threadId": "codex-thread", "namespace": "wenjin", "tool": "library__add_to_project",
+                        "arguments": {"work_id": work_id, "file_id": file_id},
+                    })
+                    return "等待批准"
+                return "采用和清洗完成。"
+
+            with patch.dict(os.environ, {"HRW_LIBRARY_ROOT": str(library), "WENJIN_HARNESS_BACKEND": "codex"}, clear=False), patch(
+                "research_workbench.codex_harness.run_turn", side_effect=fake_turn
+            ):
+                waiting = send_message(root, thread["thread_id"], "采用这篇文献", access_mode="ask")
+                approval_id = waiting["runs"][0]["approvals"][0]["approval_id"]
+                completed = decide_approval(root, approval_id, True, "测试用户", "精确版本无误")
+
+            self.assertEqual(completed["runs"][0]["status"], "COMPLETED")
+            self.assertEqual(project_status(root)["source_count"], 1)
+
     def test_send_message_uses_native_project_tool_and_keeps_existing_view(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
             "HRW_ENABLE_MOCK_MODEL": "1",

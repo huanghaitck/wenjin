@@ -569,7 +569,7 @@ def install_codex_plugin(config_root: Path, source_root: Path) -> dict[str, Any]
         return {"adapter": "codex-skill-only", "name": name, "version": version,
                 "installed_skills": installed_skills, "plugins": plugin_state(config_root)}
     if len(servers) != 1:
-        raise ValueError("RC1 Codex plugin adapter supports exactly one MCP server per plugin")
+        raise ValueError("the Codex plugin adapter supports exactly one MCP server per plugin")
     _, server = next(iter(servers.items()))
     if not isinstance(server, dict) or not str(server.get("command", "")).strip():
         raise ValueError("Codex MCP server needs a command")
@@ -592,7 +592,7 @@ def install_codex_plugin(config_root: Path, source_root: Path) -> dict[str, Any]
             "schema_version": 1, "name": name, "version": version,
             "display_name": display_name, "description": description,
             "license": str(codex.get("license", "upstream")), "kind": "domain",
-            "compatible_wenjin": ">=0.1.3-rc.1,<0.2.0", "runtime": runtime,
+            "compatible_wenjin": ">=0.1.3,<0.2.0", "runtime": runtime,
             "skills": skill_files, "agent_tools": tool_names,
             "tool_permissions": {tool: "sensitive" for tool in tool_names},
             "local_data_sources": [], "contributions": {},

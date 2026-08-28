@@ -51,6 +51,7 @@ from .domain_plugins import validate_domain_plugin
 from .plugin_sdk import create_local_skill, create_plugin_project
 from .attachments import inspect_attachment
 from .library import library_assets, library_graph, library_status, search_library, work_detail
+from .project_library import add_library_file_to_project
 
 
 MAIN_ROLE = "main_reasoning"
@@ -199,6 +200,9 @@ Available actions:
 {"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"exact composite id"}}
 {"type":"tool_call","tool":"source.page","arguments":{"source_id":"...","physical_page":249}}
+{"type":"tool_call","tool":"library.search","arguments":{"query":"short title author or subject keywords","tags":[],"limit":10}}
+{"type":"tool_call","tool":"library.work","arguments":{"work_id":"exact-work-id"}}
+{"type":"tool_call","tool":"library.add_to_project","arguments":{"work_id":"exact-work-id","file_id":"exact-current-pdf-or-docx-file-id"}}
 {"type":"tool_call","tool":"research.state","arguments":{}}
 {"type":"tool_call","tool":"research.plan_context","arguments":{}}
 {"type":"tool_call","tool":"retrieval.list","arguments":{"record_id":"optional exact retrieval record","limit":30}}
@@ -246,6 +250,12 @@ Available actions:
 {"type":"tool_call","tool":"save_research_note","arguments":{"title":"...","content":"..."}}
 {"type":"final","content":"..."}
 Saving a note requires human approval. Keep notes explicit about blocked pages and uncertainty.
+For a vague library request, translate the researcher's wording into two to four short title, author, place,
+period, or subject keywords. Search with short keywords, inspect likely works, and retry one synonym when the
+first query is empty. Do not call an empty query merely to dump the whole library. When the researcher asks to
+adopt a work, inspect library.work, choose an available exact PDF or DOCX file_id, then call
+library.add_to_project. Adoption automatically creates page-linked PDF text or DOCX locator text and must pass
+the active approval policy; never imply that merely linking a bibliography has cleaned or read the source.
 Follow an explicit user tool scope. Do not call unrelated state tools merely because they are available.
 Retrieval results are leads, not evidence. For logged-in database results, first list records and then
 inspect the selected record_id. You may recommend which titles the researcher should download based on
@@ -2325,7 +2335,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"harness.status", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
+    allowed = {"harness.status", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.add_to_project", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -2393,10 +2403,29 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             result = library_assets(project_root, str(arguments.get("kind", "")))[:100]
         elif tool_name == "library.work":
             result = work_detail(project_root, str(arguments.get("work_id", "")))
+        elif tool_name == "library.add_to_project":
+            work_id = str(arguments.get("work_id", "")).strip()
+            file_id = str(arguments.get("file_id", "")).strip()
+            if not work_id or not file_id:
+                raise ValueError("library.add_to_project requires work_id and file_id")
+            access_mode = _run_access_mode(project_root, run_id)
+            request_payload = {"work_id": work_id, "file_id": file_id}
+            if _must_pause_for_permission(access_mode, "routine"):
+                return _pause_tool_for_approval(
+                    project_root, run_id, call_id, tool_name, request_payload, "routine"
+                )
+            result = add_library_file_to_project(
+                project_root, Path(library_status(project_root)["library_root"]), work_id, file_id
+            )
+            _record_auto_approval(
+                project_root, run_id, call_id, tool_name, request_payload,
+                result, access_mode, "routine",
+            )
         elif tool_name == "library.graph":
             result = library_graph(
                 project_root, str(arguments.get("query", "")),
-                max(1, min(int(arguments.get("limit", 100)), 200)),
+                max(1, min(int(arguments.get("limit", 100)), 500)),
+                include_reading_notes=bool(arguments.get("include_reading_notes", False)),
             )
         elif tool_name == "research.state":
             result = _agent_research_state(project_root)
@@ -3162,6 +3191,14 @@ def decide_approval(
                 raise ValueError("approved note requires title and content")
             output = _write_note(project_root, approval_id, title, content)
             final_text = f"研究札记已由 {reviewer} 核准并保存：{output['project_path']}"
+        elif row["tool_name"] == "library.add_to_project":
+            output = add_library_file_to_project(
+                project_root,
+                Path(library_status(project_root)["library_root"]),
+                str(final_request.get("work_id", "")),
+                str(final_request.get("file_id", "")),
+            )
+            final_text = f"所选图书馆版本已由 {reviewer} 核准采用并自动清洗。"
         else:
             raise ValueError(f"approval execution is not implemented for tool: {row['tool_name']}")
         tool_status, approval_status = "COMPLETED", "approved"

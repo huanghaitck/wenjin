@@ -1278,24 +1278,30 @@ def search_library(
     root = library_root_for(project_root, library_root)
     with connect_library(root) as connection:
         if query.strip():
-            phrase = '"' + query.strip().replace('"', '""') + '"'
-            rows = connection.execute(
-                "SELECT work_id FROM work_search WHERE work_search MATCH ? ORDER BY rank", (phrase,)
-            ).fetchall()
-            work_ids = [row["work_id"] for row in rows]
-            contains = f"%{query.strip()}%"
-            fallback = connection.execute(
-                """SELECT DISTINCT w.work_id FROM works w
-                   LEFT JOIN editions e ON e.work_id = w.work_id
-                   LEFT JOIN library_files f ON f.work_id = w.work_id
-                   LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
-                   LEFT JOIN work_tags wt ON wt.work_id = w.work_id
-                   LEFT JOIN tags t ON t.tag_id = wt.tag_id
-                   WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
-                      OR t.name LIKE ? OR v.sample_text LIKE ?""",
-                (contains, contains, contains, contains, contains),
-            ).fetchall()
-            work_ids.extend(row["work_id"] for row in fallback if row["work_id"] not in work_ids)
+            raw_query = unicodedata.normalize("NFKC", query).strip()
+            terms = [term for term in re.split(r"[\s,，;；、/|]+", raw_query) if len(term) > 1]
+            terms = list(dict.fromkeys([raw_query, *terms]))
+            scores: dict[str, int] = {}
+            for index, term in enumerate(terms):
+                phrase = '"' + term.replace('"', '""') + '"'
+                for row in connection.execute(
+                    "SELECT work_id FROM work_search WHERE work_search MATCH ? ORDER BY rank", (phrase,)
+                ).fetchall():
+                    scores[row["work_id"]] = scores.get(row["work_id"], 0) + (20 if index == 0 else 5)
+                contains = f"%{term}%"
+                for row in connection.execute(
+                    """SELECT DISTINCT w.work_id FROM works w
+                       LEFT JOIN editions e ON e.work_id = w.work_id
+                       LEFT JOIN library_files f ON f.work_id = w.work_id
+                       LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
+                       LEFT JOIN work_tags wt ON wt.work_id = w.work_id
+                       LEFT JOIN tags t ON t.tag_id = wt.tag_id
+                       WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
+                          OR t.name LIKE ? OR v.sample_text LIKE ?""",
+                    (contains, contains, contains, contains, contains),
+                ).fetchall():
+                    scores[row["work_id"]] = scores.get(row["work_id"], 0) + (10 if index == 0 else 2)
+            work_ids = sorted(scores, key=lambda work_id: (-scores[work_id], work_id))
         else:
             work_ids = [row["work_id"] for row in connection.execute("SELECT work_id FROM works ORDER BY updated_at DESC")]
         required_tags = set(tags or [])
@@ -1363,7 +1369,18 @@ def work_detail(project_root: Path, work_id: str, library_root: Path | None = No
         links = connection.execute(
             "SELECT * FROM library_project_links WHERE work_id = ? ORDER BY linked_at", (work_id,)
         ).fetchall()
-    return {**result, "editions": [dict(row) for row in editions], "files": file_items, "project_links": [dict(row) for row in links]}
+    with connect(project_root) as connection:
+        project_source = connection.execute(
+            """SELECT s.source_id,s.title,s.processing_state,s.use_state
+               FROM source_library_links l JOIN sources s ON s.source_id=l.source_id
+               WHERE l.library_work_id=? ORDER BY l.linked_at DESC LIMIT 1""",
+            (work_id,),
+        ).fetchone()
+    return {
+        **result, "editions": [dict(row) for row in editions], "files": file_items,
+        "project_links": [dict(row) for row in links],
+        "project_source": dict(project_source) if project_source else None,
+    }
 
 
 def update_work(
@@ -1533,7 +1550,7 @@ def decide_literature_relation(
 
 
 def library_graph(project_root: Path, query: str = "", limit: int = 200,
-                  library_root: Path | None = None) -> dict[str, Any]:
+                  library_root: Path | None = None, include_reading_notes: bool = False) -> dict[str, Any]:
     root = library_root_for(project_root, library_root)
     limit = max(1, min(int(limit), 500))
     content_graph = project_content_graph(project_root, query, max(40, limit * 5))
@@ -1581,19 +1598,16 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             work_ids = work_ids[:limit]
         else:
             work_ids = [row["work_id"] for row in connection.execute(
-                """SELECT w.work_id FROM works w WHERE NOT EXISTS (
-                       SELECT 1 FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
-                       WHERE wt.work_id=w.work_id AND t.name='shelf:reading_notes'
-                   ) ORDER BY w.updated_at DESC LIMIT ?""", (limit,)
+                "SELECT w.work_id FROM works w ORDER BY w.updated_at DESC LIMIT ?", (limit,)
             ).fetchall()]
-        if work_ids:
+        if work_ids and not include_reading_notes:
             placeholders = ",".join("?" for _ in work_ids)
-            excluded = {row["work_id"] for row in connection.execute(
+            reading_notes = {row["work_id"] for row in connection.execute(
                 f"""SELECT DISTINCT wt.work_id FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
                     WHERE t.name='shelf:reading_notes' AND wt.work_id IN ({placeholders})""",
                 tuple(work_ids),
             )}
-            work_ids = [work_id for work_id in work_ids if work_id not in excluded]
+            work_ids = [work_id for work_id in work_ids if work_id not in reading_notes]
         if not work_ids:
             fallback_nodes = [
                 {"node_id": item["node_id"], "node_type": item["node_type"], "label": item["label"],

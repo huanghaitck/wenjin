@@ -87,7 +87,7 @@
     <button id="showLibraryMaps" data-library-view="maps" data-zh="地图" data-en="Maps">地图</button>
     <button id="showLibraryImages" data-library-view="images" data-zh="图片" data-en="Images">图片</button>
     <button id="showLibraryIntake" data-library-view="intake" data-zh="文件盘点与入库" data-en="File intake">文件盘点与入库</button>
-    <button id="toggleLibraryDetail" data-zh="隐藏详情" data-en="Hide details">隐藏详情</button>
+    <button id="toggleLibraryDetail" class="sidebar-toggle" data-zh="隐藏详情" data-en="Hide details" aria-label="隐藏详情" title="隐藏详情">›</button>
   </nav>
   <main id="libraryWorkbench" class="library-workbench" hidden>
     <aside class="inventory-panel surface">
@@ -126,7 +126,7 @@
     <aside id="libraryDetailPanel" class="work-detail-panel surface">
       <header class="agent-heading"><div><h2>作品与版本</h2><p>文件指纹只标识精确文件版本</p></div></header>
       <div id="workDetail" class="work-detail"></div>
-      <section class="project-source-box">
+      <section class="project-source-box" hidden>
         <h3>当前项目文献</h3>
         <select id="sourceSelect" aria-label="选择项目文献"></select>
         <button id="openSourceRepair">打开原页与文本复核</button>

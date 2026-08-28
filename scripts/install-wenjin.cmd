@@ -13,7 +13,7 @@ if errorlevel 1 (
   if errorlevel 1 exit /b 3
 )
 
-for %%F in ("%~dp0wenjin-0.1.2-x64-setup.exe") do (
+for %%F in ("%~dp0wenjin-0.1.3-x64-setup.exe") do (
   start "" /wait "%%~fF"
   exit /b %errorlevel%
 )
