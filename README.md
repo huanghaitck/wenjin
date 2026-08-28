@@ -10,6 +10,8 @@
 
 ![问津研究对话](docs/screenshots/wenjin-research-chat-zh.png)
 
+![问津Codex app-server运行状态](docs/screenshots/wenjin-agent-runtime-status-zh.png)
+
 ## 主要能力
 
 - 独立项目工作区，可在指定的本地文件夹新建项目、登记已有项目，并查看研究阶段、材料、证据、稿件、待决定事项和最近活动；
