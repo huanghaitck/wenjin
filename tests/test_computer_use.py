@@ -5,11 +5,18 @@ import tempfile
 from pathlib import Path
 
 from research_workbench.computer_use_mcp import (
-    computer_status, desktop_snapshot, file_search, filesystem_roots, window_list,
+    computer_status, desktop_snapshot, file_search, filesystem_roots, runtime_status, window_list,
 )
 
 
 class ComputerUseTests(unittest.TestCase):
+    def test_runtime_status_distinguishes_packaged_core_from_optional_script_runtimes(self) -> None:
+        status = runtime_status()
+        self.assertTrue(status["wenjin_backend"]["available"])
+        self.assertIn("python", status["optional_script_runtimes"])
+        self.assertIn("powershell7", status["optional_script_runtimes"])
+        self.assertIn("do not require system Python", status["wenjin_backend"]["note"])
+
     def test_windows_accessibility_backend_returns_bounded_visible_state(self) -> None:
         status = computer_status()
         self.assertEqual(status["backend"], "Windows UI Automation")

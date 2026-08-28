@@ -5,11 +5,12 @@ import html
 import os
 import re
 import threading
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
 
-import fitz
+import pymupdf as fitz
 
 from .db import connect, project_id, utc_now
 from .library_store import connect_library, initialize_library, resolve_library_root
@@ -46,6 +47,28 @@ SCAN_MAX_PAGE_SIZE = 50
 SCAN_WRITE_BATCH_SIZE = 50
 
 
+def _automatic_scan_exclusion(path: Path, source_root: Path) -> str:
+    """Keep generated benchmarks and transient engineering files out of library intake."""
+    try:
+        relative = path.resolve().relative_to(source_root.resolve())
+    except ValueError:
+        relative = path
+    parts = [part.casefold() for part in relative.parts]
+    blocked_parts = {".git", ".codex-work", "node_modules", "__pycache__", "pytest_tmp", ".pytest_cache"}
+    if any(part in blocked_parts or part.startswith("pytest-") for part in parts[:-1]):
+        return "工程缓存或测试运行目录"
+    stem = path.stem.casefold()
+    generated_terms = ("histra-bench", "benchmark", "mcqtask", "final_three_questions")
+    if any(term in stem for term in generated_terms) or re.search(r"(?:^|[_\s-])bench(?:$|[_\s-])", stem):
+        return "Bench 或自动评测材料"
+    if path.suffix.casefold() in {".md", ".txt"} and (
+        stem in {"file", "readme", "agents", "skill", "changelog"}
+        or stem.startswith(("cache_", "codex-clipboard-"))
+    ):
+        return "临时 Markdown、文本或工程说明"
+    return ""
+
+
 def _file_hash(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -66,6 +89,48 @@ def _graph_node(connection: Any, node_type: str, label: str, normalized: str | N
     return node_id
 
 
+def _author_names(value: str) -> list[str]:
+    cleaned = re.sub(r"\s*[（(](?:著|编|主编|译|校|dir\.?|ed\.?|editor)[^）)]*[）)]", "", str(value or ""), flags=re.IGNORECASE)
+    parts = re.split(r"[；;,，、]|\s+(?:&|and|et|und|和)\s+", cleaned, flags=re.IGNORECASE)
+    return list(dict.fromkeys(part.strip() for part in parts if _clean_author(part.strip())))
+
+
+def _author_key(value: str) -> str:
+    return re.sub(r"[\s.．·•'’`_-]+", "", unicodedata.normalize("NFKC", value).casefold())
+
+
+def _author_identity(connection: Any, value: str) -> tuple[str, str]:
+    key = _author_key(value)
+    row = connection.execute(
+        "SELECT canonical_name FROM author_aliases WHERE alias_normalized=?", (key,)
+    ).fetchone()
+    canonical = str(row["canonical_name"]) if row else value
+    return canonical, _author_key(canonical)
+
+
+def register_author_alias(
+    library_root: Path, alias: str, canonical_name: str, decided_by: str, reason: str, orcid: str = "",
+) -> dict[str, str]:
+    alias, canonical_name, decided_by, reason = (str(value).strip() for value in (alias, canonical_name, decided_by, reason))
+    if not all((alias, canonical_name, decided_by, reason)):
+        raise ValueError("alias, canonical name, decider and reason are required")
+    root = library_root.resolve()
+    with connect_library(root) as connection:
+        for shown in (alias, canonical_name):
+            connection.execute(
+                """INSERT INTO author_aliases(alias_normalized,alias,canonical_name,orcid,decided_by,decision_reason,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(alias_normalized) DO UPDATE SET alias=excluded.alias,
+                   canonical_name=excluded.canonical_name,orcid=excluded.orcid,decided_by=excluded.decided_by,
+                   decision_reason=excluded.decision_reason,updated_at=excluded.updated_at""",
+                (_author_key(shown), shown, canonical_name, orcid, decided_by, reason, utc_now()),
+            )
+        affected = [row["work_id"] for row in connection.execute("SELECT work_id,author FROM works").fetchall()
+                    if any(_author_key(name) in {_author_key(alias), _author_key(canonical_name)} for name in _author_names(row["author"]))]
+        for work_id in affected:
+            _sync_work_graph(connection, work_id)
+    return {"alias": alias, "canonical_name": canonical_name, "orcid": orcid, "decided_by": decided_by}
+
+
 def _sync_work_graph(connection: Any, work_id: str) -> None:
     work = connection.execute("SELECT * FROM works WHERE work_id = ?", (work_id,)).fetchone()
     if work is None:
@@ -80,7 +145,9 @@ def _sync_work_graph(connection: Any, work_id: str) -> None:
     connection.execute("DELETE FROM knowledge_edges WHERE work_id = ? AND origin = 'bibliographic_metadata'", (work_id,))
     relations: list[tuple[str, str, str]] = []
     if work["author"].strip():
-        relations.append((source, "authored_by", _graph_node(connection, "person", work["author"])))
+        for author in _author_names(work["author"]):
+            canonical, normalized = _author_identity(connection, author)
+            relations.append((source, "authored_by", _graph_node(connection, "person", canonical, normalized)))
     if edition and edition["publication_year"].strip():
         relations.append((source, "published_in_year", _graph_node(connection, "year", edition["publication_year"])))
     if edition and edition["publisher"].strip():
@@ -143,11 +210,16 @@ def _filename_is_identifier(title: str) -> bool:
     )
 
 
+def _copy_suffix_rank(value: str | Path) -> tuple[bool, str]:
+    path = Path(value)
+    return bool(re.search(r"[（(]\d+[）)]$", path.stem)), str(path).casefold()
+
+
 def _clean_author(value: str) -> str:
     author = _clean_title(str(value or ""), "")
     folded = author.casefold()
     invalid = {"cnki", "administrator", "unknown", "author", "anonymous", "n/a"}
-    if folded in invalid or not re.search(r"[A-Za-z\u4e00-\u9fff]", author):
+    if folded in invalid or not re.search(r"[A-Za-zА-Яа-яЁё\u4e00-\u9fff]", author):
         return ""
     return author
 
@@ -156,6 +228,20 @@ def _deduplication_key(title: str) -> str:
     normalized = " ".join(str(title).split()).casefold()
     generic = {"file", "document", "untitled", "附件", "读书报告", "国际", "rp", "mmexport"}
     return "" if len(normalized) < 4 or normalized in generic else normalized
+
+
+def _bibliographic_identifiers(text: str) -> set[str]:
+    """Return stable work identifiers visible in title/copyright-page text."""
+    values: set[str] = set()
+    for match in re.findall(r"(?i)\b10\.\d{4,9}/[-._;()/:a-z0-9]+", text or ""):
+        doi = match.rstrip(".,;:)]}>").casefold()
+        if len(doi) >= 8:
+            values.add(f"doi:{doi}")
+    for match in re.finditer(r"(?i)(?:e-?isbn|isbn(?:\s*电子|\s*electronic)?)\s*[:：]?\s*([0-9xX][0-9xX\s-]{8,24})", text or ""):
+        isbn = re.sub(r"[^0-9X]", "", match.group(1).upper())
+        if len(isbn) in {10, 13}:
+            values.add(f"isbn:{isbn}")
+    return {value for value in values if not (value.startswith("doi:") and any(other != value and other.startswith(value) for other in values))}
 
 
 def _year(text: str) -> str:
@@ -177,6 +263,16 @@ def _material_type(title: str, sample: str, path: str = "") -> str:
         "个人论文与稿件", "我的文章", "我的论文", "手稿", "草稿", "返修稿", "投稿稿", "未刊稿",
     )):
         return "personal_manuscript"
+    if any(term in combined for term in ("博士学位", "硕士学位", "学位论文", "dissertation", "thesis")):
+        return "thesis"
+    if any(term in combined for term in (
+        "journal", "doi", "期刊", "学报", "研究论文", "学术论文", "文章编号", "收稿日期",
+    )) and not any(term in combined for term in ("books.", "isbn", "出版商", "année d'édition", "nombre de pages")):
+        return "article"
+    if any(term in combined for term in (
+        "isbn", "cip", "出版社", "出版商", "éditeur", "année d'édition", "nombre de pages", "学术专著", "monograph",
+    )):
+        return "monograph"
     if any(term in combined for term in (
         "档案", "奏折", "公文", "日记", "书信", "地方志", "史料汇编", "archive", "diary",
     )):
@@ -185,12 +281,6 @@ def _material_type(title: str, sample: str, path: str = "") -> str:
         "工具书", "目录", "索引", "年鉴", "辞典", "百科", "手册", "bibliography", "catalog", "encyclopedia", "handbook",
     )):
         return "reference_work"
-    if any(term in combined for term in ("博士学位", "硕士学位", "学位论文", "dissertation", "thesis")):
-        return "thesis"
-    if any(term in combined for term in ("journal", "doi", "期刊", "学报", "研究论文", "学术论文")):
-        return "article"
-    if any(term in combined for term in ("isbn", "cip", "出版社", "学术专著", "monograph")):
-        return "monograph"
     return "book_or_document"
 
 
@@ -200,22 +290,202 @@ def _pdf_bibliography(
     author: str,
     publisher: str,
     year: str,
+    path: Path | None = None,
+    material_type: str = "",
 ) -> tuple[str, str, str, str]:
+    """Read bibliographic facts from title, first, and copyright pages.
+
+    File-name and tag hints are fallbacks.  Page text has priority so journal
+    articles do not remain anonymous merely because their author line lacks
+    labels such as ``著`` or ``编``.
+    """
     title = fallback_title
+    lines = [" ".join(line.replace("\u3000", " ").split()) for line in sample[:50000].splitlines()]
+    lines = [line for line in lines if line]
+    compact_sample = re.sub(r"\s+", "", sample[:12000])
+
+    def clean_people(value: str) -> str:
+        value = re.sub(r"(?:作者简介|第一作者简介|通讯作者)\s*[:：]?", "", value)
+        value = re.sub(r"[0-9*＊#]+", "", value)
+        value = re.sub(r"\s*[（(](?:dir\.?|director|directeur|ed\.?|editor|导演|主编)[^）)]*[）)]", "", value, flags=re.IGNORECASE)
+        value = re.split(r"(?:E-?mail|邮箱|收稿日期|摘要|Abstract)", value, maxsplit=1, flags=re.IGNORECASE)[0]
+        parts = [part.strip(" ,，、;；·") for part in re.split(r"[,，、;；]+|\s{2,}|(?<=[A-Za-z])\s*(?:and|et|und|和)\s*(?=[A-Z])", value, flags=re.IGNORECASE)]
+        people: list[str] = []
+        for part in parts:
+            if any(term in part for term in (
+                "会议", "手册", "报告", "论文", "研究", "大学", "学院", "期刊", "学报",
+                "方向", "好处", "坏处", "内容", "问题", "数据", "方案", "方法", "因此", "并且", "目前", "可以", "这个", "一种", "主要", "如果", "以及",
+            )):
+                continue
+            if re.fullmatch(r"[\u4e00-\u9fff]{2,6}", part):
+                people.append(part)
+            elif re.fullmatch(r"[A-Z][A-Za-z'’-]+(?:\s+(?:[A-Z]\.|[A-Z][A-Za-z'’-]+|[A-Z]{2,})){1,5}", part):
+                people.append(part)
+            elif re.fullmatch(r"[А-ЯЁ](?:\.|[А-Яа-яЁё'’-]+)(?:\s+(?:[А-ЯЁ]\.|[А-ЯЁ][А-Яа-яЁё'’-]+)){1,5}", part):
+                people.append(part.rstrip("."))
+        return "；".join(dict.fromkeys(people))
+
+    citation_author = citation_journal = citation_year = ""
+    normalized = " ".join(lines[:120])
+    chinese_citation = re.search(
+        r"中文引用格式\s*[:：]\s*(?P<author>.{2,120}?)[。.]\s*"
+        r"(?P<year>(?:19|20)\d{2})[。.]\s*(?P<title>.{2,300}?)[。.]\s*"
+        r"(?P<journal>[^,，。]{2,80})[,，]",
+        normalized,
+    )
+    if chinese_citation:
+        citation_author = clean_people(chinese_citation.group("author"))
+        citation_journal = _clean_title(chinese_citation.group("journal"), "")
+        citation_year = chinese_citation.group("year")
+    english_citation = re.search(
+        r"(?P<author>[A-Z][A-Za-z'’. -]{2,80}),\s*[“\"](.{2,260}?)[”\"],\s*"
+        r"(?P<journal>[A-Z][A-Za-z &:'’.-]{2,80})\s+\d+\s*\((?P<year>(?:19|20)\d{2})\)",
+        normalized,
+    )
+    if english_citation and not citation_author:
+        citation_author = clean_people(english_citation.group("author"))
+        citation_journal = _clean_title(english_citation.group("journal"), "")
+        citation_year = english_citation.group("year")
+    if not citation_journal:
+        simple_english_issue = re.search(
+            r"\b(Environmental History|Science China Earth Sciences)\s+\d+\s*\(((?:19|20)\d{2})\)",
+            normalized,
+            re.IGNORECASE,
+        )
+        if simple_english_issue:
+            citation_journal = _clean_title(simple_english_issue.group(1), "")
+            citation_year = simple_english_issue.group(2)
+
+    confirmed_filename_author = ""
+    if path is not None:
+        raw_stem = re.sub(r"(?:\s*[（(]\d+[）)])+$", "", html.unescape(path.stem)).strip()
+        candidates: list[str] = []
+        if "_" in raw_stem:
+            candidates.append(raw_stem.rsplit("_", 1)[-1])
+        suffix = re.search(r"(?:\s|_)([\u4e00-\u9fff]{2,6})$", raw_stem)
+        if suffix:
+            candidates.append(suffix.group(1))
+        for candidate in candidates:
+            candidate = _clean_title(candidate, "")
+            if candidate and re.sub(r"\s+", "", candidate) in compact_sample:
+                confirmed_filename_author = clean_people(candidate)
+                if confirmed_filename_author:
+                    break
+
     named = re.search(r"书\s*名\s*[:：]?\s*([^\n]{2,60})", sample[:8000])
     if named:
         title = named.group(1).strip()
-    if not author:
+    role_line = next((index for index, line in enumerate(lines[:12]) if re.search(r"[（(](?:dir\.?|director|directeur|ed\.?|editor|导演|主编)[^）)]*[）)]", line, re.IGNORECASE)), -1)
+    if role_line > 0 and any(token in sample[:3000] for token in ("DOI", "ISBN", "Éditeur", "出版商", "出版社")):
+        page_title = _clean_title("：".join(lines[:role_line]), "")
+        if 5 <= len(page_title) <= 300 and (fallback_title.startswith("(NEW)") or _filename_is_identifier(fallback_title)):
+            title = page_title
+    page_author = citation_author or confirmed_filename_author
+    if not page_author:
+        def biblio_key(value: str) -> str:
+            return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value.casefold())
+
+        compact_title = biblio_key(fallback_title)
+        title_index = -1
+        title_span_end = -1
+        title_probe = compact_title[: min(80, len(compact_title))]
+        for index in range(min(80, len(lines))):
+            for width in range(1, 5):
+                window = biblio_key(" ".join(lines[index:index + width]))
+                if len(title_probe) >= 6 and (title_probe in window or (len(window) >= 12 and window in compact_title)):
+                    title_index, title_span_end = index, index + width
+                    break
+            if title_index >= 0:
+                break
+        nearby: list[str] = []
+        if title_index >= 0 and material_type == "article":
+            nearby.extend(lines[max(0, title_index - 1):title_index])
+            nearby.extend(lines[title_span_end:title_span_end + 5])
+        for line in nearby:
+            if any(term in line for term in ("摘要", "关键词", "大学", "学院", "研究所", "学报", "期刊", "DOI", "卷", "期")):
+                continue
+            candidate = clean_people(line)
+            if candidate:
+                page_author = candidate
+                break
+        if not page_author and lines and material_type == "article":
+            first_candidate = clean_people(lines[0])
+            following = biblio_key(" ".join(lines[1:5]))
+            if first_candidate and title_probe and (title_probe in following or following in compact_title):
+                page_author = first_candidate
+        if not page_author and material_type == "article":
+            for index, line in enumerate(lines[:6]):
+                candidate = clean_people(line)
+                following = " ".join(lines[index + 1:index + 5])
+                if candidate and re.search(r"(?:摘要|Abstract|学报|期刊|Journal|\d{4}年第?\d+期)", following, re.IGNORECASE):
+                    page_author = candidate
+                    break
+    if not page_author:
         authored = re.search(r"^([^\n]{2,40}(?:著|撰|编|校点))\s*$", sample[:4000], re.MULTILINE)
-        author = authored.group(1).strip() if authored else ""
-    if not publisher:
-        published = re.search(r"^([^\n]{2,50}出版社)\s*$", sample[:3000], re.MULTILINE)
-        publisher = published.group(1).strip() if published else ""
-    publisher = re.sub(r"^(?:出版商|出版者)\s*[:：]\s*", "", publisher)
-    if not year:
-        dated = re.search(r"(?:出版日期|版次|CIP)[^\n]{0,50}(1[0-9]{3}|20[0-9]{2})", sample[:3000])
-        year = dated.group(1) if dated else ""
-    return title, author, publisher, year
+        page_author = authored.group(1).strip() if authored else ""
+    if not page_author:
+        directed = re.search(
+            r"^([^\n]{3,160}?)(?:\s*[（(](?:dir\.?|director|directeur|ed\.?|editor|导演|主编)[^）)]*[）)])\s*$",
+            sample[:4000], re.MULTILINE | re.IGNORECASE,
+        )
+        page_author = clean_people(directed.group(1)) if directed else ""
+    if not page_author:
+        for index, line in enumerate(lines[:20]):
+            candidate = clean_people(line.strip(" ."))
+            preceding = " ".join(lines[max(0, index - 2):index]).casefold()
+            if candidate and re.search(r"[А-ЯЁа-яё]", candidate) and re.search(r"(?:автор|дневник|экспедици|под\s+ред)", preceding):
+                page_author = candidate
+                break
+
+    page_publisher = ""
+    if material_type == "article" or citation_journal:
+        page_publisher = citation_journal
+        if not page_publisher:
+            for line in lines[:50]:
+                if len(line) > 90 or any(mark in line for mark in ("《", "》", "；", ";")):
+                    continue
+                match = re.search(
+                    r"(?:[\u4e00-\u9fffA-Za-z ]{0,45}(?:学报(?:\s*[（(][^）)]{1,30}[）)])?|论丛|馆刊|农业考古)"
+                    r"|Journal of [A-Za-z &:'’.-]{3,80}|Environmental History|Science China Earth Sciences)",
+                    line,
+                    re.IGNORECASE,
+                )
+                if match:
+                    page_publisher = _clean_title(match.group(0), "")
+                    break
+            if not page_publisher and "中国国家博物馆馆刊" in re.sub(r"\s+", "", sample[:5000]):
+                page_publisher = "中国国家博物馆馆刊"
+    if not page_publisher and material_type != "article":
+        published = re.search(r"^(?:出版商|出版者|出版社|Éditeur)\s*[:：]\s*([^\n]{2,100})$", sample[:12000], re.MULTILINE | re.IGNORECASE)
+        if not published:
+            published = re.search(r"^([^\n]{2,70}(?:出版社|University Press|Publishing House|Press))\s*$", sample[:12000], re.MULTILINE | re.IGNORECASE)
+        page_publisher = published.group(1).strip() if published else ""
+    page_publisher = re.sub(r"^(?:出版商|出版者)\s*[:：]\s*", "", page_publisher).strip(" ,，、;；:：")
+    if page_publisher.casefold() == "environmental history":
+        page_publisher = "Environmental History"
+
+    page_year = citation_year
+    if not page_year and material_type == "article" and page_publisher:
+        issue_date = re.search(
+            r"(?<!\d)((?:19|20)\d{2})\s*年\s*(?:第\s*\d+\s*期|\d+\s*月)",
+            "\n".join(lines[:25]),
+        )
+        page_year = issue_date.group(1) if issue_date else ""
+        if not page_year:
+            journal_date = re.search(
+                rf"{re.escape(page_publisher)}[^\n]{{0,30}}(?<!\d)((?:19|20)\d{{2}})(?!\d)",
+                "\n".join(lines[:30]),
+                re.IGNORECASE,
+            )
+            page_year = journal_date.group(1) if journal_date else ""
+        if not page_year and page_publisher == "Environmental History":
+            environmental_history_date = re.search(r"Environmental History\s+\d+\s*\(((?:19|20)\d{2})\)", normalized, re.IGNORECASE)
+            page_year = environmental_history_date.group(1) if environmental_history_date else ""
+    if not page_year:
+        dated = re.search(r"(?:出版日期|出版年份|Année d['’]édition|版次|CIP)[^\n]{0,50}(1[0-9]{3}|20[0-9]{2})", sample[:3000], re.IGNORECASE)
+        page_year = dated.group(1) if dated else ""
+
+    return title, page_author or author, page_publisher or publisher, page_year or year
 
 
 def _triage_state(sample: str, supported: bool, text_layer: str, page_count: int | None) -> tuple[str, str]:
@@ -234,14 +504,50 @@ def _triage_state(sample: str, supported: bool, text_layer: str, page_count: int
     return "uncertain", "有少量线索但不足以稳定判断，建议人工确认。"
 
 
+def _word_intake_decision(path: Path, item: dict[str, Any]) -> tuple[str, str]:
+    if path.suffix.lower() != ".docx":
+        return "admit", ""
+    stem = re.sub(r"(?:\s*[（(]\d+[）)])+$", "", path.stem).strip()
+    if stem.startswith("~$"):
+        return "ignore", "Office 临时锁文件"
+    negative = (
+        "申请表", "审批表", "回执", "合同", "简历", "模板", "住宿晚归", "学籍在线验证",
+        "操作手册", "指导手册", "练习指导", "实习教程", "课程实习", "剧本", "小品", "mod介绍",
+        "报告表", "会议邀请", "选择题", "讲稿",
+    )
+    if any(term.casefold() in stem.casefold() for term in negative):
+        return "ignore", "行政、教学或非研究 Word"
+    if re.fullmatch(r"(?:摘要|引言|开头|小结论|编者前言|框架\d*(?:（[^）]*）)?)(?:\s*[-—_].*)?", stem, re.IGNORECASE):
+        return "ignore", "孤立的写作碎片"
+    sample = str(item.get("sample_text", ""))
+    if "示例稿" in sample[:1000] and "用于演示" in sample[:3000]:
+        return "ignore", "演示文件"
+    material_type = str(item.get("suggested_material_type", ""))
+    admit_terms = (
+        "翻译", "译文", "译稿", "原作", "史料", "档案", "日记", "游记", "考察", "材料", "资料整理",
+        "地方志",
+    )
+    if material_type == "archival_source" or any(term.casefold() in stem.casefold() for term in admit_terms):
+        return "admit", ""
+    if re.search(r"(?:дневник|путешествие|экспедици)", sample[:3000], re.IGNORECASE):
+        return "admit", ""
+    review_types = {"article", "monograph", "thesis", "personal_manuscript", "reading_note"}
+    review_terms = ("论文", "研究", "专著", "读书报告", "读书笔记", "环境史", "行政区划", "气候", "地理")
+    if material_type in review_types or any(term.casefold() in stem.casefold() for term in review_terms):
+        return "review", "需先比较正文完整度、重复内容和版本关系。"
+    if len(sample) >= 5000 and int(item.get("byte_count", 0) or 0) >= 20000:
+        return "review", "长篇 Word 需先核对是否为完整研究稿及当前版本。"
+    return "ignore", "未见完整研究材料特征"
+
+
 def _inspect_file(path: Path) -> dict[str, Any]:
     stat = path.stat()
     suffix = path.suffix.lower()
     supported = suffix in SUPPORTED_SUFFIXES
     title, filename_year, filename_publisher = _filename_bibliography(path)
     author = ""
-    publisher = filename_publisher
-    year = filename_year
+    publisher = ""
+    year = ""
     page_count: int | None = None
     inspected_pages = 0
     text_layer = "not_applicable"
@@ -254,14 +560,21 @@ def _inspect_file(path: Path) -> dict[str, Any]:
             embedded_title = _clean_title(str(metadata.get("title") or ""), "")
             if embedded_title and _filename_is_identifier(title):
                 title = embedded_title
-            author = metadata.get("author") or ""
+            embedded_author = metadata.get("author") or ""
             chunks: list[str] = []
             for index in range(min(10, page_count)):
                 chunks.append(document.load_page(index).get_text("text"))
                 inspected_pages += 1
             sample = "\n".join(chunks).strip()[:50000]
             text_layer = "present" if sample else "absent"
-            _, author, publisher, year = _pdf_bibliography(sample, title, author, publisher, year)
+            material_type = _material_type(title, sample, str(path))
+            page_title, page_author, page_publisher, page_year = _pdf_bibliography(
+                sample, title, "", "", "", path=path, material_type=material_type,
+            )
+            title = page_title or title
+            author = page_author or embedded_author
+            publisher = page_publisher or filename_publisher
+            year = page_year or filename_year
     elif suffix in {".md", ".txt", ".csv", ".tsv"}:
         sample = path.read_text(encoding="utf-8", errors="replace")[:50000]
         inspected_pages = 1
@@ -291,6 +604,17 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         text_layer = "absent"
 
     title = _clean_title(title, path.stem)
+    material_type = _material_type(title, sample, str(path))
+    if sample and suffix in {".md", ".txt", ".docx"}:
+        _, page_author, page_publisher, page_year = _pdf_bibliography(
+            sample, title, "", "", "", path=path, material_type=material_type,
+        )
+        author = page_author or author
+        publisher = page_publisher or filename_publisher
+        year = page_year or filename_year
+    first_author = re.split(r"[；;,，、]", _clean_author(author))[0].strip()
+    if first_author and title.endswith(f" {first_author}") and re.sub(r"\s+", "", first_author) in re.sub(r"\s+", "", sample[:12000]):
+        title = title[: -(len(first_author) + 1)].rstrip()
     state, reason = _triage_state(sample, supported, text_layer, page_count)
     return {
         "path": str(path.resolve()),
@@ -303,7 +627,7 @@ def _inspect_file(path: Path) -> dict[str, Any]:
         "suggested_year": year,
         "suggested_publisher": _clean_title(publisher, "") if publisher else "",
         "suggested_language": _language(f"{title}\n{sample[:4000]}"),
-        "suggested_material_type": _material_type(title, sample, str(path)),
+        "suggested_material_type": material_type,
         "page_count": page_count,
         "text_layer": text_layer,
         "triage_state": state,
@@ -349,7 +673,7 @@ def _candidate_action(connection: Any, item: dict[str, Any]) -> dict[str, Any]:
     ).fetchone()
     if duplicate is not None:
         return {"proposed_action": "exact_duplicate", **dict(duplicate)}
-    same_work = _existing_work_for_title(connection, item["suggested_title"])
+    same_work = _existing_work_for_candidate(connection, item)
     if same_work is not None:
         return {"proposed_action": "same_work", **dict(same_work), "file_id": None}
     return {
@@ -371,6 +695,31 @@ def _existing_work_for_title(connection: Any, title: str) -> Any:
            ORDER BY w.updated_at DESC, e.created_at LIMIT 1""",
         (" ".join(str(title).split()),),
     ).fetchone()
+
+
+def _existing_work_for_candidate(connection: Any, candidate: Any) -> Any:
+    for identifier in sorted(_bibliographic_identifiers(str(candidate["sample_text"] or ""))):
+        kind, value = identifier.split(":", 1)
+        if kind == "doi":
+            row = connection.execute(
+                """SELECT f.work_id, f.edition_id FROM file_versions v
+                   JOIN library_files f ON f.file_id=v.file_id
+                   WHERE v.is_current=1 AND instr(lower(v.sample_text), ?) > 0
+                   ORDER BY v.discovered_at DESC LIMIT 1""",
+                (value,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                """SELECT f.work_id, f.edition_id FROM file_versions v
+                   JOIN library_files f ON f.file_id=v.file_id
+                   WHERE v.is_current=1 AND instr(
+                       replace(replace(replace(replace(upper(v.sample_text), '-', ''), ' ', ''), char(10), ''), char(13), ''), ?
+                   ) > 0 ORDER BY v.discovered_at DESC LIMIT 1""",
+                (value,),
+            ).fetchone()
+        if row is not None:
+            return row
+    return _existing_work_for_title(connection, candidate["suggested_title"])
 
 
 def create_scan_session(
@@ -413,6 +762,7 @@ def run_scan_session(
         source_root = Path(session["root_path"])
     processed = 0
     pending: list[tuple[str, dict[str, Any], str, str, dict[str, Any]]] = []
+    seen_identifiers: set[str] = set()
 
     def flush_pending() -> None:
         nonlocal processed
@@ -421,8 +771,12 @@ def run_scan_session(
         with connect_library(root) as connection:
             for candidate_id, item, status, error, fallback_identity in pending:
                 identity = (
-                    _candidate_action(connection, item) if status != "error" else fallback_identity
+                    _candidate_action(connection, item) if status not in {"error", "ignored"} else fallback_identity
                 )
+                identifiers = _bibliographic_identifiers(str(item.get("sample_text", "")))
+                if identity["proposed_action"] == "register_new" and identifiers & seen_identifiers:
+                    identity = {"proposed_action": "same_scan_work", "work_id": None, "edition_id": None, "file_id": None}
+                seen_identifiers.update(identifiers)
                 connection.execute(
                     """INSERT INTO scan_candidates(
                            candidate_id, session_id, path, format, byte_count, modified_ns, sha256,
@@ -453,15 +807,39 @@ def run_scan_session(
 
     try:
         for directory, _, filenames in os.walk(source_root, followlinks=False):
-            for filename in sorted(filenames):
+            for filename in sorted(filenames, key=_copy_suffix_rank):
                 path = Path(directory) / filename
                 if path.suffix.lower() not in CANDIDATE_SUFFIXES:
                     continue
+                if _automatic_scan_exclusion(path, source_root):
+                    continue
                 candidate_id = f"CND_{uuid.uuid4().hex}"
+                if path.suffix.lower() == ".docx" and path.name.startswith("~$"):
+                    stat = path.stat()
+                    item = {
+                        "path": str(path.resolve()), "format": "docx", "byte_count": stat.st_size,
+                        "modified_ns": stat.st_mtime_ns, "sha256": "", "suggested_title": path.stem,
+                        "suggested_author": "", "suggested_year": "", "suggested_publisher": "",
+                        "suggested_language": "und", "suggested_material_type": "unknown",
+                        "page_count": None, "text_layer": "unknown", "triage_state": "ignored_word",
+                        "triage_reason": "Office 临时锁文件", "inspected_pages": 0, "sample_text": "",
+                    }
+                    pending.append((candidate_id, item, "ignored", "", {"proposed_action": "ignored", "work_id": None, "edition_id": None, "file_id": None}))
+                    if len(pending) >= SCAN_WRITE_BATCH_SIZE:
+                        flush_pending()
+                    continue
                 try:
                     item = _inspect_file(path)
                     identity = {"proposed_action": "", "work_id": None, "edition_id": None, "file_id": None}
-                    status = "preview"
+                    route, route_reason = _word_intake_decision(path, item)
+                    status = "ignored" if route == "ignore" else "preview"
+                    if route == "ignore":
+                        item["triage_state"] = "ignored_word"
+                        item["triage_reason"] = route_reason
+                        identity["proposed_action"] = "ignored"
+                    elif route == "review":
+                        item["triage_state"] = "word_review"
+                        item["triage_reason"] = route_reason
                     error = ""
                 except Exception as exc:
                     stat = path.stat()
@@ -552,6 +930,20 @@ def archive_uploaded_file(
         None,
     )
     if candidate is None:
+        root = library_root_for(project_root, library_root)
+        with connect_library(root) as connection:
+            row = connection.execute(
+                "SELECT * FROM scan_candidates WHERE session_id=? AND path=?",
+                (session["session_id"], str(source_path)),
+            ).fetchone()
+            if row is not None and row["status"] == "ignored":
+                connection.execute(
+                    "UPDATE scan_candidates SET status='preview',triage_state='uncertain',triage_reason=? WHERE candidate_id=?",
+                    ("用户明确上传，覆盖批量 Word 准入规则。", row["candidate_id"]),
+                )
+                candidate = dict(row)
+                candidate.update(status="preview", triage_state="uncertain")
+    if candidate is None:
         raise RuntimeError("uploaded file was not found in its library intake session")
     result = approve_candidates(project_root, session["session_id"], [candidate["candidate_id"]], library_root)
     approved = result["approved"][0] if result["approved"] else {
@@ -605,23 +997,40 @@ def scan_session(
         if session is None:
             raise KeyError(f"unknown scan session: {session_id}")
         total_count = connection.execute(
-            "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ?", (session["session_id"],)
+            "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ? AND status <> 'ignored'", (session["session_id"],)
+        ).fetchone()[0]
+        ignored_word_count = connection.execute(
+            "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ? AND status = 'ignored'", (session["session_id"],)
+        ).fetchone()[0]
+        word_review_count = connection.execute(
+            "SELECT COUNT(*) FROM scan_candidates WHERE session_id = ? AND status='preview' AND triage_state='word_review'",
+            (session["session_id"],),
         ).fetchone()[0]
         eligible_remaining_count = connection.execute(
             """SELECT COUNT(*) FROM scan_candidates
                WHERE session_id = ? AND status = 'preview'
                  AND triage_state NOT IN ('unsupported', 'error')
+                 AND triage_state <> 'word_review'
                  AND proposed_action != 'unchanged'""",
             (session["session_id"],),
         ).fetchone()[0]
         offset = (page - 1) * page_size
         candidates = connection.execute(
-            """SELECT candidate_id, session_id, path, format, byte_count, modified_ns, sha256,
-                      suggested_title, suggested_author, suggested_year, suggested_publisher,
-                      suggested_language, suggested_material_type, page_count, text_layer,
-                      triage_state, triage_reason, inspected_pages, proposed_action,
-                      existing_work_id, existing_edition_id, existing_file_id, status, error
-               FROM scan_candidates WHERE session_id = ? ORDER BY path LIMIT ? OFFSET ?""",
+            """SELECT c.candidate_id, c.session_id, c.path, c.format, c.byte_count, c.modified_ns, c.sha256,
+                      c.suggested_title, c.suggested_author, c.suggested_year, c.suggested_publisher,
+                      c.suggested_language, c.suggested_material_type, c.page_count, c.text_layer,
+                      c.triage_state, c.triage_reason, c.inspected_pages, c.proposed_action,
+                      c.existing_work_id, c.existing_edition_id, c.existing_file_id, c.status, c.error,
+                      f.work_id AS resolved_work_id, w.canonical_title AS resolved_work_title,
+                      w.author AS resolved_work_author, w.material_type AS resolved_material_type,
+                      e.publisher AS resolved_publisher,
+                      e.publication_year AS resolved_year,
+                      (SELECT COUNT(*) FROM library_files peers WHERE peers.work_id=f.work_id) AS resolved_file_count
+               FROM scan_candidates c
+               LEFT JOIN library_files f ON f.path=c.path
+               LEFT JOIN works w ON w.work_id=f.work_id
+               LEFT JOIN editions e ON e.edition_id=f.edition_id
+               WHERE c.session_id = ? AND c.status <> 'ignored' ORDER BY c.path LIMIT ? OFFSET ?""",
             (session["session_id"], page_size, offset),
         ).fetchall()
     candidate_items = []
@@ -629,10 +1038,15 @@ def scan_session(
         item = dict(row)
         item["suggested_shelf"] = SUGGESTED_SHELVES.get(item["suggested_material_type"], "unclassified")
         item["suggested_shelf_label"] = LIBRARY_SHELVES[item["suggested_shelf"]]
+        if item.get("resolved_material_type"):
+            item["resolved_shelf"] = SUGGESTED_SHELVES.get(item["resolved_material_type"], "unclassified")
+            item["resolved_shelf_label"] = LIBRARY_SHELVES[item["resolved_shelf"]]
         candidate_items.append(item)
     return {
         **dict(session),
         "total_count": total_count,
+        "ignored_word_count": ignored_word_count,
+        "word_review_count": word_review_count,
         "eligible_remaining_count": eligible_remaining_count,
         "page": page,
         "page_size": page_size,
@@ -718,13 +1132,16 @@ def approve_candidates(
         candidates = connection.execute(
             f"SELECT * FROM scan_candidates WHERE session_id = ?{clause} ORDER BY path", parameters
         ).fetchall()
+        candidates = sorted(candidates, key=lambda candidate: _copy_suffix_rank(candidate["path"]))
         approved: list[dict[str, str]] = []
         for candidate in candidates:
             if candidate["status"] != "preview" or candidate["triage_state"] in {"error", "unsupported"}:
                 continue
+            if not candidate_ids and candidate["triage_state"] == "word_review":
+                continue
             action = candidate["proposed_action"]
-            if action == "register_new" and _existing_work_for_title(connection, candidate["suggested_title"]):
-                action = "same_work"
+            if action in {"register_new", "same_scan_work"}:
+                action = "same_work" if _existing_work_for_candidate(connection, candidate) else "register_new"
             if action == "unchanged":
                 connection.execute(
                     "UPDATE library_files SET last_seen_at = ? WHERE file_id = ?",
@@ -741,7 +1158,7 @@ def approve_candidates(
                 now = utc_now()
                 if action in {"exact_duplicate", "same_work"}:
                     existing = (
-                        _existing_work_for_title(connection, candidate["suggested_title"])
+                        _existing_work_for_candidate(connection, candidate)
                         if action == "same_work" else candidate
                     )
                     work_id = existing["work_id"] if action == "same_work" else existing["existing_work_id"]
@@ -777,9 +1194,29 @@ def approve_candidates(
                     _add_tag(connection, work_id, f"triage:{candidate['triage_state']}", "system")
                     shelf = SUGGESTED_SHELVES.get(candidate["suggested_material_type"], "unclassified")
                     _add_tag(connection, work_id, f"shelf:{shelf}", "system")
+                else:
+                    work = connection.execute("SELECT author FROM works WHERE work_id=?", (work_id,)).fetchone()
+                    if work and not work["author"] and candidate["suggested_author"]:
+                        connection.execute(
+                            "UPDATE works SET author=?,updated_at=? WHERE work_id=?",
+                            (candidate["suggested_author"], utc_now(), work_id),
+                        )
+                    edition = connection.execute(
+                        "SELECT publisher,publication_year FROM editions WHERE edition_id=?", (edition_id,)
+                    ).fetchone()
+                    if edition:
+                        connection.execute(
+                            """UPDATE editions SET publisher=?,publication_year=? WHERE edition_id=?""",
+                            (
+                                edition["publisher"] or candidate["suggested_publisher"],
+                                edition["publication_year"] or candidate["suggested_year"], edition_id,
+                            ),
+                        )
             connection.execute(
-                "UPDATE scan_candidates SET status = 'approved' WHERE candidate_id = ?",
-                (candidate["candidate_id"],),
+                """UPDATE scan_candidates SET status='approved',proposed_action=?,existing_work_id=?,
+                   existing_edition_id=?,existing_file_id=? WHERE candidate_id=?""",
+                (action, work_id, edition_id if action not in {"unchanged", "new_version"} else candidate["existing_edition_id"],
+                 file_id if action not in {"unchanged", "new_version"} else candidate["existing_file_id"], candidate["candidate_id"]),
             )
             _refresh_search(connection, work_id)
             _sync_work_graph(connection, work_id)
@@ -1114,23 +1551,33 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
         for work_id in missing_work_ids:
             _sync_work_graph(connection, work_id)
         if query.strip():
-            phrase = '"' + query.strip().replace('"', '""') + '"'
-            work_ids = [row["work_id"] for row in connection.execute(
-                "SELECT work_id FROM work_search WHERE work_search MATCH ? LIMIT ?", (phrase, limit)
-            ).fetchall()]
-            contains = f"%{query.strip()}%"
-            fallback = connection.execute(
-                """SELECT DISTINCT w.work_id FROM works w
-                   LEFT JOIN editions e ON e.work_id = w.work_id
-                   LEFT JOIN library_files f ON f.work_id = w.work_id
-                   LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
-                   LEFT JOIN work_tags wt ON wt.work_id = w.work_id
-                   LEFT JOIN tags t ON t.tag_id = wt.tag_id
-                   WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
-                      OR t.name LIKE ? OR v.sample_text LIKE ? LIMIT ?""",
-                (contains, contains, contains, contains, contains, limit),
-            ).fetchall()
-            work_ids.extend(row["work_id"] for row in fallback if row["work_id"] not in work_ids)
+            aliases = [query.strip()]
+            alias_row = connection.execute(
+                "SELECT canonical_name FROM author_aliases WHERE alias_normalized=?", (_author_key(query.strip()),)
+            ).fetchone()
+            if alias_row:
+                aliases.extend(row["alias"] for row in connection.execute(
+                    "SELECT alias FROM author_aliases WHERE canonical_name=?", (alias_row["canonical_name"],)
+                ).fetchall())
+            work_ids = []
+            for value in dict.fromkeys(aliases):
+                phrase = '"' + value.replace('"', '""') + '"'
+                work_ids.extend(row["work_id"] for row in connection.execute(
+                    "SELECT work_id FROM work_search WHERE work_search MATCH ? LIMIT ?", (phrase, limit)
+                ).fetchall() if row["work_id"] not in work_ids)
+                contains = f"%{value}%"
+                fallback = connection.execute(
+                    """SELECT DISTINCT w.work_id FROM works w
+                       LEFT JOIN editions e ON e.work_id = w.work_id
+                       LEFT JOIN library_files f ON f.work_id = w.work_id
+                       LEFT JOIN file_versions v ON v.file_id = f.file_id AND v.is_current = 1
+                       LEFT JOIN work_tags wt ON wt.work_id = w.work_id
+                       LEFT JOIN tags t ON t.tag_id = wt.tag_id
+                       WHERE w.canonical_title LIKE ? OR w.author LIKE ? OR e.publisher LIKE ?
+                          OR t.name LIKE ? OR v.sample_text LIKE ? LIMIT ?""",
+                    (contains, contains, contains, contains, contains, limit),
+                ).fetchall()
+                work_ids.extend(row["work_id"] for row in fallback if row["work_id"] not in work_ids)
             work_ids = work_ids[:limit]
         else:
             work_ids = [row["work_id"] for row in connection.execute(
@@ -1160,6 +1607,7 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             ]
             return {
                 "nodes": fallback_nodes, "edges": fallback_edges, "work_cards": [], "content_graph": content_graph,
+                "entity_nodes": fallback_nodes, "entity_edges": fallback_edges,
                 "literature_relations": literature_relations,
                 "node_count": len(fallback_nodes), "edge_count": len(fallback_edges),
                 "backfilled_work_count": len(missing_work_ids), "query": query.strip(),
@@ -1204,6 +1652,11 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             node["work_id"] = work_lookup.get(node["normalized_label"], "") if node["node_type"] == "work" else ""
             node["graph_category"] = work_categories.get(node["work_id"], "unclassified") if node["work_id"] else node["node_type"]
             node.pop("normalized_label", None)
+        entity_nodes = [dict(node) for node in nodes if not (
+            node["node_type"] == "tag" and str(node["label"]).startswith(("metadata:", "triage:", "material:", "shelf:"))
+        )]
+        entity_node_ids = {node["node_id"] for node in entity_nodes}
+        entity_edges = [dict(edge) for edge in edges if edge["source_node_id"] in entity_node_ids and edge["target_node_id"] in entity_node_ids]
         work_nodes = {node["node_id"]: node for node in nodes if node["node_type"] == "work"}
         metadata_nodes = {node["node_id"]: node for node in nodes if node["node_type"] != "work"}
         related: dict[str, set[str]] = {}
@@ -1237,25 +1690,6 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                     "edge_id": edge_id, "source_node_id": source_id, "relation": relation,
                     "target_node_id": target_id, "work_id": "", "origin": "collapsed_bibliographic_metadata",
                 }
-        decade_groups: dict[int, set[str]] = {}
-        for metadata_id, work_node_ids in related.items():
-            metadata = metadata_nodes[metadata_id]
-            if metadata["node_type"] != "year" or not str(metadata["label"]).isdigit():
-                continue
-            year = int(metadata["label"])
-            decade_groups.setdefault(year // 10 * 10, set()).update(work_node_ids)
-        for decade, work_node_ids in decade_groups.items():
-            ordered = sorted(work_node_ids, key=lambda node_id: work_nodes[node_id]["label"].casefold())
-            pairs = list(zip(ordered, ordered[1:])) if len(ordered) > 8 else [
-                (ordered[left], ordered[right]) for left in range(len(ordered)) for right in range(left + 1, len(ordered))
-            ]
-            for source_id, target_id in pairs:
-                relation = "same_decade"
-                edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation}\0{target_id}\0{decade}".encode("utf-8")).hexdigest()[:24]
-                direct_edges[edge_id] = {
-                    "edge_id": edge_id, "source_node_id": source_id, "relation": relation,
-                    "target_node_id": target_id, "work_id": "", "origin": f"publication_decade:{decade}",
-                }
         work_node_by_work_id = {node["work_id"]: node["node_id"] for node in work_nodes.values()}
         for relation in literature_relations:
             if relation["status"] not in {"approved", "derived"}:
@@ -1271,6 +1705,7 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                 "target_node_id": target_id, "work_id": relation["source_work_id"],
                 "origin": "approved_literature_relation" if relation["status"] == "approved" else "markdown_derived_literature_relation",
             }
+            entity_edges.append(dict(direct_edges[edge_id]))
         nodes = list(work_nodes.values())
         edges = list(direct_edges.values())
         work_cards = []
@@ -1320,6 +1755,8 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
     return {
         "nodes": nodes,
         "edges": edges,
+        "entity_nodes": entity_nodes,
+        "entity_edges": entity_edges,
         "work_cards": work_cards,
         "node_count": len(nodes),
         "edge_count": len(edges),

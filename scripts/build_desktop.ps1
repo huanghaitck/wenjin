@@ -49,6 +49,7 @@ $pyInstallerArgs = @(
     "--name", "hrw-sidecar", "--paths", (Join-Path $repositoryRoot "src"),
     "--collect-data", "research_workbench", "--collect-data", "certifi", "--collect-all", "pymupdf",
     "--collect-all", "uiautomation", "--collect-all", "comtypes",
+    "--collect-all", "openai_codex", "--collect-all", "codex_cli_bin",
     "--distpath", (Join-Path $repositoryRoot "build\sidecar-dist"),
     "--workpath", (Join-Path $repositoryRoot "build\sidecar-work"),
     "--specpath", (Join-Path $repositoryRoot "build")

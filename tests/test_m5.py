@@ -9,20 +9,25 @@ import unittest
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-import fitz
+import pymupdf as fitz
 
 from research_workbench.library import (
+    _bibliographic_identifiers,
+    _author_names,
     _filename_bibliography,
     _filename_is_identifier,
     _clean_author,
     _material_type,
     _pdf_bibliography,
     approve_candidates,
+    archive_uploaded_file,
     decide_literature_relation,
     link_work_to_project,
     library_graph,
     move_work_to_shelf,
+    register_author_alias,
     scan_directory,
+    scan_session,
     search_library,
     update_work,
     work_detail,
@@ -47,6 +52,14 @@ class M5ResearchLibraryTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_automatic_scan_skips_bench_and_transient_markdown(self) -> None:
+        (self.materials / "HistRA-Bench_questions.md").write_text("benchmark", encoding="utf-8")
+        (self.materials / "file.md").write_text("temporary", encoding="utf-8")
+        document = fitz.open(); document.new_page().insert_text((72, 72), "Historical source")
+        document.save(self.materials / "real-source.pdf"); document.close()
+        scanned = scan_directory(self.project, self.materials, self.library)
+        self.assertEqual([Path(item["path"]).name for item in scanned["candidates"]], ["real-source.pdf"])
 
     def _approve_one(self, path: Path) -> tuple[str, dict[str, object]]:
         session = scan_directory(self.project, path.parent, self.library)
@@ -215,6 +228,187 @@ class M5ResearchLibraryTests(unittest.TestCase):
             _pdf_bibliography(sample, "qdx", "", "", ""),
             ("廿二史考异", "(清)钱大昕撰", "凤凰出版社", "2008"),
         )
+
+    def test_journal_first_page_precedes_filename_hints(self) -> None:
+        sample = """中国北方兴隆遗址早期农业人群对木材的利用和管理
+沈慧1,3, 邱振威2, 赵克良1,3, 周新郢1,3, 李小强1,3*
+摘要
+中文引用格式:
+沈慧, 邱振威, 赵克良, 周新郢, 李小强. 2024. 中国北方兴隆遗址早期农业人群对木材的利用和管理. 中国科学: 地球科学, 54(6): 1937–1949
+"""
+        self.assertEqual(
+            _pdf_bibliography(
+                sample, "中国北方兴隆遗址早期农业人群对木材的利用和管理 沈慧",
+                "", "错误标签出版社", "1888",
+                path=Path("中国北方兴隆遗址早期农业人群对木材的利用和管理_沈慧.pdf"),
+                material_type="article",
+            ),
+            (
+                "中国北方兴隆遗址早期农业人群对木材的利用和管理 沈慧",
+                "沈慧；邱振威；赵克良；周新郢；李小强",
+                "中国科学: 地球科学",
+                "2024",
+            ),
+        )
+
+    def test_journal_filename_author_is_used_only_when_confirmed_on_page(self) -> None:
+        sample = """农业考古2021·5
+俄罗斯学者视野下的近代中俄茶叶贸易与晋商
+刘啸虎
+李 珂
+摘要：晋商与茶叶贸易研究。
+"""
+        result = _pdf_bibliography(
+            sample, "俄罗斯学者视野下的近代中俄茶叶贸易与晋商 刘啸虎", "", "", "",
+            path=Path("俄罗斯学者视野下的近代中俄茶叶贸易与晋商_刘啸虎.pdf"),
+            material_type="article",
+        )
+        self.assertEqual(result[1], "刘啸虎")
+        self.assertIn("农业考古", result[2])
+
+    def test_article_signals_precede_archival_words_in_title(self) -> None:
+        self.assertEqual(
+            _material_type("档案史料研究", "某大学学报 2024年第2期 文章编号"),
+            "article",
+        )
+
+    def test_article_prose_does_not_masquerade_as_a_journal_title(self) -> None:
+        sample = """历史地图中的解释
+成一农
+摘要：本文由中国社会科学院历史研究所历史地理研究室与复旦大学历史地理研究中心共同讨论。
+"""
+        result = _pdf_bibliography(
+            sample, "历史地图中的解释 成一农", "", "", "",
+            path=Path("历史地图中的解释_成一农.pdf"), material_type="article",
+        )
+        self.assertEqual(result[1], "成一农")
+        self.assertEqual(result[2], "")
+
+    def test_english_article_reads_author_journal_and_year_from_first_page(self) -> None:
+        sample = """Shen Hou
+Nature's Tonic: Beer,
+Ecology, and Urbanization
+in a Chinese City, 1900-50
+Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 1900-50,” Environmental History 24 (2019): 282-306
+"""
+        result = _pdf_bibliography(
+            sample, "Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 1900-50",
+            "", "", "", material_type="article",
+        )
+        self.assertEqual(result[1], "Shen Hou")
+        self.assertEqual(result[2], "Environmental History")
+        self.assertEqual(result[3], "2019")
+
+    def test_cyrillic_title_page_responsibility_is_read(self) -> None:
+        sample = """Путешествие по Китаю в 1874 - 1875 гг.
+Из дневника члена экспедиции
+П. Я. Пясецкого.
+ТОМ II.
+МОСКВА. 1882.
+"""
+        result = _pdf_bibliography(sample, "Puteshestvie", "", "", "", material_type="book_or_document")
+        self.assertEqual(result[1], "П. Я. Пясецкого")
+        self.assertEqual(_clean_author(result[1]), "П. Я. Пясецкого")
+
+    def test_multi_author_metadata_connects_each_shared_author(self) -> None:
+        self.assertEqual(_author_names("甲；乙"), ["甲", "乙"])
+        first = self.materials / "first-author.md"; second = self.materials / "second-author.md"
+        first.write_text("# 第一篇\n\n历史材料。" * 20, encoding="utf-8")
+        second.write_text("# 第二篇\n\n历史材料。" * 20, encoding="utf-8")
+        first_work, _ = self._approve_one(first); second_work, _ = self._approve_one(second)
+        update_work(self.project, first_work, {"canonical_title": "第一篇", "author": "甲；乙"}, [], self.library)
+        update_work(self.project, second_work, {"canonical_title": "第二篇", "author": "甲"}, [], self.library)
+        graph = library_graph(self.project, library_root=self.library)
+        self.assertTrue(any(edge["relation"] == "same_author" for edge in graph["edges"]))
+        self.assertTrue({"甲", "乙"}.issubset({node["label"] for node in graph["entity_nodes"] if node["node_type"] == "person"}))
+        self.assertGreaterEqual(sum(edge["relation"] == "authored_by" for edge in graph["entity_edges"]), 3)
+
+    def test_author_aliases_preserve_raw_names_but_share_one_entity(self) -> None:
+        first = self.materials / "english-name.md"; second = self.materials / "chinese-name.md"
+        first.write_text("# English work\n\nHistory." * 20, encoding="utf-8")
+        second.write_text("# 中文作品\n\n历史。" * 20, encoding="utf-8")
+        first_work, _ = self._approve_one(first); second_work, _ = self._approve_one(second)
+        update_work(self.project, first_work, {"canonical_title": "English work", "author": "Shen Hou"}, [], self.library)
+        update_work(self.project, second_work, {"canonical_title": "中文作品", "author": "侯深"}, [], self.library)
+        register_author_alias(self.library, "Shen Hou", "侯深", "tester", "verified bilingual byline")
+        graph = library_graph(self.project, library_root=self.library)
+        self.assertTrue(any(edge["relation"] == "same_author" for edge in graph["edges"]))
+        people = [node["label"] for node in graph["entity_nodes"] if node["node_type"] == "person"]
+        self.assertIn("侯深", people); self.assertNotIn("Shen Hou", people)
+        self.assertFalse(any(node["node_type"] == "tag" and node["label"].startswith(("metadata:", "triage:", "material:", "shelf:")) for node in graph["entity_nodes"]))
+        searched = library_graph(self.project, "侯深", library_root=self.library)
+        self.assertEqual({card["work_id"] for card in searched["work_cards"]}, {first_work, second_work})
+
+    def test_docx_uses_page_bibliography_before_filename_hints(self) -> None:
+        from docx import Document
+        from research_workbench.library import _inspect_file
+
+        path = self.materials / "期刊文章_副本.docx"
+        document = Document()
+        document.add_paragraph("地方史研究中的材料问题")
+        document.add_paragraph("王小明")
+        document.add_paragraph("某大学学报 2023年第2期")
+        document.add_paragraph("摘要：本文讨论地方史材料。")
+        document.save(path)
+        inspected = _inspect_file(path)
+        self.assertEqual(inspected["suggested_author"], "王小明")
+        self.assertEqual(inspected["suggested_publisher"], "某大学学报")
+        self.assertEqual(inspected["suggested_year"], "2023")
+
+    def test_bibliographic_identifiers_merge_same_scan_files_and_refresh_cards(self) -> None:
+        self.assertEqual(
+            _bibliographic_identifiers("DOI: 10.4000/books.pul.13146 ISBN: 9782729711061"),
+            {"doi:10.4000/books.pul.13146", "isbn:9782729711061"},
+        )
+        page = (
+            "Regional History (1245-1800)\nNetworks and Perceptions\n"
+            "Jean-Louis Gaulin and Susanne Rau (dir.)\n"
+            "DOI: 10.4000/books.pul.13146\nISBN: 9782729711061\n"
+        )
+        for name, suffix in (("Regional History.pdf", "Original"), ("Regional History(1).pdf", "Generated copy")):
+            document = fitz.open()
+            document.new_page().insert_textbox(fitz.Rect(72, 72, 520, 760), page + suffix)
+            document.save(self.materials / name)
+            document.close()
+        scanned = scan_directory(self.project, self.materials, self.library)
+        actions = {Path(item["path"]).name: item["proposed_action"] for item in scanned["candidates"]}
+        self.assertEqual(actions["Regional History.pdf"], "register_new")
+        self.assertEqual(actions["Regional History(1).pdf"], "same_scan_work")
+        approved = approve_candidates(self.project, scanned["session_id"], None, self.library)
+        self.assertEqual(len({item["work_id"] for item in approved["approved"]}), 1)
+        refreshed = scan_session(self.project, scanned["session_id"], self.library)
+        self.assertTrue(all(item["resolved_file_count"] == 2 for item in refreshed["candidates"]))
+        self.assertTrue(all(item["resolved_work_author"] == "Jean-Louis Gaulin；Susanne Rau" for item in refreshed["candidates"]))
+        self.assertTrue(all(item["resolved_shelf"] == "monographs" for item in refreshed["candidates"]))
+
+    def test_bulk_word_gate_keeps_research_files_and_explicit_upload_can_override(self) -> None:
+        from docx import Document
+
+        samples = {
+            "摘要.docx": "摘要：这是孤立片段。",
+            "研究生外出申请审批表.docx": "申请人和审批意见。",
+            "旅行日记人工翻译稿.docx": "人工翻译的旅行日记与史料。",
+            "葡萄根瘤蚜相关材料.docx": "农业报刊中的葡萄材料。",
+            "环境史读书报告.docx": "读书报告与文献评论。",
+            "~$临时.docx": "Office 临时文件。",
+            "编者前言.docx": "孤立的译稿前言。",
+        }
+        for name, text in samples.items():
+            document = Document(); document.add_paragraph(text * 20); document.save(self.materials / name)
+        scanned = scan_directory(self.project, self.materials, self.library)
+        self.assertEqual(scanned["total_count"], 3)
+        self.assertEqual(scanned["ignored_word_count"], 4)
+        self.assertEqual(scanned["word_review_count"], 1)
+        self.assertEqual(
+            {Path(item["path"]).name for item in scanned["candidates"]},
+            {"旅行日记人工翻译稿.docx", "葡萄根瘤蚜相关材料.docx", "环境史读书报告.docx"},
+        )
+        bulk = approve_candidates(self.project, scanned["session_id"], None, self.library)
+        self.assertEqual(len(bulk["approved"]), 2)
+        uploaded = archive_uploaded_file(
+            self.project, self.materials / "研究生外出申请审批表.docx", self.library,
+        )
+        self.assertTrue(uploaded["work_id"])
 
     def test_file_name_is_the_intake_title_and_copy_suffixes_are_cleaned(self) -> None:
         self.assertEqual(

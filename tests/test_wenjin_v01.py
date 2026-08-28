@@ -92,7 +92,7 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', cli)
         self.assertIn("raise SystemExit(main())", cli)
 
-    def test_knowledge_graph_bundles_force_layout_and_disconnected_node_scatter(self) -> None:
+    def test_knowledge_graph_bundles_force_layout_and_component_packing(self) -> None:
         root = Path(__file__).parents[1]
         vendor = root / "src" / "research_workbench" / "web_assets" / "vendor"
         for name in ("cytoscape.min.js", "layout-base.js", "cose-base.js", "cytoscape-fcose.js"):
@@ -101,8 +101,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertLess(index.index("/vendor/cytoscape.min.js"), index.index("/vendor/cytoscape-fcose.js"))
         script = (vendor.parent / "app.js").read_text(encoding="utf-8")
         self.assertIn("name:'fcose'", script)
-        self.assertIn("components()", script)
-        self.assertIn("placeIsolated", script)
+        self.assertIn("packComponents:true", script)
+        self.assertNotIn("placeIsolated", script)
         package = (root / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('"web_assets/vendor/*.js"', package)
 
@@ -135,8 +135,9 @@ class WenjinV01Tests(unittest.TestCase):
         with patch("research_workbench.desktop_runtime.sys.frozen", True, create=True):
             _install_builtin_computer_use(config)
         plugin = next(item for item in plugin_state(config)["plugins"] if item["name"] == "computer-use")
-        self.assertEqual(plugin["version"], "0.1.2")
+        self.assertEqual(plugin["version"], "0.1.3")
         self.assertEqual(plugin["tool_permissions"]["run_command"], "sensitive")
+        self.assertEqual(plugin["tool_permissions"]["repair_runtime"], "sensitive")
         self.assertIn("desktop_snapshot", plugin["agent_tools"])
         self.assertIn("file_search", plugin["agent_tools"])
 
@@ -284,6 +285,14 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("/api/source-chronicle", script)
         self.assertIn("renderKnowledgeGraph", script)
         self.assertIn("How to use this graph", script)
+        self.assertIn("题名：悬浮", script)
+        self.assertIn("labels-always", script)
+        self.assertIn("graph-filter-panel", script)
+        self.assertIn("renderedEdges", script)
+        self.assertIn("edge.composite", script)
+        self.assertIn("作品关系", script)
+        self.assertIn("书目实体", script)
+        self.assertIn("rawEdges", script)
         self.assertIn("graph-work-cards", script)
         self.assertIn("Open project source pages", script)
         self.assertIn("Project content graph", script)

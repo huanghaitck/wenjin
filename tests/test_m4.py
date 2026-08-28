@@ -18,6 +18,7 @@ from research_workbench.agent_runtime import (
     ModelActionFormatError,
     ModelProfile,
     SYSTEM_PROMPT,
+    _adaptive_model_timeout,
     _advance_run,
     _agent_research_state,
     _compact_authoring_state,
@@ -32,6 +33,7 @@ from research_workbench.agent_runtime import (
     _read_page,
     _search_source_blocks,
     _execute_tool,
+    _explicit_required_tool,
     _thread_history,
     assign_model,
     create_thread,
@@ -68,11 +70,21 @@ class FakeResponse:
 
 
 class M4AgentWorkspaceTests(unittest.TestCase):
+    def test_model_timeout_expands_only_for_deep_or_tool_heavy_turns(self) -> None:
+        self.assertEqual(_adaptive_model_timeout(120, "standard", "low", 0), 120)
+        self.assertEqual(_adaptive_model_timeout(120, "deep", "high", 0), 300)
+        self.assertEqual(_adaptive_model_timeout(120, "standard", "low", 8), 340)
+
+    def test_runtime_diagnosis_and_repair_are_required_from_natural_language(self) -> None:
+        self.assertEqual(_explicit_required_tool("检查这台电脑的 Python 和 PowerShell 运行环境"), "computer.runtime_status")
+        self.assertEqual(_explicit_required_tool("请修复缺少的 PowerShell 运行环境"), "computer.runtime_repair")
+        self.assertEqual(_explicit_required_tool("请修复灾害史领域 Agent 的运行工具"), "plugin.repair")
+
     def test_public_final_text_strips_provider_protocol_prefix(self) -> None:
         self.assertEqual(_clean_final_text("final answer:\n这是给研究者的答复。"), "这是给研究者的答复。")
 
     def test_main_agent_keeps_general_file_web_office_and_skill_capabilities(self) -> None:
-        for tool in ("computer.file_search", "computer.launch", "research.search", "browser.start", "skill.create"):
+        for tool in ("computer.file_search", "computer.launch", "computer.runtime_status", "computer.runtime_repair", "research.search", "browser.start", "skill.create"):
             self.assertIn(f'"tool":"{tool}"', SYSTEM_PROMPT)
         self.assertIn("general local computer-use agent", SYSTEM_PROMPT)
 
@@ -296,6 +308,24 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(completed["exit_code"], 0)
         view = thread_view(self.project, full_thread["thread_id"])
         self.assertEqual(view["runs"][0]["approvals"][0]["status"], "approved")
+
+    def test_plugin_repair_pauses_then_resumes_from_recorded_source(self) -> None:
+        run_id = send_message(
+            self.project, create_thread(self.project, "repair plugin")["thread_id"], "check",
+            access_mode="ask",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime.repair_domain_plugin", return_value={"count": 1}) as repair:
+            pending = _execute_tool(self.project, run_id, "plugin.repair", {"plugin_name": "disaster-history"})
+            self.assertTrue(pending["waiting_for_approval"])
+            repair.assert_not_called()
+            decided = decide_approval(
+                self.project, pending["approval_id"], True, "researcher", "local ZIP checked",
+            )
+        repair.assert_called_once()
+        self.assertTrue(any(
+            item["approval_id"] == pending["approval_id"] and item["status"] == "approved"
+            for run in decided["runs"] for item in run["approvals"]
+        ))
 
     def test_direct_computer_alias_exposes_bounded_file_search_to_main_agent(self) -> None:
         run_id = send_message(
@@ -798,6 +828,23 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             catalog = _domain_agent_catalog(self.project)
         self.assertIn("disaster-history", catalog)
         self.assertIn("same main conversation", catalog)
+
+    def test_domain_tool_trigger_also_routes_ordinary_language_to_specialist(self) -> None:
+        from research_workbench.agent_runtime import _matching_domain_agent
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["convert_half_finished_workbook"],
+            "agent": {
+                "id": "disaster-researcher", "routing_triggers": ["灾害史"],
+                "tool_triggers": {"convert_half_finished_workbook": ["22列", "成品表"]},
+            },
+        }
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(
+                _matching_domain_agent(self.project, "把这个工作簿转换为标准22列候选表"),
+                "disaster-history",
+            )
 
     def test_domain_pack_ui_question_does_not_force_specialist_consult(self) -> None:
         from research_workbench.agent_runtime import _natural_domain_tool

@@ -46,10 +46,11 @@ from .scholarship import (
 from .service import list_sources, project_status, source_view
 from .skill_registry import discover_skills, get_skill
 from .model_settings import ROLES, reasoning_controls
-from .domain_plugins import call_domain_plugin_tool, find_config_root, plugin_state
+from .domain_plugins import call_domain_plugin_tool, find_config_root, plugin_state, repair_domain_plugin
 from .domain_plugins import validate_domain_plugin
 from .plugin_sdk import create_local_skill, create_plugin_project
 from .attachments import inspect_attachment
+from .library import library_assets, library_graph, library_status, search_library, work_detail
 
 
 MAIN_ROLE = "main_reasoning"
@@ -69,6 +70,13 @@ ARTIFACT_WRITING_TOOLS = {
     "historiography.create",
     "save_research_note",
 }
+
+
+def harness_backend() -> str:
+    configured = os.environ.get("WENJIN_HARNESS_BACKEND", "").strip().casefold()
+    if configured in {"codex", "legacy"}:
+        return configured
+    return "legacy" if any("unittest" in str(value).casefold() for value in sys.argv) else "codex"
 
 
 def _compact_authoring_state(project_root: Path) -> dict[str, Any]:
@@ -196,6 +204,7 @@ Available actions:
 {"type":"tool_call","tool":"retrieval.list","arguments":{"record_id":"optional exact retrieval record","limit":30}}
 {"type":"tool_call","tool":"research.search","arguments":{"provider":"crossref|openalex|zotero","query":"...","limit":10}}
 {"type":"tool_call","tool":"plugin.list","arguments":{}}
+{"type":"tool_call","tool":"plugin.repair","arguments":{"plugin_name":"exact installed plugin"}}
 {"type":"tool_call","tool":"plugin.call","arguments":{"plugin_name":"exact installed plugin","tool_name":"approved tool","arguments":{}}}
 {"type":"tool_call","tool":"domain_agent.list","arguments":{}}
 {"type":"tool_call","tool":"domain_agent.consult","arguments":{"plugin_name":"exact installed domain pack","question":"bounded specialist question"}}
@@ -208,13 +217,15 @@ Available actions:
 {"type":"tool_call","tool":"computer.windows","arguments":{"limit":30}}
 {"type":"tool_call","tool":"computer.snapshot","arguments":{"window_handle":0,"depth":3,"limit":250}}
 {"type":"tool_call","tool":"computer.capture","arguments":{}}
+{"type":"tool_call","tool":"computer.runtime_status","arguments":{}}
+{"type":"tool_call","tool":"computer.runtime_repair","arguments":{"component":"python|powershell7"}}
 {"type":"tool_call","tool":"computer.focus","arguments":{"ref":"exact-ref-from-latest-snapshot"}}
 {"type":"tool_call","tool":"computer.click","arguments":{"ref":"exact-ref-from-latest-snapshot"}}
 {"type":"tool_call","tool":"computer.click_coordinates","arguments":{"x":100,"y":100}}
 {"type":"tool_call","tool":"computer.type","arguments":{"ref":"exact-ref-from-latest-snapshot","text":"..."}}
 {"type":"tool_call","tool":"computer.keys","arguments":{"keys":"{Ctrl}c"}}
 {"type":"tool_call","tool":"computer.launch","arguments":{"executable":"absolute executable path","args":[],"cwd":"optional absolute directory"}}
-{"type":"tool_call","tool":"computer.run","arguments":{"executable":"absolute executable path","args":["explicit","arguments"],"cwd":"optional absolute directory"}}
+{"type":"tool_call","tool":"computer.run","arguments":{"executable":"absolute executable path","args":["explicit","arguments"],"cwd":"optional absolute directory","timeout":300}}
 {"type":"tool_call","tool":"domain_pack.validate","arguments":{"plugin_root":"absolute existing domain-pack folder"}}
 {"type":"tool_call","tool":"domain_pack.create","arguments":{"parent":"absolute parent folder","name":"lower-case project name","display_name":"...","description":"..."}}
 {"type":"tool_call","tool":"browser.snapshot","arguments":{"session_id":"exact-visible-session-id"}}
@@ -243,6 +254,9 @@ may support drafting.
 Use plugin.list only when the user requests a small-domain capability. plugin.call accepts only tools
 explicitly approved by the installed plugin manifest; plugin output remains a candidate and cannot bypass
 Wenjin source, evidence, writing or review gates.
+If plugin.list reports package_changed or runtime_missing and the user asked to fix it, call plugin.repair once.
+It reinstalls from the recorded local ZIP/directory and revalidates the self-contained runtime. If that source no
+longer exists, ask the user to import the ZIP again; do not search for unrelated workflow scripts.
 Use domain_agent.consult when a stateful installed specialist should work through a bounded domain task.
 The specialist has an isolated thread and tool history. Treat its answer and artifacts as candidates; you
 remain responsible for cross-domain judgment and must not present a candidate artifact as approved.
@@ -258,6 +272,14 @@ researcher's computer, call computer.roots and then computer.file_search; do not
 access is unavailable before attempting those tools. Search is bounded and returns names and metadata,
 not file contents. Search common_folders before whole drive roots. If a whole-drive search returns zero
 matches with truncated=true, retry once against the most relevant common folder before reporting no result.
+Packaged Wenjin and self-contained Domain Agents do not require system Python or PowerShell. When a matching
+Domain Agent is installed, consult it instead of searching the disk for its workflow scripts or probing Python
+packages. For an explicit external script, call computer.runtime_status first. Use the exact returned Python or
+PowerShell 7 path; never invent powershell1 and never treat the WindowsApps zero-byte Python alias as installed.
+Only call computer.runtime_repair after the user asked to repair the optional runtime; it is a sensitive action
+and must pass the active approval policy. Do not import a broad package list in one command merely to test it.
+If an explicit external script reports one missing Python package, use the resolved interpreter to inspect that
+one module and, after approval, install only that named dependency. Do not infer missing packages from filenames.
 Use computer.windows/snapshot before control refs. State-changing computer tools obey
 the run's Ask, Auto-approve or Full access policy. Never inspect password controls, credentials or CAPTCHA.
 Use domain_pack.create only when the researcher explicitly asks to create a reusable domain pack and
@@ -333,6 +355,8 @@ Never expose or echo internal lines beginning with TOOL_RESULT in the final answ
 
 COMPUTER_TOOL_ALIASES = {
     "computer.status": "computer_status",
+    "computer.runtime_status": "runtime_status",
+    "computer.runtime_repair": "repair_runtime",
     "computer.roots": "filesystem_roots",
     "computer.file_search": "file_search",
     "computer.windows": "window_list",
@@ -1160,6 +1184,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "access_mode": access_mode,
         "reasoning_mode": reasoning_mode,
         "reasoning_effort": reasoning_effort,
+        "harness_backend": harness_backend(),
         "shared_design_id": shared_design["design_id"] if shared_design else "",
         "history_policy": "bounded_thread_history" if history else "withheld_or_empty",
         "history_message_ids": history_receipt["message_ids"],
@@ -1266,10 +1291,33 @@ def send_message(project_root: Path, thread_id: str, content: str,
             "packs for this run. Password controls, credential extraction, CAPTCHA solving and payment "
             "confirmation remain unavailable in every mode."
         )
-        _advance_run(
-            project_root, run_id, objective, profile, design_context, history,
-            reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
-        )
+        if snapshot["harness_backend"] == "codex":
+            from .codex_harness import run_turn
+
+            moa_guidance = _moa_guidance(objective, history)
+            if moa_guidance:
+                design_context += "\n\n" + _format_moa_guidance(moa_guidance)
+                with connect(project_root) as connection:
+                    _append_run_event(connection, run_id, "moa_advice_ready", {
+                        "reference_roles": [item["role"] for item in moa_guidance],
+                        "failed_roles": [item["role"] for item in moa_guidance if item.get("error")],
+                        "fanout": os.environ.get("HRW_MOA_FANOUT", "user_turn"),
+                    })
+            result_text = run_turn(
+                project_root, thread_id, run_id, objective, profile, design_context,
+                access_mode, reasoning_mode, reasoning_effort, history,
+            )
+            with connect(project_root) as connection:
+                current = connection.execute(
+                    "SELECT status FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+            if current is not None and current["status"] == "RUNNING":
+                _complete_run(project_root, run_id, result_text)
+        else:
+            _advance_run(
+                project_root, run_id, objective, profile, design_context, history,
+                reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+            )
     except Exception as error:
         _fail_run(project_root, run_id, error)
         raise
@@ -1301,6 +1349,9 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
             {"plugin_name": domain_plugin, "question": objective},
         )
         latest = result.get("latest_message") if isinstance(result, dict) else None
+        latest_run = result.get("latest_run") if isinstance(result, dict) else None
+        if isinstance(latest_run, dict) and latest_run.get("status") != "COMPLETED":
+            raise RuntimeError(str(latest_run.get("error") or "领域 Agent 未完成本轮任务"))
         content = str(((latest or {}).get("content") or {}).get("text", "")).strip()
         _complete_run(
             project_root, run_id,
@@ -1565,6 +1616,12 @@ def _explicit_required_tool(objective: str) -> str:
         objective,
     ):
         return "computer.file_search"
+    if re.search(r"(?:检查|诊断|查看|确认).{0,30}(?:Python|PowerShell|pwsh|运行环境|脚本环境|依赖)", objective, re.I):
+        return "computer.runtime_status"
+    if re.search(r"(?:修复|安装|补齐).{0,30}(?:Python|PowerShell|pwsh|运行环境|脚本环境)", objective, re.I):
+        return "computer.runtime_repair"
+    if re.search(r"(?:修复|重装|恢复).{0,24}(?:领域\s*Agent|领域包|插件).{0,24}(?:运行|工具|环境|安装)?", objective, re.I):
+        return "plugin.repair"
     return ""
 
 
@@ -1616,13 +1673,19 @@ def _matching_domain_agent(
     ):
         return str(agents[0]["name"])
     for item in agents:
-        triggers = (item.get("agent") or {}).get("routing_triggers", [])
+        agent = item.get("agent") or {}
+        triggers = list(agent.get("routing_triggers", []))
+        for values in (agent.get("tool_triggers") or {}).values():
+            triggers.extend(values if isinstance(values, list) else [])
         if any(str(trigger).strip() and str(trigger) in objective for trigger in triggers):
             return str(item["name"])
     if re.search(r"(?:继续|上一轮|刚才|断点续跑|恢复运行|接着)", objective):
         context = "\n".join(str(item.get("content") or "") for item in (history or [])[-6:])
         for item in agents:
-            triggers = (item.get("agent") or {}).get("routing_triggers", [])
+            agent = item.get("agent") or {}
+            triggers = list(agent.get("routing_triggers", []))
+            for values in (agent.get("tool_triggers") or {}).values():
+                triggers.extend(values if isinstance(values, list) else [])
             if any(str(trigger).strip() and str(trigger) in context for trigger in triggers):
                 return str(item["name"])
     return ""
@@ -1730,6 +1793,9 @@ def _model_action(
     messages.append({"role": "user", "content": objective})
     for observation in observations:
         messages.append({"role": "user", "content": "TOOL_RESULT " + _json(observation)})
+    timeout = _adaptive_model_timeout(
+        profile.timeout_seconds, reasoning_mode, reasoning_effort, len(observations),
+    )
     if profile.provider == "openai_compatible":
         endpoint = profile.endpoint.rstrip("/")
         if not endpoint.endswith("/chat/completions"):
@@ -1744,7 +1810,7 @@ def _model_action(
         raw = _post_json(
             endpoint,
             payload,
-            {"Authorization": f"Bearer {profile.api_key}"}, profile.timeout_seconds,
+            {"Authorization": f"Bearer {profile.api_key}"}, timeout,
         )
         try:
             content = raw["choices"][0]["message"]["content"]
@@ -1766,7 +1832,7 @@ def _model_action(
         raw = _post_json(
             endpoint,
             ollama_payload,
-            {}, profile.timeout_seconds,
+            {}, timeout,
         )
         content = raw.get("message", {}).get("content", "")
     else:
@@ -1777,6 +1843,18 @@ def _model_action(
         return _parse_action(content)
     except (json.JSONDecodeError, ValueError) as error:
         raise ModelActionFormatError(str(error)) from error
+
+
+def _adaptive_model_timeout(
+    configured: float, reasoning_mode: str, reasoning_effort: str, observation_count: int,
+) -> float:
+    """Keep quick turns quick while giving deep or tool-heavy turns enough time."""
+    timeout = max(15.0, min(float(configured or 180), 1800.0))
+    if reasoning_mode == "deep":
+        timeout = max(timeout, 300.0 if reasoning_effort in {"high", "max"} else 240.0)
+    if observation_count >= 4:
+        timeout = max(timeout, min(600.0, 180.0 + observation_count * 20.0))
+    return timeout
 
 
 def _parse_action(content: str) -> dict[str, Any]:
@@ -2247,7 +2325,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
+    allowed = {"harness.status", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -2280,6 +2358,9 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                     project_root, run_id, call_id, tool_name, request_payload,
                     result, access_mode, risk,
                 )
+        elif tool_name == "harness.status":
+            from .codex_harness import harness_status
+            result = harness_status()
         elif tool_name == "project.status":
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
@@ -2297,6 +2378,25 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 str(arguments.get("page_id", "")),
                 str(arguments.get("source_id", "")),
                 arguments.get("physical_page"),
+            )
+        elif tool_name == "library.status":
+            result = library_status(project_root)
+        elif tool_name == "library.search":
+            tags = arguments.get("tags", [])
+            if not isinstance(tags, list):
+                raise ValueError("library.search tags must be a list")
+            limit = max(1, min(int(arguments.get("limit", 20)), 50))
+            result = search_library(
+                project_root, str(arguments.get("query", "")), [str(value) for value in tags]
+            )[:limit]
+        elif tool_name == "library.assets":
+            result = library_assets(project_root, str(arguments.get("kind", "")))[:100]
+        elif tool_name == "library.work":
+            result = work_detail(project_root, str(arguments.get("work_id", "")))
+        elif tool_name == "library.graph":
+            result = library_graph(
+                project_root, str(arguments.get("query", "")),
+                max(1, min(int(arguments.get("limit", 100)), 200)),
             )
         elif tool_name == "research.state":
             result = _agent_research_state(project_root)
@@ -2352,6 +2452,19 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                     project_root, run_id, call_id, tool_name, request_payload,
                     result, access_mode, risk,
                 )
+        elif tool_name == "plugin.repair":
+            plugin_name = str(arguments.get("plugin_name", "")).strip()
+            request_payload = {"plugin_name": plugin_name, "risk": "routine"}
+            access_mode = _run_access_mode(project_root, run_id)
+            if _must_pause_for_permission(access_mode, "routine"):
+                return _pause_tool_for_approval(
+                    project_root, run_id, call_id, tool_name, request_payload, "routine"
+                )
+            result = repair_domain_plugin(find_config_root(project_root), plugin_name)
+            _record_auto_approval(
+                project_root, run_id, call_id, tool_name, request_payload,
+                result, access_mode, "routine",
+            )
         elif tool_name == "domain_agent.list":
             from .domain_agents import domain_agent_state
             result = domain_agent_state(project_root)
@@ -2947,6 +3060,23 @@ def _resume_approved_run(project_root: Path, run_id: str) -> None:
         "result": _decode(call["output_json"], None) if call["status"] == "COMPLETED" else None,
         "error": str(call["error"] or "") or None,
     } for call in calls if call["status"] in {"COMPLETED", "FAILED"}]
+    if snapshot.get("harness_backend") == "codex":
+        from .codex_harness import run_turn
+
+        continuation = (
+            "用户已经明确处理了上一项审批。请依据下列已执行工具回执继续原任务；"
+            "不要重复同一动作，也不要把候选结果说成已批准证据。\n"
+            + _json(observations)
+        )
+        _complete_run(project_root, run_id, run_turn(
+            project_root, _run_thread_id(project_root, run_id), run_id, continuation,
+            _assigned_profile(project_root), design_context,
+            str(snapshot.get("access_mode", "ask")),
+            str(snapshot.get("reasoning_mode", "standard")),
+            str(snapshot.get("reasoning_effort", "medium")),
+            history,
+        ))
+        return
     _advance_run(
         project_root, run_id, objective, _assigned_profile(project_root), design_context, history,
         reasoning_mode=str(snapshot.get("reasoning_mode", "standard")),
@@ -2989,7 +3119,12 @@ def decide_approval(
         raise ValueError("edited request must be an object")
     output: dict[str, Any]
     if approved:
-        if row["tool_name"] == "plugin.call" or str(row["tool_name"]).startswith("computer."):
+        if row["tool_name"] == "plugin.repair":
+            output = repair_domain_plugin(
+                find_config_root(project_root), str(final_request.get("plugin_name", "")),
+            )
+            final_text = f"领域 Agent 安装副本已由 {reviewer} 核准并修复。"
+        elif row["tool_name"] == "plugin.call" or str(row["tool_name"]).startswith("computer."):
             output = call_domain_plugin_tool(
                 find_config_root(project_root),
                 str(final_request.get("plugin_name", "")),

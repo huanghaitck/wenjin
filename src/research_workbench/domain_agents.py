@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .agent_runtime import ModelProfile, _append_run_event, _assigned_profile, _clean_final_text, _consume_run_controls, _model_action, _parse_action, _role_profile, _vision_file_call
+from .agent_runtime import ModelProfile, _append_run_event, _assigned_profile, _clean_final_text, _consume_run_controls, _model_action, _parse_action, _role_profile, _vision_file_call, harness_backend
 from .attachments import inspect_attachment
 from .db import connect, utc_now
 from .domain_plugins import call_domain_plugin_tool, domain_model_override, domain_plugin_tool_specs, find_config_root, plugin_state, public_domain_model_settings
@@ -132,7 +132,8 @@ def _domain_history(
     return history[-limit:]
 
 
-def _domain_prompt(plugin: dict[str, Any], tool_specs: list[dict[str, Any]] | None = None) -> str:
+def _domain_prompt(plugin: dict[str, Any], tool_specs: list[dict[str, Any]] | None = None,
+                   native_tools: bool = False) -> str:
     tools = [str(value) for value in plugin.get("agent_tools", [])]
     specs = {str(item.get("name", "")): item for item in (tool_specs or [])}
     actions = "\n".join(_json({
@@ -148,6 +149,17 @@ def _domain_prompt(plugin: dict[str, Any], tool_specs: list[dict[str, Any]] | No
             if path.is_file() and path.is_relative_to(root):
                 skill_texts.append(path.read_text(encoding="utf-8"))
     skill_context = "\n\n".join(skill_texts)[:30000]
+    if native_tools:
+        return f"""You are the stateful specialist Agent for {plugin.get('display_name') or plugin.get('name')}.
+Use the exposed deterministic domain tools directly from the researcher's natural-language request.
+Do not emit JSON tool protocols or hidden work language. Never claim a tool ran without its receipt.
+Preserve row, page, source and file identity. Do not overwrite originals; generated files are candidates.
+The main Agent remains responsible for cross-domain judgment, formal evidence and final computer authority.
+Domain boundaries:
+{boundaries or '- No additional boundary was declared.'}
+Installed domain skill:
+{skill_context or '- No separate domain skill was installed.'}
+"""
     return f"""You are the stateful specialist subagent for {plugin.get('display_name') or plugin.get('name')}.
 You have a private conversation and memory namespace. The main research agent remains responsible for
 cross-domain judgment, formal evidence, manuscript changes and final computer authority.
@@ -162,6 +174,7 @@ Return exactly one JSON action and no markdown outside a final answer. A tool ac
 arguments; never copy input_schema into the action and never omit required arguments. Use only these tools:
 {actions}
 Or return {{"type":"final","content":"researcher-readable answer"}}.
+Use the language of the researcher's latest message for the final answer; do not switch a Chinese task to English.
 Never claim a tool ran without its receipt. Tool output is a candidate. Preserve row, page, source and file
 identity. Do not overwrite an original workbook or database. Candidate files must use a new output path.
 When a tool receipt contains do_not_retry_in_same_turn=true, report its partial/resumable state and run_id;
@@ -406,6 +419,57 @@ def send_domain_message(
             if plugin.get("runtime_command") else []
         ) if str(item.get("name", "")) in contract_tools
     ]
+    if harness_backend() == "codex":
+        from .codex_harness import run_domain_turn
+
+        all_tool_specs = (
+            domain_plugin_tool_specs(find_config_root(project_root), plugin_name)
+            if plugin.get("runtime_command") else []
+        )
+        try:
+            final = _clean_final_text(run_domain_turn(
+                project_root, str(session["session_id"]), run_id, content, profile, plugin,
+                all_tool_specs, _domain_prompt(plugin, all_tool_specs, native_tools=True),
+                access_mode, reasoning_effort, parent_run_id, reasoning_mode,
+                _domain_history(project_root, str(session["session_id"]), main_thread_id),
+            ))
+            with connect(project_root) as connection:
+                current = connection.execute(
+                    "SELECT status FROM domain_agent_runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                if current is not None and current["status"] == "STOPPED":
+                    return domain_agent_view(project_root, str(session["session_id"]))
+                connection.execute(
+                    "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) "
+                    "VALUES (?,?, 'assistant', ?, ?)",
+                    (_id("DMS"), session["session_id"], _json({
+                        "text": final, "main_thread_id": main_thread_id,
+                    }), utc_now()),
+                )
+                connection.execute(
+                    "UPDATE domain_agent_runs SET status='COMPLETED',updated_at=? WHERE run_id=?",
+                    (utc_now(), run_id),
+                )
+                connection.execute(
+                    "UPDATE domain_agent_sessions SET updated_at=? WHERE session_id=?",
+                    (utc_now(), session["session_id"]),
+                )
+                if parent_run_id:
+                    _append_run_event(connection, parent_run_id, "domain_run_completed", {
+                        "domain_run_id": run_id, "plugin_name": plugin_name,
+                    })
+            return domain_agent_view(project_root, str(session["session_id"]))
+        except Exception as error:
+            with connect(project_root) as connection:
+                connection.execute(
+                    "UPDATE domain_agent_runs SET status='FAILED',error=?,updated_at=? WHERE run_id=?",
+                    (str(error), utc_now(), run_id),
+                )
+                if parent_run_id:
+                    _append_run_event(connection, parent_run_id, "domain_run_failed", {
+                        "domain_run_id": run_id, "plugin_name": plugin_name, "error": str(error),
+                    })
+            raise
     tool_budget = min(48, max(
         {"low": 8, "medium": 16, "high": 24, "max": 24}[reasoning_effort],
         sum(int(item.get("minimum_calls", 1)) for item in requirements) + 4,
@@ -518,9 +582,7 @@ def send_domain_message(
                 })
                 continue
             risk = _permission(plugin, tool_name)
-            if risk == "forbidden" or (risk == "routine" and access_mode == "ask") or (
-                risk == "sensitive" and access_mode != "full_computer"
-            ):
+            if risk == "forbidden" or (risk == "sensitive" and access_mode != "full_computer"):
                 observations.append({
                     "tool": tool_name, "arguments": arguments, "result": None,
                     "error": f"permission {risk} requires a higher access mode",

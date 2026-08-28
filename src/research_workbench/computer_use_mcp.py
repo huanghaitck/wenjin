@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 from collections import deque
+import shutil
 import subprocess
+import sys
 import tempfile
 import uuid
 import warnings
@@ -26,6 +28,66 @@ server = FastMCP("wenjin-computer-use")
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 ACT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
 EXEC = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=True)
+
+
+def _working_executable(candidates: list[Path | str], *version_args: str) -> dict[str, Any] | None:
+    seen: set[str] = set()
+    for candidate in candidates:
+        value = str(candidate)
+        resolved = shutil.which(value) if not Path(value).is_absolute() else value
+        if not resolved or resolved.casefold() in seen:
+            continue
+        seen.add(resolved.casefold())
+        path = Path(resolved)
+        try:
+            if not path.is_file() or path.stat().st_size == 0:
+                continue
+            completed = subprocess.run(
+                [str(path), *version_args], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode == 0:
+            version = (completed.stdout or completed.stderr).strip().splitlines()
+            return {"path": str(path.resolve()), "version": version[0] if version else "available"}
+    return None
+
+
+def _python_candidates() -> list[Path | str]:
+    values: list[Path | str] = []
+    if os.environ.get("WENJIN_PYTHON"):
+        values.append(os.environ["WENJIN_PYTHON"])
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+    values.extend(sorted((appdata / "uv/python").glob("*/python.exe"), reverse=True))
+    local = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    values.extend(sorted((local / "Programs/Python").glob("*/python.exe"), reverse=True))
+    values.extend(["python.exe", "python3.exe"])
+    return values
+
+
+def _powershell_candidates() -> list[Path | str]:
+    values: list[Path | str] = []
+    if os.environ.get("WENJIN_PWSH"):
+        values.append(os.environ["WENJIN_PWSH"])
+    values.extend([
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "PowerShell/7/pwsh.exe",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Microsoft/PowerShell/7/pwsh.exe",
+        "pwsh.exe",
+    ])
+    return values
+
+
+def _node_candidates() -> list[Path | str]:
+    values: list[Path | str] = []
+    if os.environ.get("WENJIN_NODE"):
+        values.append(os.environ["WENJIN_NODE"])
+    values.extend([
+        Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "nodejs/node.exe",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local")) / "Programs/nodejs/node.exe",
+        "node.exe",
+    ])
+    return values
 
 
 def _rect(control: Any) -> dict[str, int]:
@@ -86,6 +148,64 @@ def computer_status() -> dict[str, Any]:
         "screen_height": automation.GetScreenSize()[1],
         "process_id": os.getpid(),
     }
+
+
+@server.tool(annotations=READ)
+def runtime_status() -> dict[str, Any]:
+    """Report Wenjin's self-contained backend and optional local script runtimes."""
+    python = _working_executable(_python_candidates(), "--version")
+    powershell = _working_executable(_powershell_candidates(), "--version")
+    node = _working_executable(_node_candidates(), "--version")
+    return {
+        "wenjin_backend": {
+            "available": True,
+            "self_contained": bool(getattr(sys, "frozen", False)),
+            "executable": str(Path(sys.executable).resolve()),
+            "note": "Core Wenjin and self-contained Domain Agent tools do not require system Python or PowerShell.",
+        },
+        "optional_script_runtimes": {
+            "python": python or {"available": False},
+            "powershell7": powershell or {"available": False},
+            "node": node or {"available": False},
+        },
+        "repairable_components": [
+            name for name, value in (("python", python), ("powershell7", powershell), ("node", node))
+            if value is None
+        ],
+        "boundary": "Optional runtimes are needed only for explicit external scripts, not for packaged Wenjin or Domain Agent tools.",
+    }
+
+
+@server.tool(annotations=EXEC)
+def repair_runtime(component: str) -> dict[str, Any]:
+    """Install optional Python, PowerShell 7 or Node.js with winget after permission approval."""
+    component = component.strip().casefold()
+    current = runtime_status()
+    if component == "python" and current["optional_script_runtimes"]["python"].get("path"):
+        return {"changed": False, "status": current}
+    if component in {"powershell", "powershell7", "pwsh"} and current["optional_script_runtimes"]["powershell7"].get("path"):
+        return {"changed": False, "status": current}
+    if component in {"node", "nodejs"} and current["optional_script_runtimes"]["node"].get("path"):
+        return {"changed": False, "status": current}
+    winget = shutil.which("winget.exe") or shutil.which("winget")
+    if not winget:
+        raise RuntimeError("Windows Package Manager is unavailable; install the optional runtime manually or use packaged tools")
+    package = (
+        "Python.Python.3.13" if component == "python"
+        else "Microsoft.PowerShell" if component in {"powershell", "powershell7", "pwsh"}
+        else "OpenJS.NodeJS.LTS" if component in {"node", "nodejs"}
+        else ""
+    )
+    if not package:
+        raise ValueError("component must be python, powershell7 or node")
+    completed = subprocess.run(
+        [winget, "install", "--id", package, "--exact", "--silent",
+         "--accept-package-agreements", "--accept-source-agreements"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1200,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "runtime installation failed")[-4000:])
+    return {"changed": True, "component": component, "status": runtime_status()}
 
 
 @server.tool(annotations=READ)

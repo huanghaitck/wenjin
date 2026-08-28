@@ -11,8 +11,9 @@ from unittest.mock import patch
 
 from research_workbench.domain_plugins import (
     _plugin_model_environment, bind_domain_plugin_data, call_domain_plugin_tool,
-    install_domain_plugin, plugin_state, public_domain_model_settings,
-    remove_domain_plugin, save_domain_model_role,
+    install_codex_plugin, install_domain_plugin, is_codex_plugin_package,
+    plugin_state, public_domain_model_settings,
+    remove_domain_plugin, repair_domain_plugin, save_domain_model_role,
 )
 
 
@@ -51,6 +52,47 @@ class DomainPluginTests(unittest.TestCase):
         self.assertTrue(Path(installed["installed_path"]).is_dir())
         self.assertFalse(installed["package_changed"])
 
+    def test_codex_skill_only_plugin_is_imported_without_becoming_domain_agent(self) -> None:
+        plugin = self.root / "codex-skill"
+        (plugin / ".codex-plugin").mkdir(parents=True)
+        (plugin / "skills" / "sample-skill").mkdir(parents=True)
+        (plugin / ".codex-plugin" / "plugin.json").write_text(json.dumps({
+            "name": "sample-codex", "version": "1.2.3", "description": "sample",
+            "skills": "./skills/",
+        }), encoding="utf-8")
+        (plugin / "skills" / "sample-skill" / "SKILL.md").write_text(
+            "---\nname: sample-skill\ndescription: sample\n---\n\nUse it.\n", encoding="utf-8",
+        )
+        self.assertTrue(is_codex_plugin_package(plugin))
+        result = install_codex_plugin(self.config, plugin)
+        self.assertEqual(result["adapter"], "codex-skill-only")
+        self.assertTrue((self.config / "skills" / "sample-skill" / "SKILL.md").is_file())
+        self.assertEqual(result["plugins"]["count"], 0)
+
+    def test_codex_mcp_plugin_generates_sensitive_wenjin_adapter(self) -> None:
+        plugin = self.root / "codex-mcp"
+        (plugin / ".codex-plugin").mkdir(parents=True)
+        (plugin / ".codex-plugin" / "plugin.json").write_text(json.dumps({
+            "name": "sample-mcp", "version": "1.0.0", "description": "sample MCP",
+            "mcpServers": "./.mcp.json",
+        }), encoding="utf-8")
+        (plugin / ".mcp.json").write_text(json.dumps({
+            "mcpServers": {"sample": {"command": "python", "args": ["server.py"]}},
+        }), encoding="utf-8")
+        captured: dict[str, object] = {}
+
+        def install(config_root: Path, staged: Path, **_kwargs: object) -> dict[str, object]:
+            captured.update(json.loads((staged / "wenjin-plugin.json").read_text(encoding="utf-8")))
+            return {"count": 1, "plugins": []}
+
+        with patch("research_workbench.domain_plugins._cached_mcp_tool_specs", return_value=({"name": "sample_read"},)), patch(
+            "research_workbench.domain_plugins.install_domain_plugin", side_effect=install,
+        ):
+            result = install_codex_plugin(self.config, plugin)
+        self.assertEqual(result["tool_count"], 1)
+        self.assertEqual(captured["agent_tools"], ["sample_read"])
+        self.assertEqual(captured["tool_permissions"], {"sample_read": "sensitive"})
+
     def test_reinstall_keeps_an_existing_runtime_override(self) -> None:
         install_domain_plugin(self.config, self.plugin, runtime_command=__file__)
         data = json.loads((self.plugin / "wenjin-plugin.json").read_text(encoding="utf-8"))
@@ -59,6 +101,13 @@ class DomainPluginTests(unittest.TestCase):
         state = install_domain_plugin(self.config, self.plugin)
         self.assertEqual(state["plugins"][0]["runtime_command"], str(Path(__file__).resolve()))
         self.assertEqual(state["plugins"][0]["status"], "ready")
+
+    def test_repair_reinstalls_from_the_recorded_local_source(self) -> None:
+        state = install_domain_plugin(self.config, self.plugin, runtime_command=__file__)
+        installed = Path(state["plugins"][0]["installed_path"])
+        (installed / "skills" / "sample" / "SKILL.md").write_text("broken", encoding="utf-8")
+        repaired = repair_domain_plugin(self.config, "sample-domain")
+        self.assertIn("# Sample", (Path(repaired["plugins"][0]["installed_path"]) / "skills" / "sample" / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_remove_deletes_only_the_named_plugin_copy(self) -> None:
         install_domain_plugin(self.config, self.plugin)
@@ -108,6 +157,10 @@ class DomainPluginTests(unittest.TestCase):
                     archive.write(path, path.relative_to(self.plugin))
         state = install_domain_plugin(self.config, package)
         self.assertEqual(state["plugins"][0]["name"], "sample-domain")
+        installed = Path(state["plugins"][0]["installed_path"])
+        (installed / "skills" / "sample" / "SKILL.md").write_text("broken", encoding="utf-8")
+        repaired = repair_domain_plugin(self.config, "sample-domain")
+        self.assertIn("# Sample", (Path(repaired["plugins"][0]["installed_path"]) / "skills" / "sample" / "SKILL.md").read_text(encoding="utf-8"))
 
     def test_local_database_binding_records_identity_and_reaches_plugin_environment(self) -> None:
         install_domain_plugin(self.config, self.plugin)

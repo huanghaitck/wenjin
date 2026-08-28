@@ -24,6 +24,8 @@
 | [Open Deep Research](https://github.com/langchain-ai/open_deep_research) | 模型与搜索工具可配置、研究计划、人工反馈和评测 | 不引入完整 LangGraph；检索报告不能自动成为证据包 |
 | [GPT Researcher](https://github.com/assafelovic/gpt-researcher) | 本地/网页研究与可插拔模型 | 不采用“先生成完整报告”作为核心交付物 |
 | [OpenHands](https://github.com/OpenHands/OpenHands) | 模型无关、事件驱动、工具循环、对话与 runtime 分离 | 不引入代码执行沙箱和开发者专用复杂度 |
+| [OpenAI Codex app-server](https://github.com/openai/codex/tree/main/codex-rs/app-server) | 公开 JSON-RPC Agent 循环、线程、流式事件、审批、中断、恢复与 SDK 测试 harness | 复用生命周期和测试边界；不复制协议实现，不替换问津证据状态 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 事件溯源会话、可替换Agent loop、作用域工具注册、JSONL持久化、ACP/子Agent适配 | 目前为兼容性会变的developer preview；借鉴作用域与不变量测试，不作为RC1运行依赖 |
 
 结论：产品借鉴 Codex/OpenHands 的有状态工具工作区，借鉴研究 Agent 的搜索规划，但领域状态由
 史学 harness 控制。默认一个主 Agent，专门角色只接有界任务。

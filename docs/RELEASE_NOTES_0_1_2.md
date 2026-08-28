@@ -14,13 +14,6 @@
 - **Markdown自动建立文献关系。** 脚注、尾注和参考文献中的精确登记题名自动记为引用；正文精确题名记为提及；明确的翻译、评介和材料使用措辞建立相应有向关系。误匹配仍可排除。
 - **完整交互。** 支持滚轮缩放、拖动空白处或中键平移、悬停题名、单击聚焦相邻作品、双击打开书目卡，以及搜索后的局部子图。
 
-### 发布验证
-
-- 395项自动测试全部通过；
-- `npm audit`未发现高危漏洞；
-- Python侧车烟雾测试、Rust/Tauri检查和Windows NSIS安装程序构建通过；
-- 公开目录未发现API密钥、Cookie、私人研究语料或领域Agent私有发行包。
-
 ### 下载
 
 - `wenjin-0.1.2-x64-setup.exe`：Windows 10/11 x64安装程序；
@@ -43,12 +36,5 @@ Wenjin 0.1.2 focuses on the research library and bibliographic relationship grap
 - Work-only graph nodes with typed colors and relations for shared authors, publishers, journals, decades, citations, material use, reviews, translations, and mentions.
 - Automatic traceable literature relations from page-linked Markdown, with optional false-match exclusion.
 - Wheel zoom, background or middle-button pan, hover labels, neighbor focus, double-click bibliography cards, and filtered subgraphs.
-
-### Verification
-
-- 395 automated tests passed.
-- `npm audit` reported no high-severity vulnerabilities.
-- The Python sidecar smoke test, Rust/Tauri checks, and the Windows NSIS build passed.
-- The public release tree contains no API keys, cookies, private research corpora, or private domain-Agent packages.
 
 The installer remains unsigned and has no automatic updater. Windows 10/11 x64 is the supported platform for this release.

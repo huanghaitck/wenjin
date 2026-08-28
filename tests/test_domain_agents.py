@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -119,6 +120,34 @@ class DomainAgentTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM messages WHERE thread_id=?", (main_thread["thread_id"],)
             ).fetchone()[0]
         self.assertEqual(main_messages, 0)
+
+    def test_codex_backend_keeps_domain_session_and_existing_view_contract(self) -> None:
+        with patch.dict(os.environ, {
+            "HRW_ENABLE_MOCK_MODEL": "1", "WENJIN_HARNESS_BACKEND": "codex",
+        }, clear=False), patch(
+            "research_workbench.domain_agents._plugin", return_value=self.plugin,
+        ), patch(
+            "research_workbench.codex_harness.run_domain_turn", return_value="领域线程已完成。",
+        ) as turn:
+            result = send_domain_message(self.project, "disaster-history", "核对候选")
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual(result["messages"][-1]["content"]["text"], "领域线程已完成。")
+        turn.assert_called_once()
+
+    def test_explicit_domain_candidate_write_runs_in_ask_mode_without_permission_loop(self) -> None:
+        actions = iter([
+            {"type": "tool_call", "tool": "build_candidate", "arguments": {"input": "source.xlsx"}},
+            {"type": "final", "content": "候选已生成。"},
+        ])
+        with patch("research_workbench.domain_agents._plugin", return_value=self.plugin), patch(
+            "research_workbench.domain_agents._model_action", side_effect=lambda *args, **kwargs: next(actions),
+        ), patch(
+            "research_workbench.domain_agents.call_domain_plugin_tool",
+            return_value={"structuredContent": {"status": "candidate"}},
+        ) as tool:
+            result = send_domain_message(self.project, "disaster-history", "建立候选", access_mode="ask")
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        tool.assert_called_once()
 
     def test_domain_agent_executes_tool_call_embedded_in_final_content(self) -> None:
         actions = iter([

@@ -1,0 +1,538 @@
+project: historical-research-workbench
+updated_at: "2026-08-21"
+current_stage: WENJIN_0_1_1_PROJECT_WORKSPACE_PUBLIC_RELEASED
+last_completed_stage: WENJIN_0_1_1_PROJECT_WORKSPACE_BACKUP_BUILD_INSTALL_AND_GITHUB_RELEASE
+active_human_gate: NONE
+
+current_demo:
+  product_name: 问津
+  app_version: 0.1.1
+  project_database_schema: 22
+  full_test_suite: 336_passed
+  home: project_workspace
+  project_workspace: local_create_existing_register_phase_objects_next_actions_activity_gui_tested
+  external_project_registry_deduplication: implemented_and_tested
+  external_project_startup_backup: implemented_and_tested
+  complete_project_archive_restore: database_sources_derivatives_notes_manuscripts_reviews_exports
+  skills_and_plugins_library: implemented_and_gui_tested
+  slash_skill_invocation: implemented_and_gui_tested
+  sequential_reference_export: implemented_and_gui_tested
+  template_specific_review_preview: implemented_and_gui_tested
+  approved_research_design_in_review_context: implemented
+  latest_human_page_mapping_in_review_context: implemented
+  word_render_pages_checked: 12
+  qinling_demo_manuscript_status: blocked_only_for_author_submission_metadata
+  user_manual: docs/USER_MANUAL_ZH.md
+  memory_layering_adr: docs/adr/0013-information-knowledge-and-memory-layering.md
+  v0_1_architecture_adr: docs/adr/0016-wenjin-0.1-agent-platform.md
+  library_database: separate_sqlite
+  project_knowledge_database: per_project_sqlite
+  runtime_records_promote_automatically: false
+  external_long_term_memory_auto_write: false
+  model_roles: 7
+  model_presets: [ollama, deepseek, openrouter, siliconflow, zhipu_glm, custom_openai_compatible]
+  moa: implemented_and_gui_tested
+  versioned_agent_profile: implemented_and_gui_tested
+  bibliographic_knowledge_graph: literature_relation_approval_and_markdown_content_entities_gui_tested
+  mcp_stdio_server: implemented_and_unit_tested
+  cli_alias: wenjin
+  chinese_english_core_ui: implemented_and_gui_tested
+  source_reading_markdown: implemented_and_full_regression_passed
+  codex_bidirectional_bridge: implemented_and_desktop_smoke_passed
+  domain_plugin_manager: implemented_and_desktop_smoke_passed
+  domain_pack_reference_sample: neutral_scaffold_generated_and_installed_e2e
+  automatic_project_backup: implemented_and_tested
+  non_destructive_backup_restore: implemented_and_tested
+  external_memory_adapters: historical_and_engineering_local_vaults
+  standard_domain_plugin_sdk: implemented_and_tested
+  bundled_core_historical_skills: 17_clean_home_installed_smoke_passed
+  bundled_historical_humanizer: latest_2026_08_20_with_public_path_adapter
+  library_suggested_shelves: 6
+  library_bulk_classify_and_register: implemented_and_installed_smoke_passed
+  agent_access_modes: [ask, research_assist, full_computer]
+  computer_use_system_pack: 0.1.1_installed_mcp_11_tools_smoke_passed
+  computer_use_real_permission_e2e: ask_paused_assist_auto_routine_full_auto_sensitive
+  domain_pack_local_data_binding: path_size_mtime_sha256_and_mcp_environment
+  english_history_template: chicago_notes_bibliography_default_in_en
+  english_ui_audit: ui_strings_pass_user_project_content_preserved
+  provider_model_discovery: ollama_5_and_deepseek_2_models_live_checked
+  deepseek_v4_flash_smoke: completed_real_provider_zero_tool_calls_temporary_project_deleted
+  disaster_sample_pack_default_install: removed_after_0_1_1_bundled_data_smoke
+  weixin_gateway: native_ilink_qr_private_text_inbound_reply_e2e
+  messaging_connectors: native_weixin_private_text_only
+
+release_validation:
+  github_repository: https://github.com/huanghaitck/wenjin
+  github_release: https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1
+  installer: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-x64-setup.exe
+  source_archive: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-agpl-source-20260823-1156.zip
+  complete_offline_archive: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-win64-complete-20260823-1156.zip
+  webview2_offline_installer_sha256: 82B2D8A7013E0C0EA15D48FF4742EE3778BA16BD8B7B4A47876645B3E48D4016
+  clean_public_repository: D:/AI_Workflows/publish/wenjin-0.1.1-final-20260821
+  clean_public_repository_commit: 41f001a
+  bilingual_readme_and_manuals: zh_en_repo_release_and_offline_bundle
+  configurable_build_python: true
+  delayed_iframe_until_sidecar_ready: true
+  isolated_data_root_override: WENJIN_DATA_ROOT
+  personal_research_content_in_packaged_runtime: false
+  portable_isolated_startup: passed
+  installed_isolated_startup: passed
+  packaged_mcp_fastmcp_handshake: passed
+  codex_to_wenjin_project_status: passed
+  wenjin_to_codex_task_launch: passed
+  isolated_upgrade_project_discovery: passed
+  startup_backup_and_non_destructive_restore: passed
+  approved_memory_promotion_to_90_inbox: passed
+  final_installed_bilingual_ui_smoke: passed
+  installed_project_create_restart_resume: passed
+  installed_project_backup_bundle: passed
+  installed_weixin_qr_generation: passed
+  installed_neutral_domain_pack_scaffold_generation: passed
+  installed_ollama_model_discovery: 5_models
+
+research_design_workflow:
+  status: implemented_and_real_gui_tested
+  project_database_schema: 11
+  researcher_baseline_ui_name: 研究者意图基线
+  researcher_intent_definition: restored_human_direction_not_psychological_profile_or_source_evidence
+  researcher_intent_role: versioned_externalized_human_direction_for_agent_deviation_checking
+  researcher_intent_fields:
+    - formal_research_goal
+    - five_year_core_window
+    - comparison_units
+    - material_hierarchy
+    - stop_conditions
+  researcher_corrections_create_new_version: true
+  prior_versions_remain_auditable: true
+  researcher_intent_epistemic_markers:
+    - explicit_human_statement
+    - recovered_context
+    - inferred_pending_confirmation
+  researcher_baseline_hidden_from_agent: true
+  planning_modes:
+    - independent_planning
+    - guided_execution
+  compact_planning_context: implemented
+  model_proposals_are_drafts: true
+  human_decision_required_for_shared_design: true
+  interrupted_run_recovery: implemented
+  qinling_baseline_id: RDP_5c6e2e95b561421f9d51998dd0589bc8
+  qinling_rejected_model_draft_id: RDP_986e079fc4f740b1829fb6c349396ef0
+  qinling_approved_shared_design_id: RDP_cfc716742ef3407ba1ab384d510f487d
+
+research_event_workflow:
+  status: implemented_and_real_gui_tested
+  project_database_schema: 11
+  task_spec: docs/D4_EVENT_TABLE_TASK_SPEC.md
+  comparison_unit: page_linked_event_row
+  batch_limit: 20
+  exact_source_version_snapshot: true
+  field_level_block_anchors: required_for_source_derived_fields
+  page_and_block_human_verification_before_approval: required
+  original_text_must_match_verified_anchor_blocks: true
+  exact_original_text_copy_from_anchors: implemented_and_real_gui_tested
+  refresh_draft_original_from_current_anchors: explicit_form_fill_only_no_silent_save
+  model_may_omit_original_text_when_original_text_anchors_are_present: true
+  source_relative_block_ids: accepted_when_source_id_is_explicit
+  arbitrary_per_event_block_cap: removed
+  missing_codes_are_not_source_field_values: enforced_for_creation_and_approval
+  missing_codes_location: missing_reason_only
+  approved_event_is_frozen_evidence: false
+  qinling_rejected_overanchored_event_id: EVT_5bcbd5859d50437c97186524139c198b
+  qinling_approved_conservative_event_id: EVT_33ffcc0fe0f64f43b142d623182dbfed
+  qinling_anchor_copied_approved_event_id: EVT_08e5949aa1814fb59303cf2194c5f4ea
+  real_agent_model: deepseek-v4-flash
+  real_agent_first_failure: date_and_place_taken_from_unanchored_neighbor_blocks
+  real_agent_second_failure: normalized_soft_hyphen_claimed_as_verbatim
+  human_correction_path: copy_exact_text_from_original_page_then_decide
+  anchor_copy_human_check: physical_page_250_printed_page_231_block_B003_only
+  qinling_approved_24_25_january_event_id: EVT_c05991d5c1714c728c54f0ae607fc95c
+  qinling_approved_24_25_january_event_pages: [251, 252, 253]
+  qinling_approved_24_25_january_event_blocks: 13
+  qinling_approved_24_25_january_event_still_not_frozen: true
+  qinling_approved_26_january_event_id: EVT_30b5c42f84bc46aa8274f039063da9e3
+  qinling_approved_27_january_event_id: EVT_dc15730bc95242438115db4dcc645ed7
+  qinling_26_27_page_review: physical_pages_253_254_human_checked
+  qinling_missing_code_drafts_rejected: 2
+  recoverable_tool_input_errors: model_may_correct_and_retry_in_same_run
+  recoverable_model_action_format_errors: one_shorter_json_retry_in_same_run
+  observed_deepseek_action_wrappers: supported_with_strict_whole_action_boundary
+  real_dogfood_issues_fixed: 9
+  full_test_suite: 99_passed
+
+conversation_context:
+  status: implemented_and_real_gui_tested
+  guided_execution_history_messages: 12
+  guided_execution_history_characters: 30000
+  per_message_character_cap: 8000
+  history_ids_recorded_in_model_snapshot: true
+  prior_conversation_is_source_evidence: false
+  independent_planning_history_policy: withheld
+  independent_planning_design_policy: researcher_baseline_and_shared_design_withheld
+  gui_displays_history_count_and_truncation: true
+  real_qinling_history_receipt:
+    message_count: 2
+    character_count: 656
+    truncated: false
+
+m1:
+  status: complete
+  python: "3.13"
+  external_dependencies: 0
+  network_calls: 0
+  real_model_calls: 0
+  paid_api_calls: 0
+  database: sqlite
+  single_writer_import: implemented
+  source_registration: implemented
+  page_block_relation_import: implemented
+  local_block_repair: implemented
+  full_page_repair: implemented
+  audit_events: implemented
+  targeted_tests: 7_passed
+
+future_constraints:
+  ollama_local_models: required
+  role_based_model_pairing: required
+  text_main_with_visual_helper: required
+  translation_helper_role: required
+  bookflow_translation_reuse: evaluate_and_extract_after_m1
+  production_credentials: windows_credential_manager
+  development_env_fallback: allowed_but_not_committed
+  preferred_remote_ocr_candidate: glm-4.6v-flash
+  local_ocr_comparator: ollama/qwen3-vl:4b-instruct-q4_K_M
+  model_ocr_output_requires_human_repair_gate: true
+
+protected_sibling_projects:
+  - D:\AI_Workflows\bilingual_book
+  - D:\HistRA-Bench
+  - D:\AI_Workflows\codex-plugins
+  - D:\AI_Workflows\rare-source-history-lab
+
+next_scope:
+  stage: post_D5_use_feedback
+  authorized: false
+  objective: use_the_demo_then_choose_one_bounded_increment
+  proposed_scope: null
+  excluded:
+    - credential_capture
+    - unattended_authenticated_browser
+    - full_manuscript_generation
+
+d5_windows_desktop_packaging:
+  status: implementation_complete_template_recheck_pending
+  package_version: 1.0.0.dev1
+  desktop_build: 1.0.0-dev.1
+  project_database_schema: 7
+  shell: tauri_2
+  sidecar: pyinstaller_onefile
+  installer: nsis_current_user
+  target_requires_python: false
+  permanent_local_shell: true
+  research_ui_transport: loopback_iframe_with_allowlisted_postmessage
+  native_commands:
+    - desktop_status
+    - choose_folder
+    - choose_file
+    - open_in_word
+  sidecar_exit_tree_cleanup: passed
+  word_external_editor_bridge: implemented
+  word_reimport_as_new_revision: implemented
+  credential_store: windows_credential_manager
+  api_keys_in_config_or_project: 0
+  model_roles:
+    - main_reasoning
+    - vision_ocr
+    - translation_helper
+  providers:
+    - ollama
+    - openai_compatible
+  live_ollama_connection: passed_histra_qwen3_5_9b_64k_fast
+  full_test_suite: 61_passed
+  rust_release_build: passed
+  portable_startup: passed
+  installed_startup: passed
+  native_bridge_handshake: passed
+  installer_code_signed: false
+  automatic_updates: false
+  historical_research_source_docx: locked_by_external_process
+  historical_research_template_recheck: pending
+
+d4_practical_authoring_and_citations:
+  status: complete_awaiting_use_feedback
+  package_version: 0.9.0.dev1
+  project_database_schema: 7
+  built_in_journal_presets: 2
+  journal_template_revisions: implemented
+  chinese_social_sciences_preset: official_sources_checked_2026_08_10
+  historical_research_preset: public_reference_requires_pre_submission_recheck
+  structured_manuscript_notes: implemented
+  note_modes:
+    - VERIFY_AND_INSERT
+    - METADATA_FIRST_PAGE_LATER
+    - REFORMAT_EXISTING
+  evidence_backlink_separate_from_formal_note: true
+  human_note_approval: required
+  immutable_note_versions: implemented
+  anchor_change_quarantine: implemented
+  markdown_footnotes: implemented
+  true_docx_footnotes: implemented
+  docx_microsoft_word_render: passed
+  libreoffice_adjacent_chinese_footnote_compatibility: known_limitation_reported
+  local_ollama_comparison: completed_single_sample
+  semantic_strength_review_needed: true
+  full_test_suite: 57_passed
+  javascript_syntax_check: passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/?mode=article
+  deferred:
+    - full_word_feature_parity
+    - complex_docx_round_trip
+    - automatic_semantic_entailment_approval
+    - library_processing_cross_database_migration
+    - desktop_packaging
+
+d3_information_architecture_planning:
+  status: accepted_and_partially_implemented
+  adr: docs/adr/0008-research-object-workspaces-and-contextual-dialogue.md
+  migration_plan: docs/D3_INFORMATION_ARCHITECTURE_MIGRATION_PLAN.md
+  permanent_workspaces:
+    - research_dialogue
+    - research_library
+    - manuscript_workbench
+    - project_settings
+  source_repair_location: library_document_detail
+  manuscript_canonical_format: structured_document_tree
+  docx_and_markdown: import_export_adapters
+  manuscript_research_sidebar: contextual_same_main_agent
+  browser_location: central_object_tab_with_context_sidebar
+  runtime_code_changed: true
+  schema_changed: true
+  real_data_migrated: false
+
+d3_usable_demo:
+  status: complete_awaiting_use_feedback
+  package_version: 0.8.0.dev1
+  project_database_schema: 6
+  permanent_workspaces: 4
+  library_import_and_repair_navigation: implemented
+  structured_document_tree: implemented
+  immutable_document_revisions: implemented
+  legacy_section_compatibility_write: implemented
+  docx_markdown_adapters: implemented_with_fidelity_reports
+  contextual_manuscript_dialogue: implemented
+  central_browser_workspace: implemented_with_embed_fallback
+  settings_capability_view: implemented
+  full_test_suite: 52_passed
+  browser_ui_check: passed
+  real_histra_sources_visible: 3
+  demo_manuscript_created: true
+  demo_url: http://127.0.0.1:8765/
+  deferred:
+    - library_processing_cross_database_migration
+    - rich_inline_format_persistence
+    - complex_docx_round_trip
+    - autosave_crash_recovery
+    - desktop_authenticated_webview
+
+d2_authoring_reading:
+  status: complete
+  package_version: 0.7.0.dev1
+  database_schema: 5
+  manuscript_section_versions: implemented
+  polish_proposals: implemented_with_protected_marker_gate
+  frozen_evidence_section_draft: implemented
+  bounded_reading_jobs: implemented
+  historiography_entries: implemented_as_candidates
+  journal_templates: implemented_markdown_first
+  article_gui: implemented
+  repeatable_demo_launcher: scripts/start_demo.ps1
+  full_test_suite: 47_passed
+  demo_url: http://127.0.0.1:8765/?mode=article
+
+d1_end_to_end_demo:
+  status: complete
+  package_version: 0.6.0.dev1
+  database_schema: 4
+  home: conversation
+  project_switching: implemented
+  library_to_project_bridge: implemented
+  public_research_connectors:
+    crossref: implemented_and_live_checked
+    openalex: implemented_requires_api_key
+  zotero_local_read_only: implemented_unavailable_when_desktop_api_off
+  evidence_and_claims: implemented
+  human_evidence_freeze: implemented
+  frozen_evidence_draft_review_export: implemented
+  research_browser_receipts: implemented_user_controlled_external_open
+  embedded_browser_webview: deferred_to_desktop_stage
+  memory_candidates: implemented_no_external_auto_write
+  translation_helper: implemented_openai_compatible_and_ollama
+  full_test_suite: 42_passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/
+
+m5_skills_compatible_research_library:
+  status: complete
+  package_version: 0.5.0.dev1
+  library_database: separate_sqlite
+  skill_md_discovery: implemented
+  skill_execution: instructions_only
+  intake_sample: historical-material-intake
+  explicit_folder_scan: implemented
+  scan_mode: recursive_read_only_preview
+  approval_mode: selected_candidates_index_in_place
+  originals_moved_or_modified: 0
+  identity_layers:
+    - work
+    - edition
+    - file
+    - file_version
+  sha256_scope: exact_file_version_and_duplicate_only
+  one_character_change_keeps_work_identity: implemented_and_tested
+  exact_duplicate_keeps_each_path: implemented_and_tested
+  supported_triage_formats:
+    - pdf
+    - markdown
+    - txt
+  pdf_triage_page_limit: 10
+  fts_and_tag_search: implemented
+  project_link: implemented
+  complete_version_display: implemented
+  current_byte_availability_check: implemented
+  full_test_suite: 35_passed
+  real_histra_inventory_candidates: 977
+  real_histra_supported_candidates_expanded: 14
+  real_histra_pdf_approved: 1
+  real_histra_originals_modified: 0
+  browser_ui_check: passed
+  accessibility_check: no_violations_reported
+  demo_url: http://127.0.0.1:8765/
+
+product_direction:
+  identity: local_first_model_selectable_historian_research_codex
+  product_baseline: docs/RESEARCH_CODEX_PRODUCT.md
+  architecture: docs/ARCHITECTURE_V1.md
+  roadmap: docs/ROADMAP.md
+  core_runtime: threads_goals_runs_events_tools_approvals
+  domain_harness: page_verification_retrieval_records_evidence_freeze_and_writing_gates
+
+m2:
+  status: complete
+  pdf_engine: pymupdf
+  external_dependencies: 1
+  network_calls: 0
+  real_model_calls: 0
+  paid_api_calls: 0
+  page_png_rendering: implemented
+  coordinate_text_extraction: implemented
+  printed_page_candidate: implemented
+  page_markdown: implemented
+  fragmented_layout_gate: implemented
+  image_only_systemic_gate: implemented
+  cross_page_relation_gate: implemented
+  block_page_relation_repairs: implemented
+  local_loopback_workbench: implemented
+  targeted_tests: 13_passed
+  visual_pdf_check: passed
+  browser_ui_check: passed
+
+m2_1_environment_and_ocr_evaluation:
+  status: complete
+  conda_prefix: D:\AI_Workflows\conda-envs\historical-research-workbench
+  python: 3.13.14
+  user_site_enabled: false
+  gpt_5_6_sol_exact_reference_pages: 4
+  gpt_5_6_sol_exact_reference_cer: 0.0
+  historical_pages_qualitatively_reviewed: 1
+  model_outputs_applied_to_source_text: 0
+
+m2_2_glm_4_6v_flash_live_check:
+  status: complete
+  credential_source: existing_disaster_history_project_runtime_only
+  credential_copied_or_logged: false
+  model: glm-4.6v-flash
+  historical_pages_tested: 1
+  api_calls: 2
+  repeated_call_reason: windows_console_encoding_failure_after_first_response
+  pairwise_reference: gpt-5.6-sol_visual_transcription
+  pairwise_cer: 0.008029
+  pairwise_wer: 0.015267
+  confirmed_material_errors: 3
+  model_outputs_applied_to_source_text: 0
+
+m3_model_assisted_page_repair:
+  status: complete
+  database_schema: 2
+  schema_v1_migration: implemented_and_tested
+  providers:
+    - openai_compatible
+    - ollama
+    - mock_test_only
+  explicit_provider_no_fallback: true
+  proposal_provenance: implemented
+  human_accept_reject_gate: implemented
+  gui_review_panel: implemented
+  cli_commands: implemented
+  targeted_tests: 22_passed
+  histra_pages_inspected: 3
+  histra_originals_modified: 0
+  ollama_live_calls: 1
+  ollama_pending_proposals: 1
+  glm_live_attempts: 2
+  glm_live_result: http_429_rate_limited
+  credentials_copied_or_logged: false
+  model_outputs_applied_without_human_acceptance: 0
+
+m4_agent_workspace_foundation:
+  status: complete
+  database_schema: 3
+  schema_v1_to_v3_migration: implemented_and_tested
+  schema_v2_to_v3_migration: implemented_and_tested
+  persistent_threads_messages_goals_runs: implemented
+  ordered_run_events: implemented
+  tool_call_ledger: implemented
+  approval_pause_resume: implemented
+  approval_survives_restart: implemented_and_tested
+  editable_note_approval: implemented
+  rejection_writes_no_note: implemented_and_tested
+  model_profiles:
+    - deterministic_mock
+    - openai_compatible
+    - ollama
+  explicit_provider_no_fallback: true
+  project_status_tool: implemented
+  source_list_tool: implemented
+  source_page_tool: implemented
+  save_research_note_tool: human_gated
+  cli_api_gui: implemented
+  full_test_suite: 29_passed
+  browser_ui_check: passed
+  demo_url: http://127.0.0.1:8765/
+  demo_pending_approval: created_for_human_review
+  credentials_persisted: 0
+
+rc1_codex_app_server_harness:
+  status: implementation_and_packaged_sidecar_verified
+  date: 2026-08-28
+  sdk_and_runtime: openai-codex_0.147.0_bundled
+  sole_agent_loop: codex_app_server
+  native_wenjin_tools:
+    - project_and_source
+    - research_library_and_two_graph_layers
+    - research_state_and_writing_state
+    - retrieval_and_browser
+    - skills_and_computer_use
+    - domain_agent_delegation
+  internal_core_transport: direct_python_callbacks_not_mcp
+  external_portability: wenjin_mcp_and_domain_agent_mcp
+  approval_resume: same_codex_thread_verified
+  steer_and_stop: turn_steer_and_turn_interrupt_verified_in_ui
+  context_compaction: app_server_at_90_percent
+  moa: once_per_user_turn_non_acting_advisers
+  deepseek_real_native_tool_call: passed
+  packaged_sidecar_native_tool_call: passed
+  main_to_disaster_domain_agent_delegation: passed
+  cli_native_tool_call: passed
+  ollama_responses_transport: connected_tool_choice_model_dependent
+  regression_tests: 417_passed_before_final_packaging_pass

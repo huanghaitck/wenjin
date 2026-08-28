@@ -8,6 +8,7 @@
 | PyMuPDF / MuPDF | PDF读取、文字坐标与页面渲染 | AGPL-3.0或Artifex商业许可 | https://pymupdf.readthedocs.io/ |
 | python-docx | DOCX导入导出 | MIT | https://github.com/python-openxml/python-docx |
 | Model Context Protocol Python SDK | MCP客户端与服务端 | MIT | https://github.com/modelcontextprotocol/python-sdk |
+| OpenAI Codex Python SDK / app-server 0.147.0 | 主Agent与领域Agent的线程、轮次、动态工具、方向调整、停止和上下文压缩 | Apache-2.0 | https://github.com/openai/codex |
 | certifi | HTTPS CA证书集合 | MPL-2.0 | https://github.com/certifi/python-certifi |
 | qrcode 8.2 | 本地生成微信登录二维码SVG | BSD-3-Clause | https://github.com/lincolnloop/python-qrcode |
 | Pydantic | 数据验证 | MIT | https://github.com/pydantic/pydantic |
@@ -35,7 +36,7 @@ PyMuPDF官方说明其开放源码许可为AGPL，同时提供商业许可。问
 | cytoscape-fcose 2.2.0 | Obsidian式力导向布局，使关系紧密的作品自然聚集 | MIT | https://github.com/iVis-at-Bilkent/cytoscape.js-fcose |
 | cose-base 2.2.x / layout-base 2.x | fCoSE布局基础算法 | MIT | https://github.com/iVis-at-Bilkent |
 
-Node.js和Rust只属于源码构建链；普通用户运行安装包不需要另装Node.js、Rust或Python。
+Node.js和Rust只属于源码构建链；普通用户运行安装包不需要另装Node.js、Rust、Python或Codex。Codex SDK与固定版本app-server二进制由PyInstaller侧车一并分发。
 
 Windows安装包只携带`agent-browser`的Windows原生可执行文件，不携带npm包装器或Node.js。普通安装包在WebView2缺失时调用微软引导程序；完整离线ZIP另附微软WebView2独立安装程序。可见研究浏览器仍优先调用系统Microsoft Edge或用户明确指定的兼容Chrome/Chromium；问津不会替换默认浏览器。
 
@@ -45,10 +46,10 @@ Windows安装包只携带`agent-browser`的Windows原生可执行文件，不携
 
 - NousResearch/hermes-agent（MIT）：模型服务、辅助任务路由、Mixture of Agents与可编辑Soul概念；
 - badlogic/pi-mono（MIT）：provider、Agent循环、工具、状态与界面的分层；
-- openai/codex（Apache-2.0）：线程事件、审批、Skills、MCP与app-server边界；
+- openai/codex（Apache-2.0）：0.1.3 RC1以前参考其线程事件、审批、Skills、MCP与app-server边界；RC1起直接内置固定版本Python SDK与app-server二进制，问津动态工具、项目数据库和界面属于本项目实现；
 - Model Context Protocol specification：prompts、resources、tools和控制边界。
 
-`src/research_workbench/weixin_gateway.py`依据Tencent `openclaw-weixin` 2.4.6（上游提交`cef0bfc390393f716903e16d50408118047f87e0`）公开的iLink请求结构和登录状态实现了问津自有Python网关，并修改了运行方式、凭据存储、权限与消息路由。问津不内置OpenClaw宿主，也不通过Hermes转发。腾讯MIT许可证全文见`licenses/Tencent-openclaw-weixin-MIT.txt`；Cytoscape.js MIT许可证全文见`licenses/cytoscape-MIT.txt`。
+`src/research_workbench/weixin_gateway.py`依据Tencent `openclaw-weixin` 2.4.6（上游提交`cef0bfc390393f716903e16d50408118047f87e0`）公开的iLink请求结构和登录状态实现了问津自有Python网关，并修改了运行方式、凭据存储、权限与消息路由。问津不内置OpenClaw宿主，也不通过Hermes转发。腾讯MIT许可证全文见`licenses/Tencent-openclaw-weixin-MIT.txt`；Cytoscape.js MIT许可证全文见`licenses/cytoscape-MIT.txt`。Codex随包Apache-2.0全文使用内置Historical Research Skill Pack附带的标准Apache-2.0许可证副本。
 
 问津内置`Historical Research Skill Pack 0.3.0`，来源为`huanghaitck/historical-research-codex-plugin`，按Apache License 2.0再分发。完整Apache许可证与NOTICE随Skill Pack源码和安装包保留。问津自身继续采用AGPL-3.0-only；内置Skill Pack文件不因此改变其原有Apache-2.0许可。
 

@@ -4,7 +4,7 @@ English | [中文](README.md)
 
 Wenjin is a local-first, model-selectable Agent workbench for humanities and social science research. Each study lives in an independent local project workspace, which connects research conversations, a personal library, source-page repair, bounded web research, evidence, historiography, drafting, Word round trips, Skills, CLI, and MCP through one auditable project data model.
 
-The current release is **0.1.2 Public Preview** for Windows 10/11.
+The current candidate is **0.1.3 RC1** for Windows 10/11.
 
 ![Wenjin Project Workspace](docs/screenshots/wenjin-project-workspace-en.png)
 
@@ -21,21 +21,22 @@ The current release is **0.1.2 Public Preview** for Windows 10/11.
 - PDF page images, text blocks, cross-page relations, printed-page mapping, and human repair.
 - Evidence, a source-linked event chronicle, and a two-layer knowledge graph for literature relations and Markdown-grounded content entities.
 - Main and auxiliary models, Ollama, OpenAI-compatible APIs, and optional Mixture of Agents.
-- Versioned research persona, Skills, MCP, CLI, and a two-way Codex bridge.
+- A bundled Codex app-server lifecycle, versioned research persona, Skills, MCP, and a first-class CLI.
 - Parent-aware research threads, direct chat attachments, and automatic loading of eligible versioned Skills.
 - Sixteen bundled Historical Research Skills plus an evidence-preserving Chinese historical-prose revision Skill.
 - A structured writing studio with notes, references, DOCX import/export, and multi-role review.
 - Chinese and English core navigation, model settings, and writing templates; layered project knowledge and optional local long-term-memory adapters.
 - A neutral domain-pack SDK, local ZIP/folder installation, and user-owned local-data bindings.
+- Codex plugin import for Skills and one standard MCP server; imported tools default to sensitive and proprietary account/runtime state is never copied.
 - Experimental private research conversations through ordinary Weixin QR sign-in.
 
 ## Installation
 
-Download `wenjin-0.1.2-x64-setup.exe` from the [v0.1.2 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.2). It includes the components required to run Wenjin. End users do not need Python, Node.js, PowerShell 7, or Rust.
+Download `wenjin-0.1.3-rc.1-x64-setup.exe` from the [v0.1.3-rc.1 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.3-rc.1). It includes the frozen Wenjin Python core, Codex app-server, and desktop runtime. End users do not need Python, Node.js, PowerShell 7, Rust, or a separate Codex installation to run Wenjin or a self-contained Domain Agent.
 
 On a fresh installation with no real main model, Wenjin first offers to connect local Ollama or an OpenAI-compatible API. Mock is test-only: it is absent from the production client and never silently replaces a failed configuration. Every new project receives an empty research thread automatically; library, project organization, and manual verification remain usable without a model.
 
-Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.2-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
+Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.3-rc.1-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
 
 The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
@@ -63,7 +64,7 @@ Password controls, hidden credential extraction, CAPTCHA solving, and payment co
 
 ## Domain packs
 
-Wenjin core is not tied to one discipline. In 0.1.2 a domain pack can become a Domain Agent with its own thread and isolated memory, specialist Skills, permission-bounded MCP tools, and local-data bindings. It may declare separate roles for domain reasoning, primary vision, secondary vision review, and fallback review; Wenjin injects the selected models at runtime without modifying the pack.
+Wenjin core is not tied to one discipline. A domain pack can become a Domain Agent with its own Codex app-server thread and isolated memory, specialist Skills, permission-bounded tools, and local-data bindings. It may declare separate roles for domain reasoning, primary vision, secondary vision review, and fallback review; Wenjin injects the selected models at runtime without modifying the pack. MCP remains the portability boundary for standalone Domain Agent packages and external clients.
 
 The public repository contains an orchestration tutorial and engineering scaffold rather than a preinstalled disciplinary sample or user dataset. Begin with the question and stopping rule, materials and licences, operations and permissions, the Wenjin workspace that owns each contribution, and runtime verification. Only then generate a scaffold. Install a downloaded ZIP or folder from the **Domain Agent** workspace. If a pack declares a user-owned SQLite, CSV, or directory source, bind it after installation. Wenjin records an identity receipt and does not copy or rewrite that database.
 
@@ -114,11 +115,11 @@ The MCP server exposes qualified project status, source pages, library results, 
 
 Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin to try the experimental private-text connection. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
 
-Version 0.1.2 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
+Version 0.1.3 RC1 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
 
 ## Platform support
 
-Version 0.1.2 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
+Version 0.1.3 RC1 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
 
 ## Data, privacy, and credentials
 

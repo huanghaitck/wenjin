@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "name": "computer-use",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "display_name": "Computer Use",
   "description": "Codex-compatible Windows computer control through accessibility, keyboard, mouse, program and command tools.",
   "description_zh": "通过Windows控件树、键盘、鼠标、程序和命令工具提供与Codex权限模式一致的整机控制。",
@@ -16,6 +16,8 @@
   "skills": ["skills/computer-use/SKILL.md"],
   "agent_tools": [
     "computer_status",
+    "runtime_status",
+    "repair_runtime",
     "window_list",
     "desktop_snapshot",
     "screen_capture",
@@ -31,6 +33,8 @@
   ],
   "tool_permissions": {
     "computer_status": "read",
+    "runtime_status": "read",
+    "repair_runtime": "sensitive",
     "window_list": "read",
     "desktop_snapshot": "read",
     "screen_capture": "read",

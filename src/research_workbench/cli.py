@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -51,8 +52,9 @@ from .service import (
 )
 from .vision import capability
 from .web import serve
-from .desktop_runtime import serve_desktop
+from .desktop_runtime import install_builtin_computer_use, serve_desktop
 from .mcp_server import serve_stdio
+from .model_settings import SETTINGS_FILE, apply_settings
 
 
 def _emit(value: Any) -> None:
@@ -302,8 +304,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
     os.environ.setdefault("SSL_CERT_FILE", certifi.where())
     args = build_parser().parse_args(argv)
+    config_root = Path(os.environ.get(
+        "WENJIN_CONFIG_ROOT",
+        Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming"))
+        / "cn.hrw.historical-research-workbench" / "config",
+    )).expanduser().resolve()
+    os.environ.setdefault("WENJIN_CONFIG_ROOT", str(config_root))
+    install_builtin_computer_use(config_root)
+    if (config_root / SETTINGS_FILE).is_file():
+        apply_settings(config_root)
     if args.command == "init":
         result = initialize_project(args.project_root, args.title)
     elif args.command == "add-source":
