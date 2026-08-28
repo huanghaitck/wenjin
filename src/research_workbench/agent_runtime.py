@@ -50,6 +50,7 @@ from .domain_plugins import call_domain_plugin_tool, find_config_root, plugin_st
 from .domain_plugins import validate_domain_plugin
 from .plugin_sdk import create_local_skill, create_plugin_project
 from .attachments import inspect_attachment
+from .library import library_assets, library_graph, library_status, search_library, work_detail
 
 
 MAIN_ROLE = "main_reasoning"
@@ -69,6 +70,13 @@ ARTIFACT_WRITING_TOOLS = {
     "historiography.create",
     "save_research_note",
 }
+
+
+def harness_backend() -> str:
+    configured = os.environ.get("WENJIN_HARNESS_BACKEND", "").strip().casefold()
+    if configured in {"codex", "legacy"}:
+        return configured
+    return "legacy" if any("unittest" in str(value).casefold() for value in sys.argv) else "codex"
 
 
 def _compact_authoring_state(project_root: Path) -> dict[str, Any]:
@@ -1176,6 +1184,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         "access_mode": access_mode,
         "reasoning_mode": reasoning_mode,
         "reasoning_effort": reasoning_effort,
+        "harness_backend": harness_backend(),
         "shared_design_id": shared_design["design_id"] if shared_design else "",
         "history_policy": "bounded_thread_history" if history else "withheld_or_empty",
         "history_message_ids": history_receipt["message_ids"],
@@ -1282,10 +1291,24 @@ def send_message(project_root: Path, thread_id: str, content: str,
             "packs for this run. Password controls, credential extraction, CAPTCHA solving and payment "
             "confirmation remain unavailable in every mode."
         )
-        _advance_run(
-            project_root, run_id, objective, profile, design_context, history,
-            reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
-        )
+        if snapshot["harness_backend"] == "codex":
+            from .codex_harness import run_turn
+
+            result_text = run_turn(
+                project_root, thread_id, run_id, objective, profile, design_context,
+                access_mode, reasoning_effort,
+            )
+            with connect(project_root) as connection:
+                current = connection.execute(
+                    "SELECT status FROM runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+            if current is not None and current["status"] == "RUNNING":
+                _complete_run(project_root, run_id, result_text)
+        else:
+            _advance_run(
+                project_root, run_id, objective, profile, design_context, history,
+                reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+            )
     except Exception as error:
         _fail_run(project_root, run_id, error)
         raise
@@ -2293,7 +2316,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"project.status", "source.list", "source.search", "source.page", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
+    allowed = {"project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -2343,6 +2366,25 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
                 str(arguments.get("page_id", "")),
                 str(arguments.get("source_id", "")),
                 arguments.get("physical_page"),
+            )
+        elif tool_name == "library.status":
+            result = library_status(project_root)
+        elif tool_name == "library.search":
+            tags = arguments.get("tags", [])
+            if not isinstance(tags, list):
+                raise ValueError("library.search tags must be a list")
+            limit = max(1, min(int(arguments.get("limit", 20)), 50))
+            result = search_library(
+                project_root, str(arguments.get("query", "")), [str(value) for value in tags]
+            )[:limit]
+        elif tool_name == "library.assets":
+            result = library_assets(project_root, str(arguments.get("kind", "")))[:100]
+        elif tool_name == "library.work":
+            result = work_detail(project_root, str(arguments.get("work_id", "")))
+        elif tool_name == "library.graph":
+            result = library_graph(
+                project_root, str(arguments.get("query", "")),
+                max(1, min(int(arguments.get("limit", 100)), 200)),
             )
         elif tool_name == "research.state":
             result = _agent_research_state(project_root)
@@ -3006,6 +3048,21 @@ def _resume_approved_run(project_root: Path, run_id: str) -> None:
         "result": _decode(call["output_json"], None) if call["status"] == "COMPLETED" else None,
         "error": str(call["error"] or "") or None,
     } for call in calls if call["status"] in {"COMPLETED", "FAILED"}]
+    if snapshot.get("harness_backend") == "codex":
+        from .codex_harness import run_turn
+
+        continuation = (
+            "用户已经明确处理了上一项审批。请依据下列已执行工具回执继续原任务；"
+            "不要重复同一动作，也不要把候选结果说成已批准证据。\n"
+            + _json(observations)
+        )
+        _complete_run(project_root, run_id, run_turn(
+            project_root, _run_thread_id(project_root, run_id), run_id, continuation,
+            _assigned_profile(project_root), design_context,
+            str(snapshot.get("access_mode", "ask")),
+            str(snapshot.get("reasoning_effort", "medium")),
+        ))
+        return
     _advance_run(
         project_root, run_id, objective, _assigned_profile(project_root), design_context, history,
         reasoning_mode=str(snapshot.get("reasoning_mode", "standard")),
