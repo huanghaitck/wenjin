@@ -35,4 +35,3 @@ quarantined, human-repaired at block or full-page scope, and audited without cal
 7. A page repair updates page-scoped block/relation corrections and preserves other pages.
 8. A systemic anomaly blocks the entire source.
 9. Every state-changing action creates an audit event.
-

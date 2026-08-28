@@ -1,19 +1,18 @@
 const frame = document.getElementById('workbench');
 const startup = document.getElementById('startup');
-const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word', 'open_data_directory', 'open_sidecar_log']);
+const allowed = new Set(['desktop_status', 'choose_folder', 'choose_file', 'open_in_word', 'open_path', 'open_data_directory', 'open_sidecar_log']);
 let workbenchOrigin = '';
-let frameRetry = 0;
+let frameTimeout = 0;
 const invoke = window.__TAURI__?.core?.invoke || window.__TAURI_INTERNALS__?.invoke;
 const showFailure=(message)=>{document.getElementById('status').textContent=message;document.querySelector('.bar').style.display='none';document.querySelector('.actions').hidden=false;};
 
 window.startWorkbench = (url) => {
   workbenchOrigin = new URL(url).origin;
   frame.src = url;
-  frameRetry = window.setInterval(() => { frame.src = url; }, 1000);
-  window.setTimeout(() => {
-    if (frameRetry) {
-      window.clearInterval(frameRetry);
-      frameRetry = 0;
+  if (frameTimeout) window.clearTimeout(frameTimeout);
+  frameTimeout = window.setTimeout(() => {
+    if (frameTimeout) {
+      frameTimeout = 0;
       showFailure('本地研究服务没有在一分钟内启动。可以重试，或直接打开启动日志查看原因。');
     }
   }, 60000);
@@ -50,9 +49,9 @@ waitForWorkbench();
 window.addEventListener('message', async (event) => {
   const request = event.data?.hrwDesktopRequest;
   if (!request || event.source !== frame.contentWindow || event.origin !== workbenchOrigin) return;
-  if (frameRetry) {
-    window.clearInterval(frameRetry);
-    frameRetry = 0;
+  if (frameTimeout) {
+    window.clearTimeout(frameTimeout);
+    frameTimeout = 0;
     frame.hidden = false;
     startup.hidden = true;
   }

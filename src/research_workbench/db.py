@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 26
 DATABASE_NAME = "project.sqlite3"
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
@@ -920,6 +920,128 @@ ON style_profile_samples(source_id, source_version_id);
 PRAGMA foreign_keys = ON;
 """
 
+MIGRATION_22 = """
+CREATE TABLE IF NOT EXISTS literature_relation_decisions (
+    relation_key TEXT PRIMARY KEY,
+    source_work_id TEXT NOT NULL,
+    target_work_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    source_id TEXT NOT NULL REFERENCES sources(source_id),
+    page_id TEXT NOT NULL REFERENCES pages(page_id),
+    block_id TEXT NOT NULL REFERENCES blocks(block_id),
+    quote TEXT NOT NULL,
+    status TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decision_reason TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_literature_relations_status
+ON literature_relation_decisions(status, relation_type, decided_at);
+"""
+
+MIGRATION_23 = """
+CREATE TABLE IF NOT EXISTS domain_agent_sessions (
+    session_id TEXT PRIMARY KEY,
+    plugin_name TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL,
+    memory_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(plugin_name, agent_id)
+);
+CREATE TABLE IF NOT EXISTS domain_agent_messages (
+    message_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES domain_agent_sessions(session_id),
+    role TEXT NOT NULL,
+    content_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS domain_agent_runs (
+    run_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES domain_agent_sessions(session_id),
+    main_thread_id TEXT REFERENCES threads(thread_id),
+    status TEXT NOT NULL,
+    model_snapshot_json TEXT NOT NULL,
+    error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS domain_agent_tool_calls (
+    tool_call_id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES domain_agent_runs(run_id),
+    tool_name TEXT NOT NULL,
+    input_json TEXT NOT NULL,
+    output_json TEXT,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE TABLE IF NOT EXISTS domain_agent_artifacts (
+    artifact_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES domain_agent_sessions(session_id),
+    run_id TEXT REFERENCES domain_agent_runs(run_id),
+    artifact_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    decided_at TEXT,
+    decided_by TEXT,
+    decision_reason TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_domain_messages_session
+ON domain_agent_messages(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_domain_runs_session
+ON domain_agent_runs(session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_domain_artifacts_status
+ON domain_agent_artifacts(session_id, status, created_at);
+"""
+
+MIGRATION_24 = """
+CREATE TABLE IF NOT EXISTS thread_inheritance (
+    child_thread_id TEXT PRIMARY KEY REFERENCES threads(thread_id),
+    parent_thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_thread_inheritance_parent
+ON thread_inheritance(parent_thread_id);
+"""
+
+MIGRATION_25 = """
+CREATE TABLE IF NOT EXISTS thread_attachments (
+    attachment_id TEXT PRIMARY KEY,
+    thread_id TEXT NOT NULL REFERENCES threads(thread_id),
+    original_name TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    media_type TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    byte_count INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_thread_attachments_thread
+ON thread_attachments(thread_id, created_at);
+"""
+
+MIGRATION_26 = """
+CREATE TABLE IF NOT EXISTS agent_run_controls (
+    control_id TEXT PRIMARY KEY,
+    run_kind TEXT NOT NULL CHECK(run_kind IN ('main','domain')),
+    run_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK(action IN ('steer','stop')),
+    content TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('pending','applied')),
+    created_at TEXT NOT NULL,
+    applied_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_run_controls_pending
+ON agent_run_controls(run_kind, run_id, status, created_at);
+"""
+
 CITATION_METADATA_COLUMNS = (
     "translator", "journal", "volume", "issue", "page_range",
 )
@@ -1130,7 +1252,8 @@ def _expected_schema_tables() -> set[str]:
     scripts = (
         SCHEMA, MIGRATION_2, MIGRATION_3, MIGRATION_4, MIGRATION_5, MIGRATION_6,
         MIGRATION_7, MIGRATION_8, MIGRATION_9, MIGRATION_10, MIGRATION_11,
-        MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_19, MIGRATION_20,
+        MIGRATION_14, MIGRATION_15, MIGRATION_16, MIGRATION_19, MIGRATION_20, MIGRATION_22,
+        MIGRATION_23, MIGRATION_24, MIGRATION_25, MIGRATION_26,
     )
     return {
         match.group(1)
@@ -1308,6 +1431,42 @@ def _migrate(connection: sqlite3.Connection) -> None:
             "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
             (21, utc_now()),
         )
+        version = 21
+    if version < 22:
+        connection.executescript(MIGRATION_22)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (22, utc_now()),
+        )
+        version = 22
+    if version < 23:
+        connection.executescript(MIGRATION_23)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (23, utc_now()),
+        )
+        version = 23
+    if version < 24:
+        connection.executescript(MIGRATION_24)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (24, utc_now()),
+        )
+        version = 24
+    if version < 25:
+        connection.executescript(MIGRATION_25)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (25, utc_now()),
+        )
+        version = 25
+    if version < 26:
+        connection.executescript(MIGRATION_26)
+        connection.execute(
+            "INSERT INTO schema_meta(version, applied_at) VALUES (?, ?)",
+            (26, utc_now()),
+        )
+        version = 26
     # The scripts are idempotent and also repair an interrupted migration where
     # schema_meta was committed but one of its tables was not.
     connection.executescript(MIGRATION_2)
@@ -1345,6 +1504,11 @@ def _migrate(connection: sqlite3.Connection) -> None:
         "SELECT 1 FROM pragma_table_info('style_profile_samples') WHERE name = 'sample_role'"
     ).fetchone() is None:
         connection.executescript(MIGRATION_20)
+    connection.executescript(MIGRATION_22)
+    connection.executescript(MIGRATION_23)
+    connection.executescript(MIGRATION_24)
+    connection.executescript(MIGRATION_25)
+    connection.executescript(MIGRATION_26)
     _ensure_citation_metadata_columns(connection)
     _ensure_event_comparison_columns(connection)
 
@@ -1391,6 +1555,11 @@ def initialize_database(project_root: Path, project_id: str, title: str) -> None
         connection.executescript(MIGRATION_16)
         connection.executescript(MIGRATION_19)
         connection.executescript(MIGRATION_20)
+        connection.executescript(MIGRATION_22)
+        connection.executescript(MIGRATION_23)
+        connection.executescript(MIGRATION_24)
+        connection.executescript(MIGRATION_25)
+        connection.executescript(MIGRATION_26)
         _ensure_citation_metadata_columns(connection)
         _ensure_event_comparison_columns(connection)
         now = utc_now()

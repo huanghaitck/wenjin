@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import shutil
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -614,6 +616,79 @@ def create_browser_session(project_root: Path, start_url: str, allowed_domain: s
             "reused": False}
 
 
+def _agent_browser_executable() -> tuple[str, str]:
+    configured = os.getenv("WENJIN_AGENT_BROWSER", "").strip()
+    candidates = []
+    if configured:
+        candidates.append((Path(configured), "configured"))
+    candidates.append((Path(sys.executable).resolve().parent / "tools" / "agent-browser.exe", "bundled"))
+    candidates.append((Path(__file__).resolve().parents[2] / "node_modules" / "agent-browser" / "bin" / "agent-browser-win32-x64.exe", "project"))
+    located = shutil.which("agent-browser")
+    if located:
+        candidates.append((Path(located), "system"))
+    for path, origin in candidates:
+        if path.is_file() and path.suffix.casefold() in {".exe", ""}:
+            return str(path.resolve()), origin
+    return "", "missing"
+
+
+def _chromium_browser_executable() -> tuple[str, str]:
+    configured = os.getenv("WENJIN_BROWSER_EXECUTABLE", "").strip()
+    candidates = []
+    if configured:
+        candidates.append((Path(configured), "configured"))
+    for variable, relative, label in (
+        ("ProgramFiles(x86)", "Microsoft/Edge/Application/msedge.exe", "system_edge"),
+        ("ProgramFiles", "Microsoft/Edge/Application/msedge.exe", "system_edge"),
+        ("ProgramFiles", "Google/Chrome/Application/chrome.exe", "system_chrome"),
+        ("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe", "user_chrome"),
+    ):
+        root = os.getenv(variable, "").strip()
+        if root:
+            candidates.append((Path(root) / relative, label))
+    for command, label in (("msedge", "system_edge"), ("chrome", "system_chrome")):
+        located = shutil.which(command)
+        if located:
+            candidates.append((Path(located), label))
+    for path, origin in candidates:
+        if path.is_file():
+            return str(path.resolve()), origin
+    return "", "missing"
+
+
+def computer_use_capability() -> dict[str, Any]:
+    executable, runtime_origin = _agent_browser_executable()
+    browser_executable, browser_origin = _chromium_browser_executable()
+    version = ""
+    if executable:
+        try:
+            completed = subprocess.run(
+                [executable, "--version"], capture_output=True, text=True, timeout=3,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            version = (completed.stdout or completed.stderr).strip().splitlines()[0]
+        except (OSError, subprocess.SubprocessError, IndexError):
+            version = ""
+    return {
+        "installed": bool(executable),
+        "executable": executable or "",
+        "version": version,
+        "runtime_origin": runtime_origin,
+        "browser_executable": browser_executable,
+        "browser_origin": browser_origin,
+        "browser_available": bool(browser_executable),
+        "visible_browser_launch": bool(executable and browser_executable),
+        "agent_actuated": bool(executable and browser_executable),
+        "agent_actions": ["observe", "read", "same_domain_navigate"] if executable and browser_executable else [],
+        "mode": "bounded_research_browser" if executable and browser_executable else "runtime_only" if executable else "unavailable",
+        "boundary": (
+            "The agent may inspect, read and navigate inside the session's approved domain. "
+            "Clicking controls, filling forms, login, CAPTCHA, payment, download and submission "
+            "remain user actions in the visible browser window."
+        ),
+    }
+
+
 def launch_controlled_browser(project_root: Path, session_id: str) -> dict[str, Any]:
     with connect(project_root) as connection:
         row = connection.execute(
@@ -622,12 +697,16 @@ def launch_controlled_browser(project_root: Path, session_id: str) -> dict[str, 
         ).fetchone()
     if row is None:
         raise KeyError(f"unknown browser session: {session_id}")
-    executable = shutil.which("agent-browser")
+    executable, _runtime_origin = _agent_browser_executable()
     if not executable:
         raise RuntimeError("受控浏览器组件 agent-browser 不可用，请在 Skills 页面检查程序集成。")
+    browser_executable, _browser_origin = _chromium_browser_executable()
+    if not browser_executable:
+        raise RuntimeError("没有找到可供受控会话使用的 Microsoft Edge 或 Google Chrome。")
     browser_session = f"hrw-{row['session_id'][-12:]}"
     subprocess.Popen(
-        [executable, "--session", browser_session, "--restore", "--headed", "open", row["start_url"]],
+        [executable, "--executable-path", browser_executable,
+         "--session", browser_session, "--restore", "--headed", "open", row["start_url"]],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
@@ -652,6 +731,103 @@ def list_browser_sessions(project_root: Path) -> list[dict[str, Any]]:
         return [dict(row) for row in connection.execute(
             "SELECT session_id, start_url, allowed_domain, status, created_at FROM browser_sessions ORDER BY created_at DESC"
         )]
+
+
+def _browser_session(project_root: Path, session_id: str) -> dict[str, Any]:
+    with connect(project_root) as connection:
+        row = connection.execute(
+            "SELECT session_id, start_url, allowed_domain, status, created_at "
+            "FROM browser_sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    if row is None:
+        raise KeyError(f"unknown browser session: {session_id}")
+    if row["status"] != "controlled_browser_open":
+        raise ValueError("browser session must be opened visibly before the agent can inspect it")
+    return dict(row)
+
+
+def _browser_session_name(session_id: str) -> str:
+    return f"hrw-{session_id[-12:]}"
+
+
+def _run_browser_command(arguments: list[str], timeout: int = 30) -> str:
+    executable, _origin = _agent_browser_executable()
+    if not executable:
+        raise RuntimeError("受控浏览器组件 agent-browser 不可用。")
+    completed = subprocess.run(
+        [executable, *arguments], capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"controlled browser command failed: {message[:500]}")
+    return (completed.stdout or "").strip()
+
+
+def inspect_controlled_browser(project_root: Path, session_id: str) -> dict[str, Any]:
+    session = _browser_session(project_root, session_id)
+    raw = _run_browser_command([
+        "--session", _browser_session_name(session_id), "snapshot", "-i", "-u", "--json",
+    ])
+    payload = json.loads(raw)
+    data = payload.get("data", {}) if isinstance(payload, dict) else {}
+    return {
+        "session_id": session_id,
+        "allowed_domain": session["allowed_domain"],
+        "origin": data.get("origin", ""),
+        "snapshot": str(data.get("snapshot", ""))[:16000],
+        "refs": data.get("refs", {}),
+        "boundary": (
+            "Rendered browser state is a discovery lead, not evidence. The agent may follow only "
+            "same-domain URLs; form controls and external side effects remain user actions."
+        ),
+    }
+
+
+def read_controlled_browser(project_root: Path, session_id: str) -> dict[str, Any]:
+    session = _browser_session(project_root, session_id)
+    browser_session = _browser_session_name(session_id)
+    text = _run_browser_command(["--session", browser_session, "read"])
+    url = _run_browser_command(["--session", browser_session, "get", "url"])
+    title = _run_browser_command(["--session", browser_session, "get", "title"])
+    return {
+        "session_id": session_id,
+        "allowed_domain": session["allowed_domain"],
+        "url": url,
+        "title": title,
+        "text": text[:20000],
+        "truncated": len(text) > 20000,
+        "boundary": "Rendered page text is a research lead and must be acquired as a project source before evidentiary use.",
+    }
+
+
+def navigate_controlled_browser(project_root: Path, session_id: str, url: str) -> dict[str, Any]:
+    session = _browser_session(project_root, session_id)
+    parsed = urlparse(url.strip())
+    allowed_domain = str(session["allowed_domain"]).lower()
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("browser navigation URL must use http or https")
+    hostname = parsed.hostname.lower()
+    if hostname != allowed_domain and not hostname.endswith("." + allowed_domain):
+        raise ValueError("agent browser navigation must stay inside the approved domain")
+    if parsed.username or parsed.password:
+        raise ValueError("browser navigation URLs must not contain credentials")
+    sensitive = {"token", "access_token", "password", "key", "api_key"}
+    if sensitive.intersection(key.lower() for key in parse_qs(parsed.query)):
+        raise ValueError("browser navigation URLs must not contain credential query parameters")
+    browser_session = _browser_session_name(session_id)
+    _run_browser_command(["--session", browser_session, "open", url.strip()])
+    current_url = _run_browser_command(["--session", browser_session, "get", "url"])
+    current_title = _run_browser_command(["--session", browser_session, "get", "title"])
+    return {
+        "session_id": session_id,
+        "url": current_url,
+        "title": current_title,
+        "allowed_domain": allowed_domain,
+        "boundary": "Same-domain navigation only; clicking, forms, login, download and submission remain user actions.",
+    }
 
 
 def create_memory_candidate(project_root: Path, category: str, content: str,

@@ -1,0 +1,31 @@
+{
+  "name": "historical-research",
+  "version": "0.3.0",
+  "description": "A network-aware, source-critical, human-gated workflow for scholarly historical research and history writing.",
+  "author": {
+    "name": "huanghaitck",
+    "url": "https://github.com/huanghaitck"
+  },
+  "homepage": "https://github.com/huanghaitck/historical-research-codex-plugin",
+  "repository": "https://github.com/huanghaitck/historical-research-codex-plugin",
+  "license": "Apache-2.0",
+  "keywords": ["history", "humanities", "research", "citations", "evidence"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "史学研究",
+    "shortDescription": "联网检索、本地史料与可审计证据层驱动的史学工作流",
+    "longDescription": "面向学术性历史研究的十六项技能：连接本地材料、开放数字资源、学术索引和受限数据库线索，区分发现、取得、阅读、核页与可引用状态，并完成问题形成、史源批判、学术史、解释检验、证据冻结、中文史学注释插入、唯一长稿、独立评审、中文返修与最终审计。完整项目、多 Agent、批量下载、长稿和长期记忆均受人工门禁控制。",
+    "developerName": "huanghaitck",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/huanghaitck/historical-research-codex-plugin",
+    "privacyPolicyURL": "https://github.com/huanghaitck/historical-research-codex-plugin/blob/main/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/huanghaitck/historical-research-codex-plugin/blob/main/TERMS.md",
+    "defaultPrompt": [
+      "判断这个历史研究请求应调用哪些最小技能。",
+      "有界检索相关史料和研究，下载开放全文，并列出受限材料。",
+      "验收并登记我明确提供的史学材料。",
+      "按我提供的中文史学格式要求核对来源并插入脚注。"
+    ]
+  }
+}

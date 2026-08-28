@@ -1,0 +1,6 @@
+interface:
+  display_name: "历史证据冻结"
+  short_description: "为唯一批准方向冻结主张证据映射、脚注、译文、反证和写作边界"
+  default_prompt: "Use $historical-evidence-freeze to prepare a writing-ready evidence and citation package for the approved direction."
+policy:
+  allow_implicit_invocation: true

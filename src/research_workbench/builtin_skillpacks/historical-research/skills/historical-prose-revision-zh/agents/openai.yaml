@@ -1,0 +1,6 @@
+interface:
+  display_name: "中文史学语言返修"
+  short_description: "在事实与引用稳定后证据保真地清理重复、翻译腔和内部工作语言"
+  default_prompt: "Use $historical-prose-revision-zh to revise the stable Chinese history manuscript without changing evidence or claims."
+policy:
+  allow_implicit_invocation: true

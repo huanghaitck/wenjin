@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学语料阅读"
+  short_description: "依研究功能安排全文、定向或元数据阅读并记录证据边界和未读状态"
+  default_prompt: "Use $historical-corpus-reading to read the verified corpus at an evidence-appropriate depth."
+policy:
+  allow_implicit_invocation: true

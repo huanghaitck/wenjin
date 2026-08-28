@@ -164,7 +164,7 @@ class ScholarshipUiContractTests(unittest.TestCase):
         self.assertIn("function publicMessageText", self.app)
         self.assertIn("模型返回了内部工具格式内容，未直接展示", self.app)
         self.assertIn("模型操作格式未通过；系统最多自动重试一次", self.app)
-        self.assertIn("text.textContent = publicMessageText(message)", self.app)
+        self.assertIn("messageContent(publicMessageText(message),message.role==='assistant')", self.app)
 
     def test_historiography_decision_route_records_a_human_rejection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -49,7 +49,7 @@ def handle_request(project_root: Path, library_root: Path | None, request: dict[
         return None
     try:
         if method == "initialize":
-            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": "0.1.0"}}
+            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": "0.1.2"}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":
@@ -82,16 +82,63 @@ def handle_request(project_root: Path, library_root: Path | None, request: dict[
         return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": str(exc)}}
 
 
+def build_mcp_server(project_root: Path, library_root: Path | None = None) -> Any:
+    from mcp.server.fastmcp import FastMCP
+    from mcp.types import ToolAnnotations
+
+    root = project_root.resolve()
+    server = FastMCP("wenjin-research")
+    readonly = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
+
+    @server.tool(name="project_status", annotations=readonly)
+    def mcp_project_status() -> dict:
+        """Return the current Wenjin research project's status and counts."""
+        return project_status(root)
+
+    @server.tool(name="library_search", annotations=readonly)
+    def mcp_library_search(query: str = "", tag: str = "") -> list[dict[str, Any]]:
+        """Search the local research library by title, author, tag or indexed text."""
+        return search_library(root, query, [tag] if tag else [], library_root)
+
+    @server.tool(name="source_list", annotations=readonly)
+    def mcp_source_list() -> list[dict[str, Any]]:
+        """List sources registered in the current project and their qualification state."""
+        return list_sources(root)
+
+    @server.tool(name="source_detail", annotations=readonly)
+    def mcp_source_detail(source_id: str) -> dict[str, Any]:
+        """Read one registered source, including pages and citation metadata."""
+        return source_view(root, source_id)
+
+    @server.tool(name="manuscript_list", annotations=readonly)
+    def mcp_manuscript_list() -> dict[str, Any]:
+        """List manuscripts, bounded reading tasks and historiography entries."""
+        return authoring_state(root)
+
+    @server.tool(name="manuscript_detail", annotations=readonly)
+    def mcp_manuscript_detail(manuscript_id: str) -> dict[str, Any]:
+        """Read the current version and section structure of one manuscript."""
+        return manuscript_detail(root, manuscript_id)
+
+    @server.resource("wenjin://project/status")
+    def mcp_project_resource() -> str:
+        return json.dumps(project_status(root), ensure_ascii=False, indent=2)
+
+    @server.resource("wenjin://agent/profile")
+    def mcp_profile_resource() -> str:
+        return json.dumps(public_agent_profile(root), ensure_ascii=False, indent=2)
+
+    @server.prompt(name="research_status_review")
+    def mcp_research_status_review() -> str:
+        return (
+            "请检查当前项目的来源资格、阅读覆盖、证据冻结、稿件版本和未决缺口；"
+            "区分已核事实、研究判断与待核事项。"
+        )
+
+    return server
+
+
 def serve_stdio(project_root: Path, library_root: Path | None = None, stdin: TextIO = sys.stdin, stdout: TextIO = sys.stdout) -> None:
-    project_root = project_root.resolve()
-    for line in stdin:
-        if not line.strip():
-            continue
-        try:
-            request = json.loads(line)
-            response = handle_request(project_root, library_root, request)
-        except Exception as exc:
-            response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": str(exc)}}
-        if response is not None:
-            stdout.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
-            stdout.flush()
+    if stdin is not sys.stdin or stdout is not sys.stdout:
+        raise ValueError("FastMCP stdio uses the process standard streams")
+    build_mcp_server(project_root, library_root).run(transport="stdio")

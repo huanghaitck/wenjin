@@ -160,6 +160,8 @@ class AsyncLibraryScanTests(unittest.TestCase):
         self.assertIn("assertCurrentLibraryWork(work.work_id)", script)
         self.assertIn("sessionStorage.getItem('hrwLibraryScanId')", script)
         self.assertIn("setTimeout(()=>loadLibraryScan", script)
+        self.assertIn("approveAllCandidates", script)
+        self.assertIn("按建议分类入库", script)
 
 
 if __name__ == "__main__":

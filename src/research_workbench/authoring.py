@@ -68,6 +68,7 @@ BUILTIN_JOURNAL_TEMPLATES = (
         "source_url": "https://www.ynu.edu.cn/__local/3/C4/E8/48C0EFB258EA4A95C7F446EC740_06110F24_37381.pdf?e=.pdf",
         "verification_status": "REFERENCE_NEEDS_PRE_SUBMISSION_RECHECK",
         "requirements": {
+            "language": "zh-CN",
             "note_placement": "footnote", "number_restart": "each_page", "marker": "circled_arabic",
             "anchor_position": "after_punctuation", "warning": "公开镜像未证明仍是期刊当前最新版，投稿前必须复核",
         },
@@ -90,6 +91,7 @@ BUILTIN_JOURNAL_TEMPLATES = (
         "source_url": "https://xbbjb.xawl.edu.cn/info/1353/5409.htm",
         "verification_status": "USER_SUPPLIED_PUBLISHED_NOTICE_AND_SAMPLE_CHECKED_2026_08_12",
         "requirements": {
+            "language": "zh-CN",
             "citation_system": "sequential_reference", "reference_placement": "end",
             "reference_marker": "square_brackets_with_original_page", "reference_marker_position": "superscript",
             "same_source_reuses_number": True, "note_role": "explanatory_only",
@@ -116,6 +118,7 @@ BUILTIN_JOURNAL_TEMPLATES = (
         "source_url": "https://sscp.cssn.cn/tsgpt/202510/W020260609553247288896.pdf",
         "verification_status": "OFFICIAL_CURRENT_CHECKED_2026_08_10",
         "requirements": {
+            "language": "zh-CN",
             "max_words": 20000, "paper": "A4", "body_font": "宋体", "body_size_pt": 12,
             "body_grid": "36字×35行", "note_placement": "footnote", "number_restart": "each_page",
             "marker": "circled_arabic", "note_font": "仿宋", "note_size_pt": 10.5,
@@ -123,6 +126,26 @@ BUILTIN_JOURNAL_TEMPLATES = (
             "submission_guide_url": "https://sscp.cssn.cn/tzgg/202502/t20250227_5849425.shtml",
             "citation_rules_url": "https://sscp.cssn.cn/tsgpt/202510/W020260609553247288896.pdf",
         },
+    },
+    {
+        "template_id": "builtin-english-history-chicago-nb",
+        "revision_id": "JTR_english_history_chicago_notes_bibliography_2026",
+        "name": "English History Journal — Chicago Notes and Bibliography",
+        "citation_style": "Chicago Notes and Bibliography: numbered footnotes with a final alphabetized bibliography",
+        "section_rules": ["English title", "Author and affiliation", "Abstract", "Keywords", "Main text", "Footnotes", "Bibliography"],
+        "version_label": "General English-language history article preset",
+        "effective_date": "2026",
+        "source_url": "https://www.chicagomanualofstyle.org/tools_citationguide/citation-guide-1.html",
+        "verification_status": "OFFICIAL_STYLE_GUIDE_REFERENCE",
+        "requirements": {
+            "language": "en", "citation_system": "notes_bibliography",
+            "note_placement": "footnote", "number_restart": "continuous",
+            "marker": "superscript_arabic", "reference_placement": "end",
+            "bibliography_order": "alphabetical", "paper": "letter_or_A4",
+            "body_font": "Times New Roman", "body_size_pt": 12,
+            "heading_levels": ["Level 1", "Level 2", "Level 3"],
+            "warning": "Verify the target journal's current house style before submission."
+        }
     },
 )
 
@@ -2121,6 +2144,13 @@ def ensure_journal_templates(project_root: Path) -> list[dict[str, Any]]:
                 (item["revision_id"], item["template_id"], item["version_label"], item["effective_date"],
                  item["source_url"], "2026-08-10", _json(item["requirements"]),
                  item["verification_status"], now),
+            )
+            connection.execute(
+                """UPDATE journal_template_revisions SET version_label = ?, effective_date = ?,
+                   source_url = ?, requirements_json = ?, verification_status = ?
+                   WHERE template_revision_id = ?""",
+                (item["version_label"], item["effective_date"], item["source_url"],
+                 _json(item["requirements"]), item["verification_status"], item["revision_id"]),
             )
         rows = [dict(row) for row in connection.execute(
             """SELECT t.*, r.template_revision_id, r.version_label, r.effective_date, r.source_url,

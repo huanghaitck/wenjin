@@ -1,6 +1,6 @@
 # ADR 0001｜Runtime, model roles and Bookflow reuse
 
-Status: accepted for future implementation; no model runtime is implemented in M1.  
+Status: accepted for future implementation; no model runtime is implemented in M1.
 Date: 2026-08-09
 
 ## Decision
@@ -59,4 +59,3 @@ translations remain derivatives and never replace source text.
 - Visual and translation costs can be routed independently.
 - M1 stays dependency-free and testable without credentials.
 - Reuse is deliberate and bounded instead of coupling two applications.
-

@@ -1,0 +1,2 @@
+search_id,trigger,query,language,provider,provider_type,source_scope,search_date,result_rank,title,author,year,identifier,result_url,open_copy_url,access_state,acquisition_status,local_path,http_status,rights_or_license,relevance_reason,expected_claim,negative_result,stop_condition,user_action,status,notes
+R1,test,test,zh,example,BAD,web,2026-08-01,1,Title,Author,2026,id,https://example.com,,USER_SELECTION_REQUIRED,FILE_VERIFIED,,,,relevant,claim,,,ACTIVE,invalid fixture

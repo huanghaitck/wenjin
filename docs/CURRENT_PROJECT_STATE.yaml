@@ -1,15 +1,19 @@
 project: historical-research-workbench
-updated_at: "2026-08-15"
-current_stage: WENJIN_0_1_RELEASE_VALIDATION
-last_completed_stage: WENJIN_0_1_BROWSER_DOGFOOD
-active_human_gate: DESKTOP_INSTALLER_AND_RELEASE_ACCEPTANCE
+updated_at: "2026-08-21"
+current_stage: WENJIN_0_1_1_PROJECT_WORKSPACE_PUBLIC_RELEASED
+last_completed_stage: WENJIN_0_1_1_PROJECT_WORKSPACE_BACKUP_BUILD_INSTALL_AND_GITHUB_RELEASE
+active_human_gate: NONE
 
 current_demo:
   product_name: 问津
-  app_version: 0.1.0
-  project_database_schema: 21
-  full_test_suite: pending_release_run
-  home: research_dialogue
+  app_version: 0.1.1
+  project_database_schema: 22
+  full_test_suite: 336_passed
+  home: project_workspace
+  project_workspace: local_create_existing_register_phase_objects_next_actions_activity_gui_tested
+  external_project_registry_deduplication: implemented_and_tested
+  external_project_startup_backup: implemented_and_tested
+  complete_project_archive_restore: database_sources_derivatives_notes_manuscripts_reviews_exports
   skills_and_plugins_library: implemented_and_gui_tested
   slash_skill_invocation: implemented_and_gui_tested
   sequential_reference_export: implemented_and_gui_tested
@@ -29,10 +33,62 @@ current_demo:
   model_presets: [ollama, deepseek, openrouter, siliconflow, zhipu_glm, custom_openai_compatible]
   moa: implemented_and_gui_tested
   versioned_agent_profile: implemented_and_gui_tested
-  bibliographic_knowledge_graph: implemented_and_gui_tested
+  bibliographic_knowledge_graph: literature_relation_approval_and_markdown_content_entities_gui_tested
   mcp_stdio_server: implemented_and_unit_tested
   cli_alias: wenjin
   chinese_english_core_ui: implemented_and_gui_tested
+  source_reading_markdown: implemented_and_full_regression_passed
+  codex_bidirectional_bridge: implemented_and_desktop_smoke_passed
+  domain_plugin_manager: implemented_and_desktop_smoke_passed
+  domain_pack_reference_sample: neutral_scaffold_generated_and_installed_e2e
+  automatic_project_backup: implemented_and_tested
+  non_destructive_backup_restore: implemented_and_tested
+  external_memory_adapters: historical_and_engineering_local_vaults
+  standard_domain_plugin_sdk: implemented_and_tested
+  bundled_core_historical_skills: 17_clean_home_installed_smoke_passed
+  bundled_historical_humanizer: latest_2026_08_20_with_public_path_adapter
+  library_suggested_shelves: 6
+  library_bulk_classify_and_register: implemented_and_installed_smoke_passed
+  agent_access_modes: [ask, research_assist, full_computer]
+  computer_use_system_pack: 0.1.1_installed_mcp_11_tools_smoke_passed
+  computer_use_real_permission_e2e: ask_paused_assist_auto_routine_full_auto_sensitive
+  domain_pack_local_data_binding: path_size_mtime_sha256_and_mcp_environment
+  english_history_template: chicago_notes_bibliography_default_in_en
+  english_ui_audit: ui_strings_pass_user_project_content_preserved
+  provider_model_discovery: ollama_5_and_deepseek_2_models_live_checked
+  deepseek_v4_flash_smoke: completed_real_provider_zero_tool_calls_temporary_project_deleted
+  disaster_sample_pack_default_install: removed_after_0_1_1_bundled_data_smoke
+  weixin_gateway: native_ilink_qr_private_text_inbound_reply_e2e
+  messaging_connectors: native_weixin_private_text_only
+
+release_validation:
+  github_repository: https://github.com/huanghaitck/wenjin
+  github_release: https://github.com/huanghaitck/wenjin/releases/tag/v0.1.1
+  installer: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-x64-setup.exe
+  source_archive: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-agpl-source-20260823-1156.zip
+  complete_offline_archive: D:/AI_Workflows/installers/wenjin/0.1.1/wenjin-0.1.1-win64-complete-20260823-1156.zip
+  webview2_offline_installer_sha256: 82B2D8A7013E0C0EA15D48FF4742EE3778BA16BD8B7B4A47876645B3E48D4016
+  clean_public_repository: D:/AI_Workflows/publish/wenjin-0.1.1-final-20260821
+  clean_public_repository_commit: 41f001a
+  bilingual_readme_and_manuals: zh_en_repo_release_and_offline_bundle
+  configurable_build_python: true
+  delayed_iframe_until_sidecar_ready: true
+  isolated_data_root_override: WENJIN_DATA_ROOT
+  personal_research_content_in_packaged_runtime: false
+  portable_isolated_startup: passed
+  installed_isolated_startup: passed
+  packaged_mcp_fastmcp_handshake: passed
+  codex_to_wenjin_project_status: passed
+  wenjin_to_codex_task_launch: passed
+  isolated_upgrade_project_discovery: passed
+  startup_backup_and_non_destructive_restore: passed
+  approved_memory_promotion_to_90_inbox: passed
+  final_installed_bilingual_ui_smoke: passed
+  installed_project_create_restart_resume: passed
+  installed_project_backup_bundle: passed
+  installed_weixin_qr_generation: passed
+  installed_neutral_domain_pack_scaffold_generation: passed
+  installed_ollama_model_discovery: 5_models
 
 research_design_workflow:
   status: implemented_and_real_gui_tested

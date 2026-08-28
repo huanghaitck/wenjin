@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+      - name: Check browser application syntax
+        run: node --check src/research_workbench/web_assets/app.js
+      - name: Install desktop build dependencies
+        run: npm ci
+      - name: Create external-binary placeholder for Rust metadata check
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src-tauri/binaries | Out-Null
+          New-Item -ItemType File -Force src-tauri/binaries/hrw-sidecar-x86_64-pc-windows-msvc.exe | Out-Null
+      - name: Check Rust desktop shell
+        run: |
+          rustup update stable
+          rustup default stable
+          cargo check --locked --manifest-path src-tauri/Cargo.toml

@@ -209,6 +209,126 @@ def event_coverage(project_root: Path, case_ids: list[str] | None = None) -> dic
     }
 
 
+def _chronicle_summary(event: dict[str, Any]) -> str:
+    parts = []
+    for label, key in (
+        ("路线", "route"), ("调查", "investigation_object"),
+        ("记录", "recording_technique"), ("参与", "chinese_participants"),
+        ("任务", "institutional_task"), ("去向", "outcome_destination"),
+    ):
+        value = str(event.get(key, "")).strip()
+        if value:
+            parts.append(f"{label}：{value}")
+    return "；".join(parts) or str(event.get("notes", "")).strip()
+
+
+def event_chronicle(
+    project_root: Path,
+    query: str = "",
+    year: str = "",
+    case_id: str = "",
+    source_id: str = "",
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Return a source-grounded chronological compilation from approved event rows."""
+    query, year, case_id, source_id = (
+        str(value).strip() for value in (query, year, case_id, source_id)
+    )
+    limit = max(1, min(int(limit), 5000))
+    state = event_state(project_root, statuses=["approved"])
+    with connect(project_root) as connection:
+        source_titles = {
+            row["source_id"]: row["title"]
+            for row in connection.execute("SELECT source_id, title FROM sources")
+        }
+    rows = []
+    for event in state["events"]:
+        year_match = re.search(r"(?<!\d)(1[0-9]{3}|20[0-9]{2})(?!\d)", str(event["event_date"]))
+        event_year = year_match.group(1) if year_match else ""
+        if year and event_year != year:
+            continue
+        if case_id and event["case_id"] != case_id:
+            continue
+        if source_id and event["source_id"] != source_id:
+            continue
+        source_title = source_titles.get(event["source_id"], event["source_id"])
+        haystack = "\n".join(str(event.get(key, "")) for key in TEXT_FIELDS)
+        haystack += f"\n{source_title}\n{event['case_id']}"
+        if query and query.casefold() not in haystack.casefold():
+            continue
+        rows.append({
+            "event_id": event["event_id"],
+            "event_date": event["event_date"],
+            "year": event_year,
+            "case_id": event["case_id"],
+            "source_id": event["source_id"],
+            "source_title": source_title,
+            "source_version_id": event["source_version_id"],
+            "page_ids": event["page_ids"],
+            "physical_pages": event["physical_pages"],
+            "printed_pages": event["printed_pages"],
+            "block_ids": event["block_ids"],
+            "summary": _chronicle_summary(event),
+            "original_text": event["original_text"],
+            "translation": event["translation"],
+            "qualification": event["qualification"],
+        })
+    rows.sort(key=lambda item: (item["event_date"] or "9999", item["case_id"], item["event_id"]))
+    total_count = len(rows)
+    available_years = sorted({row["year"] for row in rows if row["year"]})
+    available_cases = sorted({row["case_id"] for row in rows})
+    rows = rows[:limit]
+    return {
+        "entries": rows,
+        "total_count": total_count,
+        "returned_count": len(rows),
+        "has_more": total_count > len(rows),
+        "filters": {"query": query, "year": year, "case_id": case_id, "source_id": source_id},
+        "available_years": available_years,
+        "available_cases": available_cases,
+        "boundary": (
+            "Only human-approved, page-linked event rows are included. This is a saved source "
+            "chronicle, not an automatic claim that every relevant passage has been found."
+        ),
+    }
+
+
+def export_event_chronicle(
+    project_root: Path, query: str = "", year: str = "", case_id: str = "",
+    source_id: str = "", name: str = "史料长编",
+) -> dict[str, Any]:
+    chronicle = event_chronicle(project_root, query, year, case_id, source_id, limit=5000)
+    name = name.strip() or "史料长编"
+    lines = [f"# {name}", ""]
+    for entry in chronicle["entries"]:
+        pages = "、".join(str(value) for value in entry["printed_pages"] or entry["physical_pages"])
+        lines.extend([
+            f"## {entry['event_date'] or '日期待考'}　{entry['case_id']}", "",
+            entry["summary"] or "（本条尚无内容提要）", "",
+            f"> {entry['original_text']}" if entry["original_text"] else "> （原文待补）", "",
+        ])
+        if entry["translation"]:
+            lines.extend([f"译文：{entry['translation']}", ""])
+        lines.extend([
+            f"来源：{entry['source_title']}，页码 {pages or '待核'}。",
+            f"回链：{entry['source_id']} / {entry['source_version_id']} / {entry['event_id']}", "",
+        ])
+    safe_name = re.sub(r"[^\w\u4e00-\u9fff-]+", "-", name).strip("-") or "史料长编"
+    target = project_root / "exports" / f"{safe_name}.md"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    receipt = {
+        "project_path": target.relative_to(project_root).as_posix(),
+        "row_count": chronicle["returned_count"],
+        "filters": chronicle["filters"], "name": name,
+    }
+    with connect(project_root) as connection:
+        append_audit(
+            connection, "source_chronicle_exported", "project", "source_chronicle", receipt,
+        )
+    return receipt
+
+
 def export_event_register(
     project_root: Path,
     case_ids: list[str] | None = None,

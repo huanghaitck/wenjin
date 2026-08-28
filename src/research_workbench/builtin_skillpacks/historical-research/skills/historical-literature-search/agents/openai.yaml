@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学文献检索"
+  short_description: "按问题有界检索一手史料、直接研究、邻近研究、方法研究和公开全文"
+  default_prompt: "Use $historical-literature-search to run a bounded, source-aware search for this historical research question."
+policy:
+  allow_implicit_invocation: true

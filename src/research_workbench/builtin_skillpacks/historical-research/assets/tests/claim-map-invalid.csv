@@ -1,0 +1,2 @@
+claim_id,claim_text,claim_strength,evidence_id,source_id,source_role,original_page,digital_page,locator_verified,witness_independence,supports,does_not_support,citation_full,citation_short,status,notes
+C1,test,CAUSAL,E1,S1,primary,1,1,false,unknown,,,,,FROZEN,invalid fixture

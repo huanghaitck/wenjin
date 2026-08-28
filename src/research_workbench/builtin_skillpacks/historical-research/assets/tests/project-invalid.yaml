@@ -1,0 +1,12 @@
+schema_version: 2
+project_type: ordinary_research
+mode: automatic
+title: "bad fixture"
+language: zh-CN
+citation_style: ""
+source_roots: not-a-list
+memory_backend: all
+current_stage: 99
+full_workflow_authorized: yes
+multi_agent_authorized: yes
+stop_gate: NONE

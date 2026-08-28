@@ -18,6 +18,12 @@ from .agent_runtime import (
     thread_view,
 )
 from .pdf_ingestion import ingest_pdf
+from .source_documents import export_reading_markdown
+from .codex_bridge import codex_capability, register_with_codex, start_codex_task, codex_task_status
+from .domain_plugins import install_domain_plugin, plugin_state, remove_domain_plugin
+from .backups import backup_project, list_backups, restore_backup
+from .memory_adapter import memory_settings, promote_memory_candidate, save_memory_settings
+from .plugin_sdk import create_plugin_project
 from .library import (
     approve_candidates,
     library_status,
@@ -107,6 +113,13 @@ def build_parser() -> argparse.ArgumentParser:
     blocks = commands.add_parser("blocks", help="show effective source blocks")
     blocks.add_argument("project_root", type=Path)
     blocks.add_argument("source_id")
+
+    reading_markdown = commands.add_parser(
+        "source-markdown", help="export a readable derivative while preserving page anchors"
+    )
+    reading_markdown.add_argument("project_root", type=Path)
+    reading_markdown.add_argument("source_id")
+    reading_markdown.add_argument("--verified-only", action="store_true")
 
     commands.add_parser("ocr-capability", help="show the configured visual OCR role without secrets")
 
@@ -215,6 +228,71 @@ def build_parser() -> argparse.ArgumentParser:
     mcp.add_argument("project_root", type=Path)
     mcp.add_argument("--library-root", type=Path)
 
+    commands.add_parser("computer-use-mcp", help="serve the built-in Windows Computer Use tools over MCP stdio")
+
+    codex_status = commands.add_parser("codex-status", help="show the local Codex bridge capability")
+    codex_status.add_argument("project_root", type=Path)
+    codex_status.add_argument("--library-root", type=Path)
+
+    codex_register = commands.add_parser("codex-register", help="register this project MCP server with Codex")
+    codex_register.add_argument("project_root", type=Path)
+    codex_register.add_argument("--library-root", type=Path)
+    codex_register.add_argument("--name", default="")
+
+    codex_start = commands.add_parser("codex-start", help="start an explicit bounded Codex task")
+    codex_start.add_argument("project_root", type=Path)
+    codex_start.add_argument("--prompt", required=True)
+    codex_start.add_argument("--sandbox", choices=("read-only", "workspace-write"), default="read-only")
+    codex_start.add_argument("--timeout-seconds", type=int, default=1800)
+
+    codex_show = commands.add_parser("codex-task", help="show one Wenjin-launched Codex task")
+    codex_show.add_argument("project_root", type=Path)
+    codex_show.add_argument("task_id")
+
+    plugin_list = commands.add_parser("plugin-list", help="show installed Wenjin domain plugins")
+    plugin_list.add_argument("config_root", type=Path)
+
+    plugin_install = commands.add_parser("plugin-install", help="install a Wenjin domain plugin folder")
+    plugin_install.add_argument("config_root", type=Path)
+    plugin_install.add_argument("source_root", type=Path)
+    plugin_install.add_argument("--runtime-command", default="")
+
+    plugin_remove = commands.add_parser("plugin-remove", help="remove one installed Wenjin plugin copy")
+    plugin_remove.add_argument("config_root", type=Path)
+    plugin_remove.add_argument("name")
+
+    plugin_create = commands.add_parser("plugin-create", help="create a standard Wenjin and Codex domain plugin project")
+    plugin_create.add_argument("parent", type=Path)
+    plugin_create.add_argument("name")
+    plugin_create.add_argument("--display-name", required=True)
+    plugin_create.add_argument("--description", required=True)
+
+    backup_create = commands.add_parser("backup-create", help="create an integrity-checked online project backup")
+    backup_create.add_argument("project_root", type=Path)
+    backup_create.add_argument("backup_root", type=Path)
+
+    backup_list = commands.add_parser("backup-list", help="list project backups")
+    backup_list.add_argument("backup_root", type=Path)
+
+    backup_restore = commands.add_parser("backup-restore", help="restore a backup as a new project copy")
+    backup_restore.add_argument("backup_root", type=Path)
+    backup_restore.add_argument("workspace_root", type=Path)
+    backup_restore.add_argument("backup_id")
+
+    memory_config = commands.add_parser("memory-config", help="configure local historical and engineering memory vaults")
+    memory_config.add_argument("config_root", type=Path)
+    memory_config.add_argument("--historical", default="")
+    memory_config.add_argument("--engineering", default="")
+
+    memory_status = commands.add_parser("memory-status", help="show configured local memory adapters")
+    memory_status.add_argument("config_root", type=Path)
+
+    memory_promote = commands.add_parser("memory-promote", help="promote an approved local candidate to a vault inbox")
+    memory_promote.add_argument("project_root", type=Path)
+    memory_promote.add_argument("config_root", type=Path)
+    memory_promote.add_argument("candidate_id")
+    memory_promote.add_argument("--target", choices=("historical", "engineering"), required=True)
+
     desktop = commands.add_parser("desktop-serve", help="start a first-run desktop workspace")
     desktop.add_argument("--data-root", type=Path, required=True)
     desktop.add_argument("--host", default="127.0.0.1")
@@ -264,6 +342,10 @@ def main(argv: list[str] | None = None) -> int:
         result = project_status(args.project_root)
     elif args.command == "blocks":
         result = list_blocks(args.project_root, args.source_id)
+    elif args.command == "source-markdown":
+        result = export_reading_markdown(
+            args.project_root, args.source_id, verified_only=args.verified_only,
+        )
     elif args.command == "ocr-capability":
         result = capability()
     elif args.command == "ocr-propose":
@@ -334,6 +416,47 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "mcp-server":
         serve_stdio(args.project_root, args.library_root)
         return 0
+    elif args.command == "computer-use-mcp":
+        from .computer_use_mcp import main as serve_computer_use_stdio
+        serve_computer_use_stdio()
+        return 0
+    elif args.command == "codex-status":
+        result = codex_capability(args.project_root, args.library_root)
+    elif args.command == "codex-register":
+        result = register_with_codex(
+            args.project_root, args.library_root, name=args.name,
+        )
+    elif args.command == "codex-start":
+        result = start_codex_task(
+            args.project_root, args.prompt, sandbox=args.sandbox,
+            timeout_seconds=args.timeout_seconds,
+        )
+    elif args.command == "codex-task":
+        result = codex_task_status(args.project_root, args.task_id)
+    elif args.command == "plugin-list":
+        result = plugin_state(args.config_root)
+    elif args.command == "plugin-install":
+        result = install_domain_plugin(
+            args.config_root, args.source_root, runtime_command=args.runtime_command,
+        )
+    elif args.command == "plugin-remove":
+        result = remove_domain_plugin(args.config_root, args.name)
+    elif args.command == "plugin-create":
+        result = create_plugin_project(args.parent, args.name, args.display_name, args.description)
+    elif args.command == "backup-create":
+        result = backup_project(args.project_root, args.backup_root, "manual_cli")
+    elif args.command == "backup-list":
+        result = list_backups(args.backup_root)
+    elif args.command == "backup-restore":
+        result = restore_backup(args.backup_root, args.workspace_root, args.backup_id)
+    elif args.command == "memory-config":
+        result = save_memory_settings(args.config_root, args.historical, args.engineering)
+    elif args.command == "memory-status":
+        result = memory_settings(args.config_root)
+    elif args.command == "memory-promote":
+        result = promote_memory_candidate(
+            args.project_root, args.config_root, args.candidate_id, args.target,
+        )
     elif args.command == "desktop-serve":
         serve_desktop(args.data_root, args.host, args.port, args.desktop_build)
         return 0
@@ -341,3 +464,7 @@ def main(argv: list[str] | None = None) -> int:
         raise AssertionError(args.command)
     _emit(result)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

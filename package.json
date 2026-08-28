@@ -1,11 +1,17 @@
 {
   "name": "historical-research-workbench-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.3-rc.1",
+  "license": "AGPL-3.0-only",
   "scripts": {
     "tauri": "tauri"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "2.11.4"
+    "@tauri-apps/cli": "2.11.4",
+    "agent-browser": "0.33.0"
+  },
+  "dependencies": {
+    "cytoscape": "^3.34.1",
+    "cytoscape-fcose": "^2.2.0"
   }
 }

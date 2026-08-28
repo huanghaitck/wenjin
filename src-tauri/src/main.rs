@@ -4,7 +4,7 @@ use std::{
     fs::{self, OpenOptions},
     io::Write,
     net::{TcpListener, TcpStream},
-    path::Path,
+    path::{Path, PathBuf},
     sync::Mutex,
     time::Duration,
 };
@@ -16,6 +16,13 @@ use tauri_plugin_shell::{
 
 struct SidecarState(Mutex<Option<CommandChild>>);
 struct StartupState(Mutex<Option<String>>);
+
+fn data_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    if let Some(path) = std::env::var_os("WENJIN_DATA_ROOT") {
+        return Ok(PathBuf::from(path));
+    }
+    app.path().app_data_dir().map_err(|error| error.to_string())
+}
 
 #[tauri::command]
 fn desktop_status() -> String {
@@ -29,19 +36,25 @@ fn desktop_url(state: tauri::State<'_, StartupState>) -> Option<String> {
 
 #[tauri::command]
 fn open_data_directory(app: tauri::AppHandle) -> Result<(), String> {
-    let path = app.path().app_data_dir().map_err(|error| error.to_string())?;
+    let path = data_root(&app)?;
     fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-    std::process::Command::new("explorer.exe").arg(&path).spawn().map_err(|error| error.to_string())?;
+    std::process::Command::new("explorer.exe")
+        .arg(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
 #[tauri::command]
 fn open_sidecar_log(app: tauri::AppHandle) -> Result<(), String> {
-    let path = app.path().app_data_dir().map_err(|error| error.to_string())?.join("logs").join("sidecar.log");
+    let path = data_root(&app)?.join("logs").join("sidecar.log");
     if !path.is_file() {
         return Err("启动日志尚未生成".into());
     }
-    std::process::Command::new("notepad.exe").arg(&path).spawn().map_err(|error| error.to_string())?;
+    std::process::Command::new("notepad.exe")
+        .arg(&path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -58,6 +71,11 @@ fn choose_file(kind: String) -> Option<String> {
     dialog = match kind.as_str() {
         "pdf" => dialog.add_filter("PDF 文献", &["pdf"]),
         "docx" => dialog.add_filter("Microsoft Word 稿件", &["docx"]),
+        "data" => dialog.add_filter(
+            "本地数据库与数据文件",
+            &["sqlite", "sqlite3", "db", "duckdb", "csv", "tsv", "json", "jsonl", "parquet", "geojson"],
+        ),
+        "plugin" => dialog.add_filter("问津领域包", &["zip"]),
         _ => return None,
     };
     dialog
@@ -98,13 +116,41 @@ fn open_in_word(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_path(path: String) -> Result<(), String> {
+    let selected = Path::new(&path);
+    if !selected.exists() {
+        return Err("文件或目录已经不存在".into());
+    }
+    if selected.is_dir() {
+        std::process::Command::new("explorer.exe")
+            .arg(selected)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let target: Vec<u16> = format!("{}\0", selected.display()).encode_utf16().collect();
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::ShellExecuteW(
+            std::ptr::null_mut(), operation.as_ptr(), target.as_ptr(),
+            std::ptr::null(), std::ptr::null(),
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err("系统没有找到可打开该产物的应用".into());
+    }
+    Ok(())
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word])
+        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word, open_path])
         .setup(|app| {
             app.manage(StartupState(Mutex::new(None)));
-            let data_root = app.path().app_data_dir()?;
+            let data_root = data_root(app.handle()).map_err(std::io::Error::other)?;
             fs::create_dir_all(data_root.join("logs"))?;
             let listener = TcpListener::bind("127.0.0.1:0")?;
             let port = listener.local_addr()?.port();
@@ -118,12 +164,6 @@ fn main() {
                 .env("PYTHONUNBUFFERED", "1")
                 .spawn()?;
             app.manage(SidecarState(Mutex::new(Some(child))));
-            if let Some(state) = app.try_state::<StartupState>() {
-                if let Ok(mut startup_url) = state.0.lock() {
-                    *startup_url = Some(format!("http://127.0.0.1:{port}/"));
-                }
-            }
-
             let log_path = data_root.join("logs").join("sidecar.log");
             if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
                 let _ = writeln!(file, "\n=== Wenjin {} startup ===", env!("CARGO_PKG_VERSION"));
@@ -157,6 +197,10 @@ fn main() {
                 if !ready {
                     if let Some(window) = handle.get_webview_window("main") {
                         let _ = window.eval("document.getElementById('status').textContent='本地研究服务没有在一分钟内启动。请查看应用数据目录中的 logs/sidecar.log。';document.querySelector('.bar').style.display='none';");
+                    }
+                } else if let Some(state) = handle.try_state::<StartupState>() {
+                    if let Ok(mut startup_url) = state.0.lock() {
+                        *startup_url = Some(format!("http://127.0.0.1:{port}/"));
                     }
                 }
             });

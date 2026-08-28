@@ -36,9 +36,11 @@ from research_workbench.service import (
 from research_workbench.workspace import (
     create_workspace_project,
     initialize_workspace,
+    register_workspace_project,
     select_workspace_project,
     workspace_view,
 )
+from research_workbench.project_workspace import project_workspace_state
 from research_workbench.translation import translate_evidence
 from research_workbench.web import build_server
 
@@ -69,6 +71,43 @@ class D1EndToEndDemoTests(unittest.TestCase):
         self.assertEqual(view["current_project"], created["project_root"])
         selected = select_workspace_project(workspace, self.source_project_id())
         self.assertEqual(selected, self.project.resolve())
+
+    def test_project_workspace_creates_external_project_and_registers_existing_folder(self) -> None:
+        workspace = self.root / "workspace"
+        initialize_workspace(workspace, self.project)
+        external_parent = self.root / "user-projects"
+        external_parent.mkdir()
+        created = create_workspace_project(workspace, "External project", external_parent)
+        self.assertEqual(Path(created["project_root"]).parent, external_parent.resolve())
+        other = self.root / "existing-project"
+        initialize_project(other, "Existing project")
+        registered = register_workspace_project(workspace, other)
+        self.assertEqual(registered["project_root"], str(other.resolve()))
+        self.assertEqual(workspace_view(workspace)["current_project"], str(other.resolve()))
+
+    def test_registering_a_moved_project_replaces_its_stale_registry_path(self) -> None:
+        workspace = self.root / "workspace"
+        initialize_workspace(workspace, self.project)
+        moved = self.root / "moved-project"
+        moved.mkdir()
+        for path in self.project.iterdir():
+            if path.is_file():
+                (moved / path.name).write_bytes(path.read_bytes())
+        (self.project / "project.sqlite3").unlink()
+        register_workspace_project(workspace, moved)
+        projects = workspace_view(workspace)["projects"]
+        self.assertEqual(len(projects), 1)
+        self.assertEqual(projects[0]["path"], str(moved.resolve()))
+        self.assertTrue(projects[0]["available"])
+
+    def test_project_workspace_state_exposes_objects_next_actions_and_activity(self) -> None:
+        state = project_workspace_state(self.project)
+        self.assertEqual(state["project"]["title"], "D1 demo")
+        self.assertEqual(state["counts"]["sources"], 1)
+        self.assertTrue(state["sources"][0]["page_count"])
+        self.assertIn(state["phase"], {"materials", "design", "research"})
+        self.assertTrue(state["next_actions"])
+        self.assertTrue(state["recent_activity"])
 
     def source_project_id(self) -> str:
         with connect(self.project) as connection:
@@ -205,13 +244,16 @@ class D1EndToEndDemoTests(unittest.TestCase):
         reused = create_browser_session(self.project, "https://example.org/another", "example.org")
         self.assertEqual(reused["session_id"], session["session_id"])
         self.assertTrue(reused["reused"])
-        with patch("research_workbench.scholarship.shutil.which", return_value="agent-browser"), patch(
+        with patch("research_workbench.scholarship._agent_browser_executable", return_value=("agent-browser.exe", "test")), patch(
+            "research_workbench.scholarship._chromium_browser_executable", return_value=("chrome.exe", "test")
+        ), patch(
             "research_workbench.scholarship.subprocess.Popen"
         ) as launch:
             launched = launch_controlled_browser(self.project, session["session_id"])
         self.assertEqual(launched["status"], "controlled_browser_open")
         self.assertIn("--headed", launch.call_args.args[0])
         self.assertIn("--restore", launch.call_args.args[0])
+        self.assertEqual(launch.call_args.args[0][1:3], ["--executable-path", "chrome.exe"])
         with self.assertRaisesRegex(ValueError, "credential"):
             create_browser_session(self.project, "https://example.org/?token=secret", "example.org")
         candidate = create_memory_candidate(

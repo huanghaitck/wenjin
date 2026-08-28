@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学研究路由"
+  short_description: "识别史学任务并选择最小、安全且不越权的技能组合"
+  default_prompt: "Use $historical-research-router to route this scholarly history request to the smallest safe workflow."
+policy:
+  allow_implicit_invocation: true

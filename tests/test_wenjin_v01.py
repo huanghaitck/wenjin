@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 import os
@@ -11,7 +12,15 @@ from research_workbench.agent_profile import agent_profile_prompt, public_agent_
 from research_workbench.mcp_server import handle_request
 from research_workbench.model_settings import public_settings, save_moa
 from research_workbench.service import initialize_project
+from research_workbench.db import connect
+from research_workbench.scholarship import (
+    computer_use_capability, create_browser_session, inspect_controlled_browser,
+    launch_controlled_browser, navigate_controlled_browser, read_controlled_browser,
+)
 from research_workbench.web import WorkbenchHandler
+from research_workbench.authoring import ensure_journal_templates
+from research_workbench.desktop_runtime import _install_builtin_computer_use
+from research_workbench.domain_plugins import plugin_state
 
 
 class WenjinV01Tests(unittest.TestCase):
@@ -48,7 +57,7 @@ class WenjinV01Tests(unittest.TestCase):
         })
         self.assertTrue(settings["moa"]["enabled"])
         self.assertEqual(settings["moa"]["aggregator_role"], "main_reasoning")
-        self.assertEqual(len(public_settings(Path(self.temporary.name) / "config")["roles"]), 7)
+        self.assertEqual(len(public_settings(Path(self.temporary.name) / "config")["roles"]), 9)
 
     def test_moa_reference_failure_is_reported_without_aborting_other_advice(self) -> None:
         environment = {
@@ -78,15 +87,225 @@ class WenjinV01Tests(unittest.TestCase):
         prompts = handle_request(self.project, None, {"jsonrpc": "2.0", "id": 5, "method": "prompts/list"})
         self.assertEqual(prompts["result"]["prompts"][0]["name"], "research_status_review")
 
+    def test_cli_module_has_a_real_module_entrypoint(self) -> None:
+        cli = (Path(__file__).parents[1] / "src" / "research_workbench" / "cli.py").read_text(encoding="utf-8")
+        self.assertIn('if __name__ == "__main__":', cli)
+        self.assertIn("raise SystemExit(main())", cli)
+
+    def test_knowledge_graph_bundles_force_layout_and_component_packing(self) -> None:
+        root = Path(__file__).parents[1]
+        vendor = root / "src" / "research_workbench" / "web_assets" / "vendor"
+        for name in ("cytoscape.min.js", "layout-base.js", "cose-base.js", "cytoscape-fcose.js"):
+            self.assertTrue((vendor / name).is_file(), name)
+        index = (vendor.parent / "index.html").read_text(encoding="utf-8")
+        self.assertLess(index.index("/vendor/cytoscape.min.js"), index.index("/vendor/cytoscape-fcose.js"))
+        script = (vendor.parent / "app.js").read_text(encoding="utf-8")
+        self.assertIn("name:'fcose'", script)
+        self.assertIn("packComponents:true", script)
+        self.assertNotIn("placeIsolated", script)
+        package = (root / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"web_assets/vendor/*.js"', package)
+
+    def test_evidence_preserving_historical_humanizer_is_bundled_for_clean_installs(self) -> None:
+        root = Path(__file__).parents[1] / "src" / "research_workbench" / "builtin_skills" / "historical-humanizer-zh"
+        self.assertTrue((root / "SKILL.md").is_file())
+        self.assertTrue((root / "references" / "evidence-integrity.md").is_file())
+        self.assertTrue((root / "scripts" / "guard_historical_revision.py").is_file())
+        package = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"builtin_skills/*/references/*.md"', package)
+        self.assertIn('"builtin_skills/*/scripts/*.py"', package)
+
+    def test_complete_historical_research_skill_pack_is_bundled(self) -> None:
+        root = Path(__file__).parents[1] / "src" / "research_workbench" / "builtin_skillpacks" / "historical-research"
+        names = {path.parent.name for path in (root / "skills").glob("*/SKILL.md")}
+        self.assertEqual(len(names), 16)
+        self.assertTrue({
+            "historical-question-and-scope", "historical-literature-search",
+            "historical-source-criticism", "historical-historiography",
+            "historical-evidence-freeze", "historical-review-and-revision",
+            "historical-final-audit", "historical-drafting",
+        }.issubset(names))
+        self.assertTrue((root / "references" / "core-policy.md").is_file())
+        self.assertTrue((root / "LICENSE-APACHE-2.0").is_file())
+        package = (Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('"builtin_skillpacks/*/skills/*/SKILL.md"', package)
+
+    def test_builtin_computer_use_pack_installs_with_the_frozen_sidecar(self) -> None:
+        config = Path(self.temporary.name) / "computer-config"
+        with patch("research_workbench.desktop_runtime.sys.frozen", True, create=True):
+            _install_builtin_computer_use(config)
+        plugin = next(item for item in plugin_state(config)["plugins"] if item["name"] == "computer-use")
+        self.assertEqual(plugin["version"], "0.1.3")
+        self.assertEqual(plugin["tool_permissions"]["run_command"], "sensitive")
+        self.assertEqual(plugin["tool_permissions"]["repair_runtime"], "sensitive")
+        self.assertIn("desktop_snapshot", plugin["agent_tools"])
+        self.assertIn("file_search", plugin["agent_tools"])
+
+    def test_bundled_browser_runtime_uses_explicit_chromium_executable(self) -> None:
+        root = Path(self.temporary.name)
+        runtime = root / "agent-browser.exe"
+        browser = root / "chrome.exe"
+        runtime.write_bytes(b"runtime")
+        browser.write_bytes(b"browser")
+        with patch.dict(os.environ, {
+            "WENJIN_AGENT_BROWSER": str(runtime),
+            "WENJIN_BROWSER_EXECUTABLE": str(browser),
+        }, clear=False):
+            capability = computer_use_capability()
+            self.assertTrue(capability["visible_browser_launch"])
+            self.assertTrue(capability["agent_actuated"])
+            self.assertEqual(capability["agent_actions"], ["observe", "read", "same_domain_navigate"])
+            self.assertEqual(capability["runtime_origin"], "configured")
+            self.assertEqual(capability["browser_origin"], "configured")
+            session = create_browser_session(self.project, "https://example.com", "example.com")
+            with patch("research_workbench.scholarship.subprocess.Popen") as popen:
+                launch_controlled_browser(self.project, session["session_id"])
+            command = popen.call_args.args[0]
+            self.assertEqual(command[0], str(runtime.resolve()))
+            self.assertEqual(command[1:3], ["--executable-path", str(browser.resolve())])
+
+    def test_agent_browser_tools_are_visible_bounded_and_same_domain_only(self) -> None:
+        session = create_browser_session(self.project, "https://example.com/start", "example.com")
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE browser_sessions SET status = 'controlled_browser_open' WHERE session_id = ?",
+                (session["session_id"],),
+            )
+        snapshot_payload = json.dumps({
+            "success": True,
+            "data": {
+                "origin": "https://example.com/start",
+                "snapshot": '- link "Next" [ref=e1, url=https://example.com/next]',
+                "refs": {"e1": {"name": "Next", "role": "link"}},
+            },
+        })
+        with patch("research_workbench.scholarship._run_browser_command", return_value=snapshot_payload):
+            inspected = inspect_controlled_browser(self.project, session["session_id"])
+        self.assertEqual(inspected["allowed_domain"], "example.com")
+        self.assertIn("Next", inspected["snapshot"])
+
+        with patch(
+            "research_workbench.scholarship._run_browser_command",
+            side_effect=["Rendered research page", "https://example.com/start", "Research"],
+        ):
+            read = read_controlled_browser(self.project, session["session_id"])
+        self.assertEqual(read["title"], "Research")
+        self.assertIn("Rendered research page", read["text"])
+
+        with patch(
+            "research_workbench.scholarship._run_browser_command",
+            side_effect=["", "https://example.com/next", "Next"],
+        ):
+            navigated = navigate_controlled_browser(
+                self.project, session["session_id"], "https://sub.example.com/next"
+            )
+        self.assertEqual(navigated["title"], "Next")
+        with self.assertRaisesRegex(ValueError, "approved domain"):
+            navigate_controlled_browser(
+                self.project, session["session_id"], "https://outside.example.net/"
+            )
+
     def test_ui_exposes_brand_language_persona_moa_and_mcp_copy(self) -> None:
         root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
         html = (root / "index.html").read_text(encoding="utf-8")
         script = (root / "app.js").read_text(encoding="utf-8")
         self.assertIn("问津", html)
+        self.assertNotIn("研究者保留证据与写作决定权", html)
+        self.assertNotIn("研究者保留证据与写作决定权", script)
+        self.assertNotIn("等待你的决定", script)
         self.assertIn('id="languageToggle"', html)
+        self.assertIn('id="modelOnboarding"', html)
+        self.assertIn("问津不会用 Mock 冒充模型", html)
         self.assertIn("/api/agent-profile/save", script)
         self.assertIn("/api/model-settings/moa", script)
+        self.assertIn('id="agentAccessMode"', html)
+        self.assertIn("research_assist", script)
+        self.assertIn("full_computer", script)
         self.assertIn("Mixture of Agents", script)
+        self.assertIn("Codex 双向桥接", script)
+        self.assertIn("/api/codex/register-mcp", script)
+        self.assertIn("领域包编排教程", script)
+
+    def test_english_ui_has_an_english_history_template_and_domain_pack_copy(self) -> None:
+        ensure_journal_templates(self.project)
+        with connect(self.project) as connection:
+            connection.execute(
+                "UPDATE journal_template_revisions SET requirements_json = '{}' "
+                "WHERE template_id = 'builtin-history-research'"
+            )
+        templates = ensure_journal_templates(self.project)
+        template = next(
+            item for item in templates
+            if item["template_id"] == "builtin-english-history-chicago-nb"
+        )
+        self.assertEqual(template["requirements"]["language"], "en")
+        self.assertEqual(template["requirements"]["citation_system"], "notes_bibliography")
+        history = next(item for item in templates if item["template_id"] == "builtin-history-research")
+        self.assertEqual(history["requirements"]["language"], "zh-CN")
+        script = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js").read_text(encoding="utf-8")
+        html = (Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "index.html").read_text(encoding="utf-8")
+        self.assertIn("Import one or start the guided creator", script)
+        self.assertIn('id="domainImportPanel"', html)
+        self.assertIn('id="domainCreatePanel"', html)
+        self.assertNotIn("Create a neutral domain-pack project", script)
+        self.assertNotIn("You may install the Gazetteer Disaster History plugin", script)
+        self.assertIn("builtin-english-history-chicago-nb", script)
+        self.assertIn("/api/codex/task/start", script)
+        self.assertIn("/api/backups/create", script)
+        self.assertIn("/api/backups/restore", script)
+        self.assertIn("/api/memory/settings", script)
+        self.assertIn("/api/memory/promote", script)
+        self.assertIn("Local long-term memory adapters", script)
+        self.assertIn("Privacy and confirmations", script)
+        self.assertIn("Project backup and recovery", script)
+        self.assertIn("Restore as a new project copy", script)
+        self.assertIn('id="planningOptions"', html)
+        self.assertIn("只处理当前问题", html)
+        self.assertNotIn("对话状态", html)
+
+    def test_ui_separates_agent_configuration_and_draws_library_graph(self) -> None:
+        root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "app.js").read_text(encoding="utf-8")
+        styles = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="settingsTabs"', html)
+        self.assertIn('id="projectWorkbench"', html)
+        self.assertIn('id="projectMode"', html)
+        self.assertIn('/api/project/workspace', script)
+        self.assertIn('/api/project/register', script)
+        for tab in ("models", "routing", "persona", "memory", "connectors", "runtime"):
+            self.assertIn(f'data-settings-tab="{tab}"', html)
+        self.assertNotIn('data-settings-tab="plugins"', html)
+        for control in ("domainImportToggle", "domainCreateToggle", "domainAttachmentInput", "domainReasoningMode", "domainReasoningEffort", "domainConfigureModel"):
+            self.assertIn(f'id="{control}"', html)
+        self.assertIn('id="libraryViews"', html)
+        for view in ("list", "chronicle", "graph", "intake"):
+            self.assertIn(f'data-library-view="{view}"', html)
+        self.assertIn("renderSourceChronicle", script)
+        self.assertIn("/api/source-chronicle", script)
+        self.assertIn("renderKnowledgeGraph", script)
+        self.assertIn("How to use this graph", script)
+        self.assertIn("题名：悬浮", script)
+        self.assertIn("labels-always", script)
+        self.assertIn("graph-filter-panel", script)
+        self.assertIn("renderedEdges", script)
+        self.assertIn("edge.composite", script)
+        self.assertIn("作品关系", script)
+        self.assertIn("书目实体", script)
+        self.assertIn("rawEdges", script)
+        self.assertIn("graph-work-cards", script)
+        self.assertIn("Open project source pages", script)
+        self.assertIn("Project content graph", script)
+        self.assertIn("Open anchored source page", script)
+        self.assertIn("/api/plugins/install", script)
+        self.assertIn("/api/thread/attachment/file", script)
+        self.assertIn("open_path", script)
+        self.assertIn("mode-intake", script)
+        self.assertIn("createElementNS('http://www.w3.org/2000/svg'", script)
+        self.assertIn("graph-stage", styles)
+        self.assertIn(".library-workbench.mode-intake", styles)
+        self.assertIn(".check-label input[type=\"checkbox\"]", styles)
+        self.assertIn("overflow-wrap: anywhere", styles)
 
 
 if __name__ == "__main__":

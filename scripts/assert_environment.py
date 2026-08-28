@@ -10,10 +10,8 @@ import pymupdf
 import research_workbench
 
 
-EXPECTED_PREFIX = Path(os.environ.get(
-    "HRW_EXPECTED_CONDA_PREFIX",
-    r"D:\AI_Workflows\conda-envs\historical-research-workbench",
-)).resolve()
+EXPECTED_PREFIX_VALUE = os.environ.get("HRW_EXPECTED_CONDA_PREFIX", "").strip()
+EXPECTED_PREFIX = Path(EXPECTED_PREFIX_VALUE).resolve() if EXPECTED_PREFIX_VALUE else None
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -23,7 +21,7 @@ def main() -> int:
     pymupdf_path = Path(pymupdf.__file__).resolve()
     checks = {
         "python_3_13": sys.version_info[:2] == (3, 13),
-        "expected_conda_prefix": actual_prefix == EXPECTED_PREFIX,
+        "configured_prefix_matches": EXPECTED_PREFIX is None or actual_prefix == EXPECTED_PREFIX,
         "user_site_disabled": site.ENABLE_USER_SITE is False,
         "project_is_editable": PROJECT_ROOT in package_path.parents,
         "pymupdf_is_environment_local": actual_prefix in pymupdf_path.parents,

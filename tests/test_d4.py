@@ -53,7 +53,7 @@ class D4PracticalAuthoringTests(unittest.TestCase):
         templates = [item for item in ensure_journal_templates(self.project) if item["origin"] == "builtin"]
         self.assertEqual(
             {item["template_id"] for item in templates},
-            {"builtin-history-research", "builtin-tangdu-current", "builtin-chinese-social-sciences-2026"},
+            {"builtin-history-research", "builtin-tangdu-current", "builtin-chinese-social-sciences-2026", "builtin-english-history-chicago-nb"},
         )
         self.assertTrue(all(item["source_url"] and item["verified_at"] for item in templates))
         history = next(item for item in templates if item["name"] == "《历史研究》")

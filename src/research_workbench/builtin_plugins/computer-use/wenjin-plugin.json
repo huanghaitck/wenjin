@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "name": "computer-use",
+  "version": "0.1.3",
+  "display_name": "Computer Use",
+  "description": "Codex-compatible Windows computer control through accessibility, keyboard, mouse, program and command tools.",
+  "description_zh": "通过Windows控件树、键盘、鼠标、程序和命令工具提供与Codex权限模式一致的整机控制。",
+  "description_en": "Codex-compatible Windows computer control through accessibility, keyboard, mouse, program and command tools.",
+  "kind": "system",
+  "compatible_wenjin": ">=0.1.1,<0.2.0",
+  "runtime": {
+    "type": "mcp_stdio",
+    "command": "wenjin-sidecar",
+    "args": ["computer-use-mcp"]
+  },
+  "skills": ["skills/computer-use/SKILL.md"],
+  "agent_tools": [
+    "computer_status",
+    "runtime_status",
+    "repair_runtime",
+    "window_list",
+    "desktop_snapshot",
+    "screen_capture",
+    "filesystem_roots",
+    "file_search",
+    "focus_control",
+    "click_control",
+    "click_coordinates",
+    "type_text",
+    "press_keys",
+    "launch_program",
+    "run_command"
+  ],
+  "tool_permissions": {
+    "computer_status": "read",
+    "runtime_status": "read",
+    "repair_runtime": "sensitive",
+    "window_list": "read",
+    "desktop_snapshot": "read",
+    "screen_capture": "read",
+    "filesystem_roots": "read",
+    "file_search": "read",
+    "focus_control": "routine",
+    "click_control": "routine",
+    "click_coordinates": "routine",
+    "type_text": "routine",
+    "press_keys": "routine",
+    "launch_program": "sensitive",
+    "run_command": "sensitive"
+  },
+  "local_data_sources": [],
+  "contributions": {
+    "methods": [],
+    "schemas": [],
+    "processors": ["windows-accessibility-tree", "screen-capture"],
+    "graph_adapters": [],
+    "ui_panels": ["computer-use-status"]
+  },
+  "permissions": {
+    "computer": "permission_broker",
+    "network": "inherited_from_explicit_program",
+    "filesystem": "permission_broker",
+    "credentials": "forbidden",
+    "password_controls": "forbidden"
+  },
+  "boundaries": [
+    "Every state-changing action is governed by the active Wenjin access mode and recorded in the run ledger.",
+    "Password controls, CAPTCHA solving, payment confirmation and hidden credential access are not provided."
+  ]
+}

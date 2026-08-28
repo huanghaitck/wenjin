@@ -278,7 +278,9 @@ class M3OcrProposalTests(unittest.TestCase):
         script = (
             Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets" / "app.js"
         ).read_text(encoding="utf-8")
-        self.assertIn("correct.textContent = pageAnomaly ? '保存这一小段修正' : '保存这段修正'", script)
+        self.assertIn("correct.textContent = pageAnomaly ?", script)
+        self.assertIn("'保存这一小段修正'", script)
+        self.assertIn("'保存这段修正'", script)
         self.assertIn("if (!pageAnomaly) actions.append(button)", script)
 
     def test_human_repaired_page_can_be_structurally_revised_again(self) -> None:

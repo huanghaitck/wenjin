@@ -1,0 +1,6 @@
+interface:
+  display_name: "史学材料导入"
+  short_description: "对授权材料进行文件验收、版本去重、元数据登记和引用资格分级"
+  default_prompt: "Use $historical-material-intake to verify and register these authorized historical research files."
+policy:
+  allow_implicit_invocation: true

@@ -4,11 +4,12 @@ import json
 import io
 import os
 import sqlite3
+import sys
 import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -17,11 +18,13 @@ from research_workbench.agent_runtime import (
     ModelActionFormatError,
     ModelProfile,
     SYSTEM_PROMPT,
+    _adaptive_model_timeout,
     _advance_run,
     _agent_research_state,
     _compact_authoring_state,
     _compact_reading_batch,
     _compact_source_list,
+    _clean_final_text,
     _model_action,
     _looks_like_internal_tool_transcript,
     _parse_action,
@@ -30,6 +33,7 @@ from research_workbench.agent_runtime import (
     _read_page,
     _search_source_blocks,
     _execute_tool,
+    _explicit_required_tool,
     _thread_history,
     assign_model,
     create_thread,
@@ -41,7 +45,7 @@ from research_workbench.agent_runtime import (
     thread_view,
 )
 from research_workbench.authoring import decide_historiography_entry
-from research_workbench.db import SCHEMA_VERSION, _migrate, connect, database_path
+from research_workbench.db import SCHEMA_VERSION, _migrate, connect, database_path, utc_now
 from research_workbench.research_design import create_design_draft, decide_design
 from research_workbench.service import import_structure, initialize_project, register_source, verify_block
 from research_workbench.service import list_sources, source_view
@@ -66,6 +70,24 @@ class FakeResponse:
 
 
 class M4AgentWorkspaceTests(unittest.TestCase):
+    def test_model_timeout_expands_only_for_deep_or_tool_heavy_turns(self) -> None:
+        self.assertEqual(_adaptive_model_timeout(120, "standard", "low", 0), 120)
+        self.assertEqual(_adaptive_model_timeout(120, "deep", "high", 0), 300)
+        self.assertEqual(_adaptive_model_timeout(120, "standard", "low", 8), 340)
+
+    def test_runtime_diagnosis_and_repair_are_required_from_natural_language(self) -> None:
+        self.assertEqual(_explicit_required_tool("检查这台电脑的 Python 和 PowerShell 运行环境"), "computer.runtime_status")
+        self.assertEqual(_explicit_required_tool("请修复缺少的 PowerShell 运行环境"), "computer.runtime_repair")
+        self.assertEqual(_explicit_required_tool("请修复灾害史领域 Agent 的运行工具"), "plugin.repair")
+
+    def test_public_final_text_strips_provider_protocol_prefix(self) -> None:
+        self.assertEqual(_clean_final_text("final answer:\n这是给研究者的答复。"), "这是给研究者的答复。")
+
+    def test_main_agent_keeps_general_file_web_office_and_skill_capabilities(self) -> None:
+        for tool in ("computer.file_search", "computer.launch", "computer.runtime_status", "computer.runtime_repair", "research.search", "browser.start", "skill.create"):
+            self.assertIn(f'"tool":"{tool}"', SYSTEM_PROMPT)
+        self.assertIn("general local computer-use agent", SYSTEM_PROMPT)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
@@ -108,6 +130,276 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             decide_approval(self.project, approval["approval_id"], True, "professor", "repeat")
 
+    def test_approved_browser_start_resumes_the_same_run(self) -> None:
+        thread = create_thread(self.project, "browser approval resume")
+        actions = [
+            {"type": "tool_call", "tool": "browser.start", "arguments": {"url": "https://example.com/"}},
+            {"type": "tool_call", "tool": "browser.read", "arguments": {"session_id": "BRS_test"}},
+            {"type": "final", "content": "Example Domain · first sentence"},
+        ]
+        with patch("research_workbench.agent_runtime._mock_action", side_effect=actions), patch(
+            "research_workbench.agent_runtime.create_browser_session",
+            return_value={"session_id": "BRS_test"},
+        ), patch(
+            "research_workbench.agent_runtime.launch_controlled_browser",
+            return_value={"session_id": "BRS_test", "launched": True},
+        ), patch(
+            "research_workbench.agent_runtime.read_controlled_browser",
+            return_value={"title": "Example Domain", "text": "first sentence"},
+        ):
+            pending = send_message(
+                self.project, thread["thread_id"], "打开并读取示例网页", access_mode="ask",
+            )
+            approval = pending["runs"][0]["approvals"][0]
+            completed = decide_approval(
+                self.project, approval["approval_id"], True,
+                "researcher", "approved bounded read-only site",
+            )
+        self.assertEqual(completed["runs"][0]["status"], "COMPLETED")
+        self.assertEqual(
+            [item["tool_name"] for item in completed["runs"][0]["tool_calls"]],
+            ["browser.start", "browser.read"],
+        )
+        self.assertIn("Example Domain", completed["messages"][-1]["content"]["text"])
+
+    def test_access_modes_auto_approve_only_allowlisted_local_note_write(self) -> None:
+        for mode in ("research_assist", "full_computer"):
+            thread = create_thread(self.project, f"access {mode}")
+            result = send_message(
+                self.project, thread["thread_id"], "查看来源和异常并保存研究札记",
+                access_mode=mode,
+            )
+            run = result["runs"][0]
+            self.assertEqual(run["status"], "COMPLETED")
+            self.assertEqual(run["model_snapshot"]["access_mode"], mode)
+            self.assertEqual(run["approvals"][0]["status"], "approved")
+            self.assertEqual(run["approvals"][0]["decision"]["access_mode"], mode)
+            note = self.project / "research" / "notes" / f"{run['approvals'][0]['approval_id']}.md"
+            self.assertTrue(note.is_file())
+            event_types = [event["event_type"] for event in run["events"]]
+            self.assertIn("approval_auto_decided", event_types)
+
+    def test_unknown_access_mode_is_rejected_before_run_creation(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown agent access mode"):
+            send_message(self.project, self.thread["thread_id"], "检查来源", access_mode="unbounded_shell")
+        self.assertEqual(thread_view(self.project, self.thread["thread_id"])["runs"], [])
+
+    def test_main_reasoning_controls_are_frozen_and_forwarded(self) -> None:
+        with patch("research_workbench.agent_runtime._advance_run") as advance:
+            result = send_message(
+                self.project, self.thread["thread_id"], "检查来源",
+                reasoning_mode="deep", reasoning_effort="high",
+            )
+        snapshot = result["runs"][0]["model_snapshot"]
+        self.assertEqual(snapshot["reasoning_mode"], "deep")
+        self.assertEqual(snapshot["reasoning_effort"], "high")
+        self.assertEqual(advance.call_args.kwargs["reasoning_mode"], "deep")
+        self.assertEqual(advance.call_args.kwargs["reasoning_effort"], "high")
+
+    def test_new_thread_inherits_bounded_parent_conversation_without_copying_messages(self) -> None:
+        from research_workbench.agent_runtime import _thread_history
+
+        now = utc_now()
+        with connect(self.project) as connection:
+            connection.execute(
+                "INSERT INTO messages(message_id,thread_id,role,content_json,created_at) "
+                "VALUES ('MSG_PARENT',?,'user',?,?)",
+                (self.thread["thread_id"], json.dumps({"text": "父对话中的研究边界"}, ensure_ascii=False), now),
+            )
+        child = create_thread(self.project, "继续讨论", self.thread["thread_id"])
+        history, receipt = _thread_history(self.project, child["thread_id"])
+        self.assertEqual(child["parent_thread_id"], self.thread["thread_id"])
+        self.assertEqual(history[-1]["content"], "父对话中的研究边界")
+        self.assertEqual(receipt["message_ids"], ["MSG_PARENT"])
+        self.assertEqual(thread_view(self.project, child["thread_id"])["messages"], [])
+
+    def test_history_compacts_at_ninety_percent_of_model_window(self) -> None:
+        now = utc_now()
+        with connect(self.project) as connection:
+            for index in range(12):
+                connection.execute("INSERT INTO messages(message_id,thread_id,role,content_json,created_at) VALUES (?,?,?,?,?)", (f"MSG_long_{index}", self.thread["thread_id"], "user" if index % 2 == 0 else "assistant", json.dumps({"text": "长对话内容" * 30}, ensure_ascii=False), now))
+        with patch.dict(os.environ, {"HRW_AGENT_CONTEXT_WINDOW": "200"}, clear=False), patch("research_workbench.agent_runtime._role_profile", return_value=ModelProfile("compress","mock","mock","",("text",),"none","available")), patch("research_workbench.agent_runtime._plain_model_call", return_value="保留目标、路径、来源和未决问题。"):
+            history, receipt = _thread_history(self.project, self.thread["thread_id"])
+        self.assertTrue(receipt["compacted"])
+        self.assertEqual(receipt["compression_threshold_tokens"], 180)
+        self.assertEqual(history[0]["message_id"], "COMPACTED_HISTORY")
+
+    def test_default_thread_title_uses_title_role_without_overwriting_named_threads(self) -> None:
+        thread = create_thread(self.project, "新的研究讨论")
+        with patch("research_workbench.agent_runtime._role_profile", return_value=ModelProfile("title","mock","mock","",("text",),"none","available")), patch("research_workbench.agent_runtime._plain_model_call", return_value="秦岭旅行材料整理"), patch("research_workbench.agent_runtime._advance_run"):
+            send_message(self.project, thread["thread_id"], "整理秦岭旅行材料")
+        self.assertEqual(thread_view(self.project, thread["thread_id"])["thread"]["title"], "秦岭旅行材料整理")
+
+    def test_agent_can_observe_visible_browser_without_form_or_click_tools(self) -> None:
+        run_id = send_message(self.project, self.thread["thread_id"], "check")["runs"][0]["run_id"]
+        with patch(
+            "research_workbench.agent_runtime.inspect_controlled_browser",
+            return_value={"session_id": "BRS_demo", "snapshot": "Example Domain"},
+        ):
+            result = _execute_tool(
+                self.project, run_id, "browser.snapshot", {"session_id": "BRS_demo"}
+            )
+        self.assertEqual(result["snapshot"], "Example Domain")
+        self.assertIn('"tool":"browser.read"', SYSTEM_PROMPT)
+        self.assertNotIn('"tool":"browser.click"', SYSTEM_PROMPT)
+
+    def test_main_agent_can_discover_and_read_user_action_skills(self) -> None:
+        from research_workbench.agent_runtime import _implicit_skill_catalog
+
+        self.assertIn("historical-source-criticism", _implicit_skill_catalog())
+        run_id = send_message(self.project, self.thread["thread_id"], "check")["runs"][0]["run_id"]
+        listed = _execute_tool(self.project, run_id, "skill.list", {})
+        self.assertIn("historical-source-criticism", {item["name"] for item in listed["skills"]})
+        loaded = _execute_tool(
+            self.project, run_id, "skill.read", {"name": "historical-source-criticism"}
+        )
+        self.assertTrue(loaded["instructions"])
+        self.assertIn('"tool":"skill.read"', SYSTEM_PROMPT)
+
+    def test_computer_use_permissions_match_ask_assist_and_full_access(self) -> None:
+        ask_run = send_message(
+            self.project, create_thread(self.project, "ask computer")["thread_id"], "check",
+            access_mode="ask",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime._plugin_tool_risk", return_value="routine"), patch(
+            "research_workbench.agent_runtime.call_domain_plugin_tool",
+            return_value={"clicked": True},
+        ) as execute:
+            pending = _execute_tool(self.project, ask_run, "plugin.call", {
+                "plugin_name": "computer-use", "tool_name": "click_control",
+                "arguments": {"ref": "w1.0"},
+            })
+            self.assertTrue(pending["waiting_for_approval"])
+            execute.assert_not_called()
+            decided = decide_approval(
+                self.project, pending["approval_id"], True, "researcher", "approved visible click"
+            )
+            execute.assert_called_once()
+        self.assertTrue(any(item["approval_id"]==pending["approval_id"] and item["status"]=="approved" for item in decided["runs"][0]["approvals"]))
+
+        assist_run = send_message(
+            self.project, create_thread(self.project, "assist computer")["thread_id"], "check",
+            access_mode="research_assist",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime._plugin_tool_risk", return_value="sensitive"), patch(
+            "research_workbench.agent_runtime.call_domain_plugin_tool",
+            return_value={"launched": True},
+        ) as execute:
+            pending = _execute_tool(self.project, assist_run, "plugin.call", {
+                "plugin_name": "computer-use", "tool_name": "launch_program",
+                "arguments": {"executable": "demo.exe"},
+            })
+        self.assertTrue(pending["waiting_for_approval"])
+        execute.assert_not_called()
+
+        full_thread = create_thread(self.project, "full computer")
+        full_run = send_message(
+            self.project, full_thread["thread_id"], "check",
+            access_mode="full_computer",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime._plugin_tool_risk", return_value="sensitive"), patch(
+            "research_workbench.agent_runtime.call_domain_plugin_tool",
+            return_value={"exit_code": 0},
+        ):
+            completed = _execute_tool(self.project, full_run, "plugin.call", {
+                "plugin_name": "computer-use", "tool_name": "run_command",
+                "arguments": {"executable": "demo.exe"},
+            })
+        self.assertEqual(completed["exit_code"], 0)
+        view = thread_view(self.project, full_thread["thread_id"])
+        self.assertEqual(view["runs"][0]["approvals"][0]["status"], "approved")
+
+    def test_plugin_repair_pauses_then_resumes_from_recorded_source(self) -> None:
+        run_id = send_message(
+            self.project, create_thread(self.project, "repair plugin")["thread_id"], "check",
+            access_mode="ask",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime.repair_domain_plugin", return_value={"count": 1}) as repair:
+            pending = _execute_tool(self.project, run_id, "plugin.repair", {"plugin_name": "disaster-history"})
+            self.assertTrue(pending["waiting_for_approval"])
+            repair.assert_not_called()
+            decided = decide_approval(
+                self.project, pending["approval_id"], True, "researcher", "local ZIP checked",
+            )
+        repair.assert_called_once()
+        self.assertTrue(any(
+            item["approval_id"] == pending["approval_id"] and item["status"] == "approved"
+            for run in decided["runs"] for item in run["approvals"]
+        ))
+
+    def test_direct_computer_alias_exposes_bounded_file_search_to_main_agent(self) -> None:
+        run_id = send_message(
+            self.project, create_thread(self.project, "file search")["thread_id"], "check",
+        )["runs"][0]["run_id"]
+        with patch("research_workbench.agent_runtime._plugin_tool_risk", return_value="read"), patch(
+            "research_workbench.agent_runtime.call_domain_plugin_tool",
+            return_value={"matches": [{"path": "D:/Research/disaster.zip"}]},
+        ) as execute:
+            result = _execute_tool(self.project, run_id, "computer.file_search", {
+                "roots": ["D:/Research"], "query": "disaster", "max_results": 20,
+            })
+        self.assertEqual(result["matches"][0]["path"], "D:/Research/disaster.zip")
+        execute.assert_called_once_with(
+            ANY, "computer-use", "file_search",
+            {"roots": ["D:/Research"], "query": "disaster", "max_results": 20},
+        )
+        self.assertIn('\"tool\":\"computer.file_search\"', SYSTEM_PROMPT)
+        self.assertIn("access is unavailable before attempting those tools", SYSTEM_PROMPT)
+
+    def test_main_agent_can_consult_a_stateful_domain_subagent_without_merging_memory(self) -> None:
+        run_id = send_message(
+            self.project, create_thread(self.project, "domain consult")["thread_id"], "check",
+        )["runs"][0]["run_id"]
+        view = {
+            "session": {"session_id": "DAS_1", "plugin_name": "disaster-history"},
+            "messages": [{"role": "assistant", "content": {"text": "candidate"}}],
+            "runs": [{"run_id": "DRN_1", "status": "COMPLETED"}],
+            "artifacts": [{"artifact_id": "DAR_1", "status": "candidate"}],
+        }
+        with patch("research_workbench.domain_agents.send_domain_message", return_value=view) as consult:
+            result = _execute_tool(self.project, run_id, "domain_agent.consult", {
+                "plugin_name": "disaster-history", "question": "inspect grading",
+            })
+        self.assertEqual(result["latest_message"]["content"]["text"], "candidate")
+        self.assertEqual(result["candidate_artifacts"][0]["status"], "candidate")
+        consult.assert_called_once()
+        self.assertIn('"tool":"domain_agent.consult"', SYSTEM_PROMPT)
+
+    def test_mock_profile_is_absent_outside_explicit_test_mode(self) -> None:
+        other = self.project.parent / "production-profile-project"
+        initialize_project(other, "production")
+        with patch.dict(os.environ, {"HRW_ENABLE_MOCK_MODEL": ""}, clear=False), patch.object(
+            sys, "argv", ["wenjin", "desktop-serve"],
+        ):
+            profiles = sync_model_profiles(other)
+        self.assertNotIn("builtin-mock", {item["profile_id"] for item in profiles})
+        with connect(other) as connection:
+            assignment = connection.execute(
+                "SELECT profile_id FROM model_assignments WHERE role='main_reasoning'"
+            ).fetchone()
+        self.assertIsNone(assignment)
+
+    def test_agent_domain_pack_creation_is_permission_gated_and_validated(self) -> None:
+        thread=create_thread(self.project,"domain pack creator")
+        run_id=send_message(
+            self.project,thread["thread_id"],"check",access_mode="ask"
+        )["runs"][0]["run_id"]
+        parent=self.project.parent/"generated-packs"
+        pending=_execute_tool(self.project,run_id,"domain_pack.create",{
+            "parent":str(parent),"name":"neutral-history-tools",
+            "display_name":"Neutral History Tools","description":"Neutral domain-pack test scaffold.",
+        })
+        self.assertTrue(pending["waiting_for_approval"])
+        self.assertFalse((parent/"neutral-history-tools").exists())
+        decided=decide_approval(
+            self.project,pending["approval_id"],True,"researcher","scope and target checked"
+        )
+        created=parent/"neutral-history-tools"
+        self.assertTrue((created/"wenjin-plugin.json").is_file())
+        self.assertTrue(any(item["status"]=="approved" for item in decided["runs"][0]["approvals"]))
+        validated=_execute_tool(self.project,run_id,"domain_pack.validate",{"plugin_root":str(created)})
+        self.assertEqual(validated["status"],"valid")
+
     def test_rejection_writes_no_note_and_keeps_decision(self) -> None:
         result = send_message(self.project, self.thread["thread_id"], "检查后先提出札记")
         approval = result["runs"][0]["approvals"][0]
@@ -117,7 +409,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(rejected["runs"][0]["status"], "COMPLETED")
         self.assertEqual(rejected["runs"][0]["approvals"][0]["status"], "rejected")
         self.assertFalse((self.project / "research" / "notes" / f"{approval['approval_id']}.md").exists())
-        self.assertIn("未写入项目", rejected["messages"][-1]["content"]["text"])
+        self.assertIn("没有改变电脑或项目", rejected["messages"][-1]["content"]["text"])
 
     def test_agent_research_state_is_a_compact_index(self) -> None:
         state = _agent_research_state(self.project)
@@ -512,6 +804,189 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertIn("required_tool_missing", [event["event_type"] for event in run["events"]])
         self.assertIn("explicitly required", observations[1][0]["error"])
         create_candidates.assert_called_once()
+
+    def test_local_file_search_request_cannot_end_with_an_untried_refusal(self) -> None:
+        from research_workbench.agent_runtime import _explicit_required_tool
+        self.assertEqual(
+            _explicit_required_tool("请检查电脑里的灾害史领域包文件"),
+            "computer.file_search",
+        )
+
+    def test_natural_domain_request_requires_consult_without_tool_syntax(self) -> None:
+        from research_workbench.agent_runtime import _domain_agent_catalog, _natural_domain_tool
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "description": "地方志灾害资料处理", "agent_tools": ["propagate_event_grades_to_all_rows"],
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["灾害等级", "定等"]},
+        }
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(
+                _natural_domain_tool(self.project, "把江西表里尚未定等的县级行全部定等"),
+                "domain_agent.consult",
+            )
+            catalog = _domain_agent_catalog(self.project)
+        self.assertIn("disaster-history", catalog)
+        self.assertIn("same main conversation", catalog)
+
+    def test_domain_tool_trigger_also_routes_ordinary_language_to_specialist(self) -> None:
+        from research_workbench.agent_runtime import _matching_domain_agent
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["convert_half_finished_workbook"],
+            "agent": {
+                "id": "disaster-researcher", "routing_triggers": ["灾害史"],
+                "tool_triggers": {"convert_half_finished_workbook": ["22列", "成品表"]},
+            },
+        }
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(
+                _matching_domain_agent(self.project, "把这个工作簿转换为标准22列候选表"),
+                "disaster-history",
+            )
+
+    def test_domain_pack_ui_question_does_not_force_specialist_consult(self) -> None:
+        from research_workbench.agent_runtime import _natural_domain_tool
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["灾害史"]},
+        }
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(_natural_domain_tool(self.project, "灾害史领域包界面怎么设计"), "")
+
+    def test_domain_followup_reuses_recent_specialist_context(self) -> None:
+        from research_workbench.agent_runtime import _matching_domain_agent
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["南昌县志", "灾害史"]},
+        }
+        history = [{"role": "user", "content": "请让灾害史领域Agent处理南昌县志。"}]
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(
+                _matching_domain_agent(self.project, "继续上一轮断点续跑", history),
+                "disaster-history",
+            )
+
+    def test_explicit_followup_reuses_the_only_ready_domain_agent_without_history(self) -> None:
+        from research_workbench.agent_runtime import _matching_domain_agent
+
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["灾害史"]},
+        }
+        with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}):
+            self.assertEqual(
+                _matching_domain_agent(self.project, "继续同一任务，并沿用原领域Agent", []),
+                "disaster-history",
+            )
+
+    def test_natural_domain_request_consults_before_the_main_model_selects_tools(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+            "HRW_MOA_ENABLED": "0",
+        }
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["propagate"],
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["定等"]},
+        }
+        view = {
+            "session": {"session_id": "DAS_1", "plugin_name": "disaster-history"},
+            "messages": [{"role": "assistant", "content": {"text": "candidate ready"}}],
+            "runs": [{"run_id": "DRN_1", "status": "COMPLETED"}],
+            "artifacts": [],
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}), patch(
+                "research_workbench.domain_agents.send_domain_message", return_value=view,
+            ) as consult, patch("research_workbench.agent_runtime._model_action") as model:
+                result = send_message(
+                    self.project, self.thread["thread_id"], "把县级行全部定等",
+                    access_mode="research_assist",
+                )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual(result["messages"][-1]["content"]["text"], "candidate ready")
+        consult.assert_called_once()
+        model.assert_not_called()
+
+    def test_attachment_is_inspected_once_then_delegated_without_a_second_main_model_step(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+            "HRW_MOA_ENABLED": "0",
+        }
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["normalize_disaster_type"],
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["灾害史"]},
+        }
+        attachment_id = "ATT_" + "a" * 32
+        calls = []
+
+        def execute(_project, _run, tool, arguments):
+            calls.append((tool, arguments))
+            if tool == "attachment.inspect":
+                return {"analysis": "版心页码四二三；本页未见灾害条目。"}
+            return {
+                "latest_message": {"content": {"text": "本页没有可提取的灾害记载。"}}
+            }
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}), patch(
+                "research_workbench.agent_runtime._model_action",
+                return_value={
+                    "type": "tool_call", "tool": "attachment.inspect",
+                    "arguments": {"attachment_id": attachment_id, "prompt": "读取页码和正文"},
+                },
+            ) as model, patch("research_workbench.agent_runtime._execute_tool", side_effect=execute):
+                result = send_message(
+                    self.project, self.thread["thread_id"], "读取附件后交给灾害史专业Agent判断。",
+                    context={"attached_refs": [{"attachment_id": attachment_id, "original_name": "page.png"}]},
+                    access_mode="research_assist",
+                )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual(result["messages"][-1]["content"]["text"], "本页没有可提取的灾害记载。")
+        self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
+        self.assertIn("ATTACHMENT_INSPECTION_RECEIPTS", calls[1][1]["question"])
+        model.assert_called_once()
+
+    def test_explicit_domain_tool_still_routes_directly_to_its_domain_agent(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+            "HRW_MOA_ENABLED": "0",
+        }
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["run_book_pages"],
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["南昌县志"]},
+        }
+        view = {
+            "session": {"session_id": "DAS_1", "plugin_name": "disaster-history"},
+            "messages": [{"role": "assistant", "content": {"text": "candidate ready"}}],
+            "runs": [{"run_id": "DRN_1", "status": "COMPLETED"}], "artifacts": [],
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}), patch(
+                "research_workbench.domain_agents.send_domain_message", return_value=view,
+            ) as consult, patch("research_workbench.agent_runtime._model_action") as model:
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "处理南昌县志，只调用一次 run_book_pages。", access_mode="research_assist",
+                )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        consult.assert_called_once()
+        model.assert_not_called()
 
     def test_explicit_single_event_batch_completes_from_tool_receipt(self) -> None:
         environment = {
@@ -1084,6 +1559,26 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertFalse(ollama_payload["stream"])
         self.assertEqual(ollama_payload["format"], "json")
 
+    def test_deepseek_domain_reasoning_mode_is_sent_explicitly(self) -> None:
+        requests: list[object] = []
+
+        def respond(request: object, timeout: float, **_: object) -> FakeResponse:
+            requests.append(request)
+            return FakeResponse({"choices": [{"message": {"content": '{"type":"final","content":"ok"}'}}]})
+
+        profile = ModelProfile(
+            "deepseek-test", "openai_compatible", "deepseek-v4-flash", "https://api.deepseek.com",
+            ("text", "tool_calling"), "credential", "available", "secret", 5,
+        )
+        with patch("research_workbench.agent_runtime.urlopen", side_effect=respond):
+            self.assertEqual(
+                _model_action(profile, "check", [], reasoning_mode="deep", reasoning_effort="high")["type"],
+                "final",
+            )
+        payload = json.loads(getattr(requests[0], "data").decode("utf-8"))
+        self.assertEqual(payload["thinking"], {"type": "enabled"})
+        self.assertEqual(payload["reasoning_effort"], "high")
+
     def test_model_http_step_has_a_total_deadline(self) -> None:
         release = threading.Event()
 
@@ -1136,6 +1631,35 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertTrue(run["completed_at"])
         self.assertEqual(goal["status"], "failed")
         self.assertEqual(failures, 1)
+
+    def test_transient_provider_error_retries_once_inside_runtime(self) -> None:
+        now = "2026-01-01T00:00:00Z"
+        with connect(self.project) as connection:
+            connection.execute(
+                "INSERT INTO goals(goal_id, thread_id, objective, status, created_at) "
+                "VALUES ('GOL_retry', ?, 'retry', 'active', ?)",
+                (self.thread["thread_id"], now),
+            )
+            connection.execute(
+                """INSERT INTO runs(run_id, thread_id, goal_id, status, model_snapshot_json,
+                   created_at, updated_at) VALUES ('RUN_retry', ?, 'GOL_retry', 'RUNNING', '{}', ?, ?)""",
+                (self.thread["thread_id"], now, now),
+            )
+        profile = ModelProfile(
+            "retry", "openai_compatible", "remote", "https://models.invalid/v1",
+            ("text",), "env:key", "available", "secret", 1,
+        )
+        with patch(
+            "research_workbench.agent_runtime._model_action",
+            side_effect=[RuntimeError("agent provider returned HTTP 429"), {"type": "final", "content": "已完成。"}],
+        ) as action:
+            _advance_run(self.project, "RUN_retry", "retry", profile)
+        self.assertEqual(action.call_count, 2)
+        with connect(self.project) as connection:
+            events = connection.execute(
+                "SELECT event_type FROM run_events WHERE run_id = 'RUN_retry' ORDER BY sequence"
+            ).fetchall()
+        self.assertIn("model_request_retry", [event["event_type"] for event in events])
 
     def test_model_http_error_includes_safe_provider_detail(self) -> None:
         error = HTTPError(

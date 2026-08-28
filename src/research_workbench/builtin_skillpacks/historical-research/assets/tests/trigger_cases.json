@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {"id": "P01", "prompt": "判断这批晚清档案应先做什么史学处理", "expected": ["historical-research-router"]},
+    {"id": "P02", "prompt": "启动完整史学研究流程并建立阶段门禁", "expected": ["historical-project-workflow"]},
+    {"id": "P03", "prompt": "检索清代边疆驿站的中文直接研究和公开全文", "expected": ["historical-literature-search"]},
+    {"id": "P04", "prompt": "验收这个文件夹中的史料 PDF 并登记版本关系", "expected": ["historical-material-intake"]},
+    {"id": "P05", "prompt": "完整阅读这五篇历史论文并记录学术分歧", "expected": ["historical-corpus-reading"]},
+    {"id": "P06", "prompt": "把北方草原交通这个主题限定成三个可检验的历史问题", "expected": ["historical-question-and-scope"]},
+    {"id": "P07", "prompt": "检查三个旅行记译本是不是来自同一母本", "expected": ["historical-source-criticism"]},
+    {"id": "P08", "prompt": "重建这个历史问题的直接研究与邻近研究对话", "expected": ["historical-historiography"]},
+    {"id": "P09", "prompt": "检验这个因果解释是否过度并提出反证", "expected": ["historical-explanation-testing"]},
+    {"id": "P10", "prompt": "根据核验史料设计这篇历史论文的论证结构", "expected": ["historical-argument-planning"]},
+    {"id": "P11", "prompt": "为已批准方向冻结证据包和可插入脚注库", "expected": ["historical-evidence-freeze"]},
+    {"id": "P12", "prompt": "依据冻结包由唯一写作 Agent 起草正式历史论文", "expected": ["historical-drafting"]},
+    {"id": "P13", "prompt": "让多个独立角色评审历史论文但不要直接改稿", "expected": ["historical-review-and-revision"]},
+    {"id": "P14", "prompt": "在不改事实和脚注的前提下清理历史论文翻译腔", "expected": ["historical-prose-revision-zh"]},
+    {"id": "P15", "prompt": "投稿前核对历史论文脚注、地图、译文和 DOCX", "expected": ["historical-final-audit"]},
+    {"id": "P16", "prompt": "从识典古籍、中国哲学书电子化计划和维基文库查找原文，开放全文实际下载验收", "expected": ["historical-literature-search"]},
+    {"id": "P17", "prompt": "用 Google Scholar 和知网查直接研究，开放文章下载，受限文章只列名单让我选择", "expected": ["historical-literature-search"]},
+    {"id": "P18", "prompt": "把刚下载的古籍扫描、OCR 和网页文本登记成不同载体并核对共同底本", "expected": ["historical-material-intake", "historical-source-criticism"]},
+    {"id": "P19", "prompt": "导入学校的中文史学注释规范，核对版权页和引文所在物理页后把脚注插进论文", "expected": ["historical-citation-insertion-zh"]},
+    {"id": "P20", "prompt": "按我提供的期刊格式改写现有脚注，版本信息先核定，页码留占位符让我自己填写", "expected": ["historical-citation-insertion-zh"]},
+    {"id": "P21", "prompt": "只按这份历史论文格式文件统一已有注释，不改正文，也不要声称核过未提供的来源", "expected": ["historical-citation-insertion-zh"]},
+    {"id": "N01", "prompt": "查看这个仓库最近二十次 Git 提交", "expected": []},
+    {"id": "N02", "prompt": "写 Python 脚本批量重命名 PDF", "expected": []},
+    {"id": "N03", "prompt": "解释今天股票为什么下跌", "expected": []},
+    {"id": "N04", "prompt": "润色这封商务邮件", "expected": []},
+    {"id": "N05", "prompt": "清理浏览器历史记录", "expected": []}
+  ]
+}

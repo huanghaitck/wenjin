@@ -1,6 +1,6 @@
 # ADR 0004｜Research Codex runtime and historical-evidence harness
 
-Status: accepted; M4 authorized  
+Status: accepted; M4 authorized
 Date: 2026-08-09
 
 ## Context
@@ -42,3 +42,17 @@ M4 先实现 Agent workspace 的一个纵向切片。联网、证据冻结、浏
 - 运行时与研究领域状态分离，但共用项目事务和审计边界；
 - 后续可以替换模型和工具实现，而不会绕过历史证据门禁；
 - M4 需要新增数据库迁移、运行事件与客户端对话区，但不改动原始来源或已完成 M1-M3 语义。
+
+## RC1 runtime note (2026-08-27)
+
+OpenAI 已公开 Codex app-server 及 Python SDK 的集成测试。可直接复用的不是一套新的研究领域状态，
+而是线程生命周期、流式事件、审批、中断/恢复和隔离测试环境的边界。问津 RC1 保留现有 SQLite
+研究状态与证据门禁；可选 Codex 桥接继续通过官方 CLI，主 Agent 的本机修复则使用受审批的确定性
+`runtime_status` / `runtime_repair` 工具。这样不会要求普通用户安装 Codex，也不会让外部 harness
+绕过问津的项目、来源和权限记录。若后续需要把 Codex 作为持续运行的可替换主循环，再以
+`codex app-server` JSON-RPC 作为单一适配器接入，不复制其协议实现。
+
+DeepSeek Harness 进一步验证了同一边界：会话事件是事实源，工具注册按Agent作用域隔离，具体循环可以
+替换，失败和取消必须落入状态不变量。RC1把这些要求落实在现有 SQLite Run/事件、领域 Agent
+隔离工具表和回归测试中；由于该项目仍处于会破坏兼容性的 developer preview，不把其 Cordis/Node
+插件栈引入安装包。这样既复用了成熟结构，也避免同时维护两套会话库和工具协议。

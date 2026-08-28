@@ -1,0 +1,12 @@
+schema_version: 1
+project_type: historical_research
+mode: project
+title: ""
+language: zh-CN
+citation_style: ""
+source_roots: []
+memory_backend: none
+current_stage: 0
+full_workflow_authorized: false
+multi_agent_authorized: false
+stop_gate: STAGE_0_NOT_STARTED

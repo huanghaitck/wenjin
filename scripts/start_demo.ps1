@@ -2,19 +2,33 @@ param(
     [string]$ProjectRoot = "",
     [string]$LibraryRoot = "",
     [string]$WorkspaceRoot = "",
+    [string]$PythonPath = $env:HRW_DEMO_PYTHON,
     [int]$Port = 8765,
     [switch]$Restart
 )
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
-$pythonExecutable = "D:\AI_Workflows\conda-envs\historical-research-workbench\python.exe"
+if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+    foreach ($candidate in @(
+        $(if ($env:VIRTUAL_ENV) { Join-Path $env:VIRTUAL_ENV "python.exe" }),
+        $(if ($env:CONDA_PREFIX) { Join-Path $env:CONDA_PREFIX "python.exe" }),
+        (Join-Path $repositoryRoot ".venv\Scripts\python.exe"),
+        $((Get-Command python -ErrorAction SilentlyContinue).Source)
+    )) {
+        if ($candidate -and (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+            $PythonPath = $candidate
+            break
+        }
+    }
+}
+$pythonExecutable = $PythonPath
 if (-not $ProjectRoot) { $ProjectRoot = Join-Path $repositoryRoot "tmp\m3-histra-demo" }
 if (-not $LibraryRoot) { $LibraryRoot = Join-Path $repositoryRoot "tmp\m5-library-demo-ready" }
 if (-not $WorkspaceRoot) { $WorkspaceRoot = Join-Path $repositoryRoot "tmp\d1-workspace-demo" }
 
-if (-not (Test-Path -LiteralPath $pythonExecutable -PathType Leaf)) {
-    throw "Dedicated Python environment is missing: $pythonExecutable"
+if (-not $pythonExecutable -or -not (Test-Path -LiteralPath $pythonExecutable -PathType Leaf)) {
+    throw "A Python environment was not found. Activate the project environment, set HRW_DEMO_PYTHON, or pass -PythonPath."
 }
 if (-not (Test-Path -LiteralPath (Join-Path $ProjectRoot "project.sqlite3") -PathType Leaf)) {
     throw "Demo project is missing: $ProjectRoot"

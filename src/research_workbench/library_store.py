@@ -10,7 +10,7 @@ from pathlib import Path
 from .db import utc_now
 
 
-LIBRARY_SCHEMA_VERSION = 3
+LIBRARY_SCHEMA_VERSION = 4
 LIBRARY_DATABASE_NAME = "library.sqlite3"
 _INITIALIZE_LOCK = threading.Lock()
 _INITIALIZED_PATHS: set[Path] = set()
@@ -123,6 +123,16 @@ CREATE TABLE work_tags (
     tag_id INTEGER NOT NULL REFERENCES tags(tag_id),
     origin TEXT NOT NULL,
     PRIMARY KEY(work_id, tag_id)
+);
+
+CREATE TABLE author_aliases (
+    alias_normalized TEXT PRIMARY KEY,
+    alias TEXT NOT NULL,
+    canonical_name TEXT NOT NULL,
+    orcid TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    decision_reason TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 CREATE TABLE library_project_links (
@@ -239,6 +249,11 @@ def initialize_library(library_root: Path) -> None:
                     CREATE INDEX IF NOT EXISTS idx_knowledge_edges_work ON knowledge_edges(work_id);
                     CREATE INDEX IF NOT EXISTS idx_knowledge_edges_source ON knowledge_edges(source_node_id);
                     CREATE INDEX IF NOT EXISTS idx_knowledge_edges_target ON knowledge_edges(target_node_id);
+                    CREATE TABLE IF NOT EXISTS author_aliases (
+                        alias_normalized TEXT PRIMARY KEY, alias TEXT NOT NULL,
+                        canonical_name TEXT NOT NULL, orcid TEXT NOT NULL,
+                        decided_by TEXT NOT NULL, decision_reason TEXT NOT NULL, updated_at TEXT NOT NULL
+                    );
                 """)
                 current_version = connection.execute(
                     "SELECT version FROM library_meta LIMIT 1"
