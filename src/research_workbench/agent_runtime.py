@@ -1318,7 +1318,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         ))
         if (
             snapshot["harness_backend"] == "codex"
-            and _matching_domain_agent(project_root, objective, history)
+            and (attachment_ids or _matching_domain_agent(project_root, objective, history))
         ):
             _advance_run(
                 project_root, run_id, objective, profile, design_context, history,

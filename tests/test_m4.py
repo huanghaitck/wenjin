@@ -951,7 +951,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
-            "HRW_MOA_ENABLED": "0",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
         }
         plugin = {
             "name": "disaster-history", "kind": "domain", "status": "ready",
@@ -997,7 +997,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
-            "HRW_MOA_ENABLED": "0",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
         }
         plugin = {
             "name": "disaster-history", "kind": "domain", "status": "ready",
@@ -1023,7 +1023,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             ), patch(
                 "research_workbench.agent_runtime._model_action",
                 return_value={"type": "tool_call", "tool": "attachment.inspect", "arguments": {"attachment_id": attachment_id}},
-            ):
+            ), patch("research_workbench.codex_harness.run_turn") as codex_turn:
                 result = send_message(
                     self.project, self.thread["thread_id"], "请检查本轮附件",
                     context={"attached_refs": [{"attachment_id": attachment_id, "original_name": "source.xlsx"}]},
@@ -1031,6 +1031,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
                 )
         self.assertEqual(result["runs"][0]["status"], "COMPLETED")
         self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
+        codex_turn.assert_not_called()
 
     def test_explicit_domain_tool_still_routes_directly_to_its_domain_agent(self) -> None:
         environment = {
