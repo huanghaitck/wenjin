@@ -990,7 +990,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["messages"][-1]["content"]["text"], "本页没有可提取的灾害记载。")
         self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
         self.assertIn("ATTACHMENT_INSPECTION_RECEIPTS", calls[1][1]["question"])
-        model.assert_called_once()
+        model.assert_not_called()
         codex_turn.assert_not_called()
 
     def test_generic_spreadsheet_attachment_uses_the_only_inspector_domain_agent(self) -> None:

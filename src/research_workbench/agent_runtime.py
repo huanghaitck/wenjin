@@ -1377,6 +1377,41 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     required_tool = explicit_required or (
         "attachment.inspect" if attachment_ids else "domain_agent.consult" if domain_plugin else ""
     )
+    if attachment_ids and not observations:
+        receipts = []
+        for attachment_id in attachment_ids:
+            receipt = _execute_tool(
+                project_root, run_id, "attachment.inspect", {"attachment_id": attachment_id}
+            )
+            observations.append({
+                "tool": "attachment.inspect", "arguments": {"attachment_id": attachment_id},
+                "result": receipt,
+            })
+            receipts.append(receipt)
+        if not domain_plugin and any(
+            isinstance(item, dict) and item.get("kind") == "spreadsheet" for item in receipts
+        ):
+            spreadsheet_agents = [
+                item for item in _ready_domain_agents(project_root)
+                if "inspect_half_finished_workbook" in item.get("agent_tools", [])
+            ]
+            if len(spreadsheet_agents) == 1:
+                domain_plugin = str(spreadsheet_agents[0]["name"])
+        if domain_plugin:
+            domain_result = _execute_tool(
+                project_root, run_id, "domain_agent.consult",
+                {
+                    "plugin_name": domain_plugin,
+                    "question": objective + "\n\nATTACHMENT_INSPECTION_RECEIPTS " + _json(receipts),
+                },
+            )
+            latest = domain_result.get("latest_message") if isinstance(domain_result, dict) else None
+            latest_run = domain_result.get("latest_run") if isinstance(domain_result, dict) else None
+            if isinstance(latest_run, dict) and latest_run.get("status") != "COMPLETED":
+                raise RuntimeError(str(latest_run.get("error") or "领域 Agent 未完成本轮任务"))
+            content = str(((latest or {}).get("content") or {}).get("text", "")).strip()
+            _complete_run(project_root, run_id, content or "领域 Agent 已根据附件完成处理。")
+            return
     if domain_plugin and not attachment_ids and not any(item.get("tool") == "domain_agent.consult" for item in observations):
         result = _execute_tool(
             project_root, run_id, "domain_agent.consult",
