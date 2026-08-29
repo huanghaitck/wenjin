@@ -398,6 +398,11 @@ def send_domain_message(
         try:
             parsed = json.loads(request_text.split("ATTACHMENT_INSPECTION_RECEIPTS ", 1)[1])
             embedded_receipts = [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+            for item in embedded_receipts:
+                if item.get("attachment_id") and not (item.get("tool_path") or item.get("absolute_path")):
+                    item["tool_path"] = inspect_attachment(project_root, str(item["attachment_id"]))["absolute_path"]
+            content = request_text.split("ATTACHMENT_INSPECTION_RECEIPTS ", 1)[0] + \
+                "ATTACHMENT_INSPECTION_RECEIPTS " + _json(embedded_receipts)
         except json.JSONDecodeError:
             pass
     spreadsheet_paths = [

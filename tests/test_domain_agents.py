@@ -168,12 +168,15 @@ class DomainAgentTests(unittest.TestCase):
             "runtime_command": "agent.exe",
             "agent_tools": ["inspect_half_finished_workbook", "normalize_disaster_type"],
         }
-        receipt = [{"kind": "spreadsheet", "absolute_path": str(self.project / "source.xlsx")}]
+        receipt = [{"attachment_id": "A1", "kind": "spreadsheet", "project_path": "attachments/source.xlsx"}]
         tool_specs = [{"name": name, "description": name, "inputSchema": {"type": "object"}}
                       for name in plugin["agent_tools"]]
         content = "请检查本轮附件\n\nATTACHMENT_INSPECTION_RECEIPTS " + json.dumps(receipt)
         with patch.dict(os.environ, {"HRW_ENABLE_MOCK_MODEL": "1", "WENJIN_HARNESS_BACKEND": "codex"}, clear=False), patch(
             "research_workbench.domain_agents._plugin", return_value=plugin,
+        ), patch(
+            "research_workbench.domain_agents.inspect_attachment",
+            return_value={"absolute_path": str(self.project / "source.xlsx")},
         ), patch(
             "research_workbench.domain_agents.domain_plugin_tool_specs", return_value=tool_specs,
         ), patch(
