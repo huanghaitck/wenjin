@@ -31,7 +31,7 @@
 
 ## 安装
 
-普通用户可从发布页下载 Windows 安装程序。安装包包含冻结的问津 Python 核心、Codex app-server 与桌面运行时；运行问津和自包含领域 Agent 不需要另装 Python、Node.js、PowerShell 7、Rust 或 Codex。只有明确运行包外脚本时才需要可选脚本环境，主 Agent 会先自检，并在用户批准后按需安装。Windows 10/11通常已有WebView2；断网机器可下载包含WebView2安装程序的完整离线包。
+普通用户可从发布页下载 Windows 安装程序。安装包包含冻结的问津 Python 核心、Codex app-server 与桌面运行时；运行问津和自包含领域 Agent 不需要另装 Python、Node.js、PowerShell 7、Rust 或 Codex。只有明确运行包外脚本时才需要可选脚本环境，主 Agent 会先自检，并在用户批准后按需安装。Windows 10/11通常已有WebView2；断网机器请下载完整离线包，解压后双击`双击这里离线安装问津.cmd`，不要直接运行其中的裸安装程序。
 
 首次启动若没有真实主模型，问津会先引导连接本机Ollama或OpenAI兼容接口。Mock只用于自动化测试，不出现在正式客户端，也不会在配置失败时自动接管对话。每个新项目会自动建立一个空白研究线程；图书馆、项目整理和人工复核可以在暂不配置模型时继续使用。
 
