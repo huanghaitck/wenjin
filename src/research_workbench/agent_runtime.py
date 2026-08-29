@@ -1595,6 +1595,16 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
+        if (
+            tool_name == "attachment.inspect" and not domain_plugin
+            and isinstance(result, dict) and result.get("kind") == "spreadsheet"
+        ):
+            spreadsheet_agents = [
+                item for item in _ready_domain_agents(project_root)
+                if "inspect_half_finished_workbook" in item.get("agent_tools", [])
+            ]
+            if len(spreadsheet_agents) == 1:
+                domain_plugin = str(spreadsheet_agents[0]["name"])
         if tool_name == "attachment.inspect" and domain_plugin:
             inspected = {
                 str((item.get("arguments") or {}).get("attachment_id", ""))
