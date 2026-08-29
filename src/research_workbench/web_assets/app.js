@@ -1077,6 +1077,8 @@ function renderThread() {
     appendQueuedDirectionMenu(card,message,'main');
     messages.append(card);
   }
+  const inlineArtifacts=(run?.tool_calls||[]).filter((call)=>call.tool_name==='domain_agent.consult'&&call.status==='COMPLETED').flatMap((call)=>call.output?.candidate_artifacts||[]);
+  if(inlineArtifacts.length){const group=document.createElement('article');group.className='message assistant';group.append(Object.assign(document.createElement('small'),{textContent:state.language==='en'?'Completed files':'本轮完成文件'}));const list=document.createElement('div');list.className='domain-artifact-list';for(const item of inlineArtifacts){const node=document.createElement('article');node.className='domain-artifact';const open=()=>nativeInvoke('open_path',{path:item.native_path||item.project_path}).catch((error)=>notice(error.message,true));node.append(Object.assign(document.createElement('strong'),{textContent:item.title}),Object.assign(document.createElement('small'),{textContent:item.project_path}));if(nativeAvailable()){node.title=state.language==='en'?'Double-click to open':'双击打开产物';node.ondblclick=open;node.append(actionButton(state.language==='en'?'Open':'打开',open,true));}list.append(node);}group.append(list);messages.append(group);}
   if(run?.events?.length){
     const process=document.createElement('details');process.className='message process';process.open=true;
     const summary=document.createElement('summary');summary.textContent=state.language==='en'?`Run activity · ${run.status}`:`运行过程 · ${run.status}`;process.append(summary);

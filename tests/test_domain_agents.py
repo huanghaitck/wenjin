@@ -103,7 +103,7 @@ class DomainAgentTests(unittest.TestCase):
             "research_workbench.domain_agents._model_action", side_effect=lambda *args, **kwargs: next(actions),
         ), patch(
             "research_workbench.domain_agents.call_domain_plugin_tool",
-            return_value={"structuredContent": {"output_path": str(output), "status": "candidate"}},
+            return_value={"structuredContent": {"deliverables": [str(output)], "status": "candidate"}},
         ):
             result = send_domain_message(
                 self.project, "disaster-history", "建立候选", main_thread_id=main_thread["thread_id"],
