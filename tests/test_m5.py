@@ -323,10 +323,52 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
         first_work, _ = self._approve_one(first); second_work, _ = self._approve_one(second)
         update_work(self.project, first_work, {"canonical_title": "第一篇", "author": "甲；乙"}, [], self.library)
         update_work(self.project, second_work, {"canonical_title": "第二篇", "author": "甲"}, [], self.library)
+        move_work_to_shelf(self.project, first_work, "academic_articles", self.library)
+        move_work_to_shelf(self.project, second_work, "academic_articles", self.library)
         graph = library_graph(self.project, library_root=self.library)
         self.assertTrue(any(edge["relation"] == "same_author" for edge in graph["edges"]))
         self.assertTrue({"甲", "乙"}.issubset({node["label"] for node in graph["entity_nodes"] if node["node_type"] == "person"}))
         self.assertGreaterEqual(sum(edge["relation"] == "authored_by" for edge in graph["entity_edges"]), 3)
+
+    def test_shared_organization_does_not_collapse_an_article_and_book_relation(self) -> None:
+        article = self.materials / "article.md"; book = self.materials / "book.md"
+        article.write_text("# 第一篇论文\n\n历史论文。" * 20, encoding="utf-8")
+        book.write_text("# 第一部专著\n\n历史专著。" * 20, encoding="utf-8")
+        article_work, _ = self._approve_one(article); book_work, _ = self._approve_one(book)
+        update_work(
+            self.project, article_work,
+            {"canonical_title": "第一篇论文", "publisher": "共同出版机构", "publication_year": "2024"},
+            [], self.library,
+        )
+        update_work(
+            self.project, book_work,
+            {"canonical_title": "第一部专著", "publisher": "共同出版机构", "publication_year": "2024"},
+            [], self.library,
+        )
+        move_work_to_shelf(self.project, article_work, "academic_articles", self.library)
+        move_work_to_shelf(self.project, book_work, "monographs", self.library)
+        graph = library_graph(self.project, library_root=self.library)
+        node_ids = {node["work_id"]: node["node_id"] for node in graph["nodes"]}
+        pair = {node_ids[article_work], node_ids[book_work]}
+        self.assertFalse(any(
+            {edge["source_node_id"], edge["target_node_id"]} == pair
+            and edge["relation"] in {"same_journal", "same_publisher"}
+            for edge in graph["edges"]
+        ))
+        organization = next(
+            node for node in graph["entity_nodes"]
+            if node["node_type"] == "organization" and node["label"] == "共同出版机构"
+        )
+        self.assertEqual(
+            sum(
+                edge["relation"] == "published_by" and edge["target_node_id"] == organization["node_id"]
+                for edge in graph["entity_edges"]
+            ),
+            2,
+        )
+        self.assertIn("2024", {
+            node["label"] for node in graph["entity_nodes"] if node["node_type"] == "year"
+        })
 
     def test_author_aliases_preserve_raw_names_but_share_one_entity(self) -> None:
         first = self.materials / "english-name.md"; second = self.materials / "chinese-name.md"
@@ -335,6 +377,8 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
         first_work, _ = self._approve_one(first); second_work, _ = self._approve_one(second)
         update_work(self.project, first_work, {"canonical_title": "English work", "author": "Shen Hou"}, [], self.library)
         update_work(self.project, second_work, {"canonical_title": "中文作品", "author": "侯深"}, [], self.library)
+        move_work_to_shelf(self.project, first_work, "academic_articles", self.library)
+        move_work_to_shelf(self.project, second_work, "academic_articles", self.library)
         register_author_alias(self.library, "Shen Hou", "侯深", "tester", "verified bilingual byline")
         graph = library_graph(self.project, library_root=self.library)
         self.assertTrue(any(edge["relation"] == "same_author" for edge in graph["edges"]))
@@ -487,10 +531,12 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
         self.assertEqual({work["shelf"] for work in works}, set(shelves.values()))
         graph = library_graph(self.project, library_root=self.library)
         self.assertNotIn("notes", {node["label"] for node in graph["nodes"] if node["node_type"] == "work"})
+        self.assertNotIn("unknown", {node["label"] for node in graph["nodes"] if node["node_type"] == "work"})
         self.assertEqual({node["node_type"] for node in graph["nodes"]}, {"work"})
         self.assertIn("academic_articles", {node.get("graph_category") for node in graph["nodes"]})
         opted_in = library_graph(self.project, library_root=self.library, include_reading_notes=True)
         self.assertIn("notes", {node["label"] for node in opted_in["nodes"] if node["node_type"] == "work"})
+        self.assertNotIn("unknown", {node["label"] for node in opted_in["nodes"] if node["node_type"] == "work"})
         self.assertIn("reading_notes", {node.get("graph_category") for node in opted_in["nodes"]})
 
     def test_same_clean_title_registers_one_work_with_multiple_files(self) -> None:
