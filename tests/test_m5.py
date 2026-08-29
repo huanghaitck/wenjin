@@ -538,6 +538,13 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
         self.assertIn("notes", {node["label"] for node in opted_in["nodes"] if node["node_type"] == "work"})
         self.assertNotIn("unknown", {node["label"] for node in opted_in["nodes"] if node["node_type"] == "work"})
         self.assertIn("reading_notes", {node.get("graph_category") for node in opted_in["nodes"]})
+        articles = library_graph(self.project, library_root=self.library, shelf="academic_articles")
+        self.assertEqual({node["graph_category"] for node in articles["nodes"]}, {"academic_articles"})
+        notes = library_graph(self.project, library_root=self.library, shelf="reading_notes")
+        self.assertEqual({node["graph_category"] for node in notes["nodes"]}, {"reading_notes"})
+        self.assertEqual(library_graph(
+            self.project, library_root=self.library, shelf="unclassified",
+        )["nodes"], [])
 
     def test_same_clean_title_registers_one_work_with_multiple_files(self) -> None:
         first = self.materials / "first"

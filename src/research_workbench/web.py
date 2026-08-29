@@ -256,6 +256,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     self.server.project_root, params.get("query", [""])[0],
                     int(params.get("limit", ["200"])[0]), self.server.library_root,
                     params.get("include_reading_notes", ["0"])[0] == "1",
+                    params.get("shelf", [""])[0],
                 ))
                 return
             if parsed.path == "/api/capabilities":
