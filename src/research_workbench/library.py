@@ -1560,9 +1560,11 @@ def decide_literature_relation(
 
 
 def library_graph(project_root: Path, query: str = "", limit: int = 200,
-                  library_root: Path | None = None, include_reading_notes: bool = False) -> dict[str, Any]:
+                  library_root: Path | None = None, include_reading_notes: bool = False,
+                  shelf: str = "") -> dict[str, Any]:
     root = library_root_for(project_root, library_root)
     limit = max(1, min(int(limit), 500))
+    selected_shelf = shelf if shelf in LIBRARY_SHELVES else ""
     content_graph = project_content_graph(project_root, query, max(40, limit * 5))
     with connect_library(root) as connection:
         literature_relations = _literature_relation_candidates(project_root, connection, query, max(60, limit * 4))
@@ -1620,8 +1622,12 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                     FROM works w WHERE w.work_id IN ({placeholders})""",
                 tuple(work_ids),
             )}
-            allowed_shelves = set(GRAPH_WORK_SHELVES)
-            if include_reading_notes:
+            allowed_shelves = (
+                {"reading_notes"} if selected_shelf == "reading_notes"
+                else ({selected_shelf} & set(GRAPH_WORK_SHELVES)) if selected_shelf
+                else set(GRAPH_WORK_SHELVES)
+            )
+            if include_reading_notes and not selected_shelf:
                 allowed_shelves.add("reading_notes")
             work_ids = [work_id for work_id in work_ids if shelves.get(work_id) in allowed_shelves]
         if not work_ids:
@@ -1631,6 +1637,7 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                 "literature_relations": literature_relations,
                 "node_count": 0, "edge_count": 0,
                 "backfilled_work_count": len(missing_work_ids), "query": query.strip(),
+                "shelf": selected_shelf,
             }
         normalized_ids = [work_id.casefold() for work_id in work_ids]
         placeholders = ",".join("?" for _ in normalized_ids)
@@ -1786,6 +1793,7 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
         "edge_count": len(edges),
         "backfilled_work_count": len(missing_work_ids),
         "query": query.strip(),
+        "shelf": selected_shelf,
         "preview_boundary": "bounded_intake_sample_not_evidence",
         "content_graph": content_graph,
         "literature_relations": literature_relations,
