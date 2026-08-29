@@ -33,6 +33,10 @@ LIBRARY_SHELVES = {
     "monographs": "学术专著", "personal_manuscripts": "个人论文与稿件",
     "reading_notes": "读书笔记", "reference_works": "工具书与目录", "unclassified": "待分类",
 }
+GRAPH_WORK_SHELVES = frozenset({
+    "primary_sources", "academic_articles", "monographs",
+    "personal_manuscripts", "reference_works",
+})
 SUGGESTED_SHELVES = {
     "archival_source": "primary_sources",
     "article": "academic_articles",
@@ -1449,12 +1453,18 @@ def _literature_relation_candidates(
     project_root: Path, library_connection: Any, query: str = "", limit: int = 300,
 ) -> list[dict[str, Any]]:
     works = [dict(row) for row in library_connection.execute(
-        """SELECT w.work_id, w.canonical_title, w.author FROM works w
+        """SELECT w.work_id, w.canonical_title, w.author,
+                  COALESCE((
+                      SELECT substr(t.name,7) FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                      WHERE wt.work_id=w.work_id AND t.name LIKE 'shelf:%' LIMIT 1
+                  ),'unclassified') AS shelf
+           FROM works w
            WHERE NOT EXISTS (
              SELECT 1 FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
              WHERE wt.work_id=w.work_id AND t.name='shelf:reading_notes'
            ) ORDER BY w.updated_at DESC"""
-    ).fetchall() if len(str(row["canonical_title"]).strip()) >= 4]
+    ).fetchall() if len(str(row["canonical_title"]).strip()) >= 4
+        and row["shelf"] in GRAPH_WORK_SHELVES]
     work_lookup = {item["work_id"]: item for item in works}
     with connect(project_root) as connection:
         blocks = connection.execute(
@@ -1600,30 +1610,26 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
             work_ids = [row["work_id"] for row in connection.execute(
                 "SELECT w.work_id FROM works w ORDER BY w.updated_at DESC LIMIT ?", (limit,)
             ).fetchall()]
-        if work_ids and not include_reading_notes:
+        if work_ids:
             placeholders = ",".join("?" for _ in work_ids)
-            reading_notes = {row["work_id"] for row in connection.execute(
-                f"""SELECT DISTINCT wt.work_id FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
-                    WHERE t.name='shelf:reading_notes' AND wt.work_id IN ({placeholders})""",
+            shelves = {row["work_id"]: row["shelf"] for row in connection.execute(
+                f"""SELECT w.work_id, COALESCE((
+                           SELECT substr(t.name,7) FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                           WHERE wt.work_id=w.work_id AND t.name LIKE 'shelf:%' LIMIT 1
+                       ),'unclassified') AS shelf
+                    FROM works w WHERE w.work_id IN ({placeholders})""",
                 tuple(work_ids),
             )}
-            work_ids = [work_id for work_id in work_ids if work_id not in reading_notes]
+            allowed_shelves = set(GRAPH_WORK_SHELVES)
+            if include_reading_notes:
+                allowed_shelves.add("reading_notes")
+            work_ids = [work_id for work_id in work_ids if shelves.get(work_id) in allowed_shelves]
         if not work_ids:
-            fallback_nodes = [
-                {"node_id": item["node_id"], "node_type": item["node_type"], "label": item["label"],
-                 "origin": item.get("origin", "project_content"), "work_id": ""}
-                for item in content_graph["nodes"][:limit]
-            ]
-            fallback_ids = {item["node_id"] for item in fallback_nodes}
-            fallback_edges = [
-                item for item in content_graph["edges"]
-                if item["source_node_id"] in fallback_ids and item["target_node_id"] in fallback_ids
-            ]
             return {
-                "nodes": fallback_nodes, "edges": fallback_edges, "work_cards": [], "content_graph": content_graph,
-                "entity_nodes": fallback_nodes, "entity_edges": fallback_edges,
+                "nodes": [], "edges": [], "work_cards": [], "content_graph": content_graph,
+                "entity_nodes": [], "entity_edges": [],
                 "literature_relations": literature_relations,
-                "node_count": len(fallback_nodes), "edge_count": len(fallback_edges),
+                "node_count": 0, "edge_count": 0,
                 "backfilled_work_count": len(missing_work_ids), "query": query.strip(),
             }
         normalized_ids = [work_id.casefold() for work_id in work_ids]
@@ -1691,12 +1697,16 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
                 if node_type == "person":
                     relation = "same_author"
                 elif node_type == "organization":
-                    relation = (
-                        "same_journal"
-                        if work_nodes[source_id]["graph_category"] == "academic_articles"
-                        and work_nodes[target_id]["graph_category"] == "academic_articles"
-                        else "same_publisher"
-                    )
+                    source_category = work_nodes[source_id]["graph_category"]
+                    target_category = work_nodes[target_id]["graph_category"]
+                    if source_category == target_category == "academic_articles":
+                        relation = "same_journal"
+                    elif source_category == target_category and source_category in {
+                        "primary_sources", "monographs", "reference_works",
+                    }:
+                        relation = "same_publisher"
+                    else:
+                        continue
                 else:
                     continue
                 edge_id = "KGE_" + hashlib.sha256(f"{source_id}\0{relation}\0{target_id}".encode("utf-8")).hexdigest()[:24]

@@ -50,7 +50,7 @@ Inventory and registration are separate operations:
 4. Suggested shelves remain editable.
 5. Registration does not mean that a work has been read, is citable, or has become formal evidence.
 
-The built-in shelves are Primary Sources, Articles, Monographs, Personal Papers and Drafts, Reading Notes, Reference Works and Catalogs, and Unclassified. Reading notes are excluded from every graph by default and are included only when the researcher explicitly requests them for the current query.
+The built-in shelves are Primary Sources, Articles, Monographs, Personal Papers and Drafts, Reading Notes, Reference Works and Catalogs, and Unclassified. Reading notes are excluded from every graph by default, and unclassified files stay outside the graph until their bibliographic status is decided. Reading notes are included only when the researcher explicitly requests them for the current query. Work relations, bibliographic entities, and project-content entities use separate node sets, relation sets, and legends.
 
 ## Agent access modes
 
