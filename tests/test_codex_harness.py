@@ -13,9 +13,40 @@ from research_workbench.agent_runtime import create_thread, decide_approval, sen
 from research_workbench.codex_harness import _Host
 from research_workbench.library import approve_candidates, scan_directory, work_detail
 from research_workbench.service import initialize_project, project_status
+from research_workbench.db import connect, utc_now
 
 
 class CodexHarnessTests(unittest.TestCase):
+    def test_domain_tool_reuses_an_identical_successful_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            initialize_project(root, "Domain receipt")
+            now = utc_now()
+            with connect(root) as connection:
+                connection.execute(
+                    "INSERT INTO domain_agent_sessions(session_id,plugin_name,agent_id,title,status,memory_json,created_at,updated_at) "
+                    "VALUES ('S','p','a','A','active','{}',?,?)", (now, now),
+                )
+                connection.execute(
+                    "INSERT INTO domain_agent_runs(run_id,session_id,status,model_snapshot_json,created_at,updated_at) "
+                    "VALUES ('D','S','RUNNING','{}',?,?)", (now, now),
+                )
+            host = _Host(root, "test", None)  # type: ignore[arg-type]
+            binding = {"run_id": "D", "session_id": "S", "plugin_name": "p",
+                       "plugin": {"tool_permissions": {"inspect": "read"}},
+                       "tools": {"inspect"}, "access_mode": "ask", "parent_run_id": ""}
+            request = {"namespace": "domain", "tool": "inspect", "arguments": {"page": 1}}
+            with patch(
+                "research_workbench.domain_plugins.call_domain_plugin_tool",
+                return_value={"structuredContent": {"read_only": True}},
+            ) as tool:
+                first = host._handle_domain_tool(request, binding)
+                second = host._handle_domain_tool(request, binding)
+            self.assertTrue(first["success"])
+            self.assertTrue(second["success"])
+            self.assertEqual(tool.call_count, 1)
+            self.assertTrue(json.loads(second["contentItems"][0]["text"])["already_succeeded"])
+
     def test_library_adoption_pauses_then_ingests_the_selected_exact_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root, library, materials = Path(directory) / "project", Path(directory) / "library", Path(directory) / "materials"

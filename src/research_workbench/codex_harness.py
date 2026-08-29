@@ -356,12 +356,26 @@ class _Host:
         risk = _permission(binding["plugin"], tool_name)
         if risk == "forbidden" or (risk == "sensitive" and binding["access_mode"] != "full_computer"):
             return _tool_result({"error": f"permission {risk} requires a higher access mode"}, False)
+        encoded_arguments = _json(arguments)
+        with connect(self.project_root) as connection:
+            duplicate = connection.execute(
+                "SELECT output_json FROM domain_agent_tool_calls "
+                "WHERE run_id=? AND tool_name=? AND input_json=? AND status='COMPLETED' "
+                "ORDER BY completed_at DESC LIMIT 1",
+                (binding["run_id"], tool_name, encoded_arguments),
+            ).fetchone()
+        if duplicate is not None:
+            payload = json.loads(duplicate["output_json"])
+            if isinstance(payload, dict):
+                payload = {**payload, "already_succeeded": True,
+                           "instruction": "Use this receipt; do not repeat the same tool call."}
+            return _tool_result(payload)
         call_id = _id("DTC")
         with connect(self.project_root) as connection:
             connection.execute(
                 "INSERT INTO domain_agent_tool_calls(tool_call_id,run_id,tool_name,input_json,status,created_at) "
                 "VALUES (?,?,?,?, 'RUNNING', ?)",
-                (call_id, binding["run_id"], tool_name, _json(arguments), utc_now()),
+                (call_id, binding["run_id"], tool_name, encoded_arguments, utc_now()),
             )
         try:
             result = call_domain_plugin_tool(

@@ -464,6 +464,17 @@ def queue_run_control(
             "INSERT INTO agent_run_controls(control_id,run_kind,run_id,action,content,status,created_at) VALUES (?,?,?,?,?,'pending',?)",
             (control_id, run_kind, row["run_id"], action, content, now),
         )
+        linked_domain_run_ids: list[str] = []
+        if run_kind == "main" and action == "stop":
+            linked_domain_run_ids = [str(item["run_id"]) for item in connection.execute(
+                "SELECT run_id FROM domain_agent_runs WHERE main_thread_id=? AND status='RUNNING'",
+                (row["thread_id"],),
+            ).fetchall()]
+            connection.executemany(
+                "INSERT INTO agent_run_controls(control_id,run_kind,run_id,action,content,status,created_at) "
+                "VALUES (?,'domain',?,'stop','','pending',?)",
+                [(_id("CTL"), domain_run_id, now) for domain_run_id in linked_domain_run_ids],
+            )
         if action == "steer":
             if run_kind == "main":
                 connection.execute(
@@ -478,7 +489,8 @@ def queue_run_control(
                     "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) VALUES (?,?, 'user', ?, ?)",
                     (_id("DMS"), session["session_id"], _json({"text": content, "main_thread_id": row["thread_id"] or "", "steering_for_run": row["run_id"], "run_control_id": control_id}), now),
                 )
-        return {"control_id": control_id, "run_id": row["run_id"], "action": action, "status": "pending"}
+        return {"control_id": control_id, "run_id": row["run_id"], "action": action,
+                "status": "pending", "linked_domain_run_ids": linked_domain_run_ids}
 
 
 def revise_run_control(
@@ -1306,7 +1318,6 @@ def send_message(project_root: Path, thread_id: str, content: str,
         ))
         if (
             snapshot["harness_backend"] == "codex"
-            and not attachment_ids
             and _matching_domain_agent(project_root, objective, history)
         ):
             _advance_run(

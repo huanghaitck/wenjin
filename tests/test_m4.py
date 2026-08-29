@@ -887,7 +887,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
-            "HRW_MOA_ENABLED": "0",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
         }
         plugin = {
             "name": "disaster-history", "kind": "domain", "status": "ready",
@@ -978,7 +978,9 @@ class M4AgentWorkspaceTests(unittest.TestCase):
                     "type": "tool_call", "tool": "attachment.inspect",
                     "arguments": {"attachment_id": attachment_id, "prompt": "读取页码和正文"},
                 },
-            ) as model, patch("research_workbench.agent_runtime._execute_tool", side_effect=execute):
+            ) as model, patch("research_workbench.agent_runtime._execute_tool", side_effect=execute), patch(
+                "research_workbench.codex_harness.run_turn",
+            ) as codex_turn:
                 result = send_message(
                     self.project, self.thread["thread_id"], "读取附件后交给灾害史专业Agent判断。",
                     context={"attached_refs": [{"attachment_id": attachment_id, "original_name": "page.png"}]},
@@ -989,6 +991,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
         self.assertIn("ATTACHMENT_INSPECTION_RECEIPTS", calls[1][1]["question"])
         model.assert_called_once()
+        codex_turn.assert_not_called()
 
     def test_explicit_domain_tool_still_routes_directly_to_its_domain_agent(self) -> None:
         environment = {

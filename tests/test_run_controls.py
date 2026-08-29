@@ -43,7 +43,9 @@ class RunControlTests(unittest.TestCase):
         observations = []
         self.assertEqual(_apply_main_run_controls(self.project, "R", observations), "steer")
         self.assertEqual(observations[0]["result"]["message"], "先核对表头")
-        queue_run_control(self.project, "main", "stop", thread_id=self.thread["thread_id"])
+        stopped = queue_run_control(self.project, "main", "stop", thread_id=self.thread["thread_id"])
+        self.assertEqual(stopped["linked_domain_run_ids"], ["D"])
+        self.assertEqual(_apply_domain_run_controls(self.project, "D"), "stop")
         self.assertEqual(_apply_main_run_controls(self.project, "R", observations), "stop")
         with connect(self.project) as connection:
             self.assertEqual(connection.execute("SELECT status FROM runs WHERE run_id='R'").fetchone()[0], "STOPPED")

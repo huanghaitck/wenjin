@@ -397,10 +397,15 @@ def send_domain_message(
         str(item["tool_path"]) for item in attachment_receipts
         if item.get("kind") == "spreadsheet" and item.get("tool_path")
     ]
+    inspect_only = bool(
+        spreadsheet_paths
+        and re.search(r"(?:查看|检查|读取|识别|预览|盘点)", request_text)
+        and not re.search(r"(?:转换|转成|生成|导出|输出|成品表|标准表|自定义表头|schema|22\s*列)", request_text, flags=re.IGNORECASE)
+    )
     if (
         spreadsheet_paths
         and "inspect_half_finished_workbook" in {str(value) for value in plugin.get("agent_tools", [])}
-        and re.search(r"(?:查看|检查|读取|识别).{0,12}(?:表头|前三行|前三条|工作表)", request_text)
+        and (inspect_only or re.search(r"(?:查看|检查|读取|识别).{0,12}(?:表头|前三行|前三条|工作表)", request_text))
     ):
         requirements = [
             item for item in requirements if item.get("tool") != "inspect_half_finished_workbook"
@@ -426,10 +431,11 @@ def send_domain_message(
             domain_plugin_tool_specs(find_config_root(project_root), plugin_name)
             if plugin.get("runtime_command") else []
         )
+        available_tool_specs = tool_specs if inspect_only else all_tool_specs
         try:
             final = _clean_final_text(run_domain_turn(
                 project_root, str(session["session_id"]), run_id, content, profile, plugin,
-                all_tool_specs, _domain_prompt(plugin, all_tool_specs, native_tools=True),
+                available_tool_specs, _domain_prompt(plugin, available_tool_specs, native_tools=True),
                 access_mode, reasoning_effort, parent_run_id, reasoning_mode,
                 _domain_history(project_root, str(session["session_id"]), main_thread_id),
             ))
