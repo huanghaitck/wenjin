@@ -185,6 +185,7 @@ class DomainAgentTests(unittest.TestCase):
             result = send_domain_message(self.project, "disaster-history", content)
         self.assertEqual(result["runs"][0]["status"], "COMPLETED")
         self.assertEqual([item["name"] for item in turn.call_args.args[6]], ["inspect_half_finished_workbook"])
+        self.assertIn("REQUEST_TOOL_CONTRACT", turn.call_args.args[7])
 
     def test_explicit_domain_candidate_write_runs_in_ask_mode_without_permission_loop(self) -> None:
         actions = iter([
