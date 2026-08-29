@@ -162,6 +162,27 @@ class DomainAgentTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["status"], "COMPLETED")
         self.assertEqual([item["name"] for item in turn.call_args.args[6]], ["inspect_half_finished_workbook"])
 
+    def test_codex_main_attachment_receipt_exposes_only_the_read_only_inspector(self) -> None:
+        plugin = {
+            **self.plugin,
+            "runtime_command": "agent.exe",
+            "agent_tools": ["inspect_half_finished_workbook", "normalize_disaster_type"],
+        }
+        receipt = [{"kind": "spreadsheet", "absolute_path": str(self.project / "source.xlsx")}]
+        tool_specs = [{"name": name, "description": name, "inputSchema": {"type": "object"}}
+                      for name in plugin["agent_tools"]]
+        content = "请检查本轮附件\n\nATTACHMENT_INSPECTION_RECEIPTS " + json.dumps(receipt)
+        with patch.dict(os.environ, {"HRW_ENABLE_MOCK_MODEL": "1", "WENJIN_HARNESS_BACKEND": "codex"}, clear=False), patch(
+            "research_workbench.domain_agents._plugin", return_value=plugin,
+        ), patch(
+            "research_workbench.domain_agents.domain_plugin_tool_specs", return_value=tool_specs,
+        ), patch(
+            "research_workbench.codex_harness.run_domain_turn", return_value="只读检查完成。",
+        ) as turn:
+            result = send_domain_message(self.project, "disaster-history", content)
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual([item["name"] for item in turn.call_args.args[6]], ["inspect_half_finished_workbook"])
+
     def test_explicit_domain_candidate_write_runs_in_ask_mode_without_permission_loop(self) -> None:
         actions = iter([
             {"type": "tool_call", "tool": "build_candidate", "arguments": {"input": "source.xlsx"}},

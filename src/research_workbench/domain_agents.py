@@ -393,10 +393,22 @@ def send_domain_message(
             })
     observations: list[dict[str, Any]] = []
     requirements = _tool_requirements(plugin, content)
+    embedded_receipts: list[dict[str, Any]] = []
+    if "ATTACHMENT_INSPECTION_RECEIPTS " in request_text:
+        try:
+            parsed = json.loads(request_text.split("ATTACHMENT_INSPECTION_RECEIPTS ", 1)[1])
+            embedded_receipts = [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            pass
     spreadsheet_paths = [
         str(item["tool_path"]) for item in attachment_receipts
         if item.get("kind") == "spreadsheet" and item.get("tool_path")
     ]
+    spreadsheet_paths.extend(
+        str(item.get("tool_path") or item.get("absolute_path"))
+        for item in embedded_receipts
+        if item.get("kind") == "spreadsheet" and (item.get("tool_path") or item.get("absolute_path"))
+    )
     inspect_only = bool(
         spreadsheet_paths
         and re.search(r"(?:查看|检查|读取|识别|预览|盘点)", request_text)
