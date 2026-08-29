@@ -103,7 +103,7 @@ class DomainAgentTests(unittest.TestCase):
             "research_workbench.domain_agents._model_action", side_effect=lambda *args, **kwargs: next(actions),
         ), patch(
             "research_workbench.domain_agents.call_domain_plugin_tool",
-            return_value={"structuredContent": {"output_path": str(output), "status": "candidate"}},
+            return_value={"structuredContent": {"deliverables": [str(output)], "status": "candidate"}},
         ):
             result = send_domain_message(
                 self.project, "disaster-history", "建立候选", main_thread_id=main_thread["thread_id"],
@@ -133,6 +133,59 @@ class DomainAgentTests(unittest.TestCase):
         self.assertEqual(result["runs"][0]["status"], "COMPLETED")
         self.assertEqual(result["messages"][-1]["content"]["text"], "领域线程已完成。")
         turn.assert_called_once()
+
+    def test_codex_attachment_check_exposes_only_the_read_only_inspector(self) -> None:
+        plugin = {
+            **self.plugin,
+            "runtime_command": "agent.exe",
+            "agent_tools": ["inspect_half_finished_workbook", "convert_half_finished_workbook"],
+            "tool_permissions": {"inspect_half_finished_workbook": "read", "convert_half_finished_workbook": "routine"},
+        }
+        workbook = str(self.project / "source.xlsx")
+        receipt = {"attachment_id": "A1", "kind": "spreadsheet", "absolute_path": workbook,
+                   "original_name": "source.xlsx", "media_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}
+        tool_specs = [{"name": name, "description": name, "inputSchema": {"type": "object"}}
+                      for name in plugin["agent_tools"]]
+        with patch.dict(os.environ, {"HRW_ENABLE_MOCK_MODEL": "1", "WENJIN_HARNESS_BACKEND": "codex"}, clear=False), patch(
+            "research_workbench.domain_agents._plugin", return_value=plugin,
+        ), patch(
+            "research_workbench.domain_agents.inspect_attachment", side_effect=lambda *_args: receipt.copy(),
+        ), patch(
+            "research_workbench.domain_agents.domain_plugin_tool_specs", return_value=tool_specs,
+        ), patch(
+            "research_workbench.codex_harness.run_domain_turn", return_value="只读检查完成。",
+        ) as turn:
+            result = send_domain_message(
+                self.project, "disaster-history", "请检查本轮附件",
+                attached_refs=[{"attachment_id": "A1"}],
+            )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual([item["name"] for item in turn.call_args.args[6]], ["inspect_half_finished_workbook"])
+
+    def test_codex_main_attachment_receipt_exposes_only_the_read_only_inspector(self) -> None:
+        plugin = {
+            **self.plugin,
+            "runtime_command": "agent.exe",
+            "agent_tools": ["inspect_half_finished_workbook", "normalize_disaster_type"],
+        }
+        receipt = [{"attachment_id": "A1", "kind": "spreadsheet", "project_path": "attachments/source.xlsx"}]
+        tool_specs = [{"name": name, "description": name, "inputSchema": {"type": "object"}}
+                      for name in plugin["agent_tools"]]
+        content = "请检查本轮附件\n\nATTACHMENT_INSPECTION_RECEIPTS " + json.dumps(receipt)
+        with patch.dict(os.environ, {"HRW_ENABLE_MOCK_MODEL": "1", "WENJIN_HARNESS_BACKEND": "codex"}, clear=False), patch(
+            "research_workbench.domain_agents._plugin", return_value=plugin,
+        ), patch(
+            "research_workbench.domain_agents.inspect_attachment",
+            return_value={"absolute_path": str(self.project / "source.xlsx")},
+        ), patch(
+            "research_workbench.domain_agents.domain_plugin_tool_specs", return_value=tool_specs,
+        ), patch(
+            "research_workbench.codex_harness.run_domain_turn", return_value="只读检查完成。",
+        ) as turn:
+            result = send_domain_message(self.project, "disaster-history", content)
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual([item["name"] for item in turn.call_args.args[6]], ["inspect_half_finished_workbook"])
+        self.assertIn("REQUEST_TOOL_CONTRACT", turn.call_args.args[7])
 
     def test_explicit_domain_candidate_write_runs_in_ask_mode_without_permission_loop(self) -> None:
         actions = iter([

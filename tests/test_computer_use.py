@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+from _ctypes import COMError
 from pathlib import Path
+from unittest.mock import patch
 
 from research_workbench.computer_use_mcp import (
     computer_status, desktop_snapshot, file_search, filesystem_roots, runtime_status, window_list,
@@ -28,6 +30,21 @@ class ComputerUseTests(unittest.TestCase):
         for control in snapshot["controls"]:
             if control["password"]:
                 self.assertEqual(control["name"], "[password]")
+
+    def test_closed_window_during_enumeration_is_skipped(self) -> None:
+        class ClosedWindow:
+            @property
+            def IsOffscreen(self):
+                raise COMError(-2147220991, "stale window", None)
+
+        class Root:
+            @staticmethod
+            def GetChildren():
+                return [ClosedWindow()]
+
+        with patch("research_workbench.computer_use_mcp.automation.GetRootControl", return_value=Root()):
+            self.assertEqual(window_list(10), {"windows": [], "count": 0})
+            self.assertEqual(desktop_snapshot(depth=1, limit=30)["count"], 0)
 
     def test_bounded_file_search_reads_names_and_metadata_without_file_contents(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

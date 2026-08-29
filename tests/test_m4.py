@@ -887,7 +887,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
-            "HRW_MOA_ENABLED": "0",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
         }
         plugin = {
             "name": "disaster-history", "kind": "domain", "status": "ready",
@@ -951,7 +951,7 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
             "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
-            "HRW_MOA_ENABLED": "0",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
         }
         plugin = {
             "name": "disaster-history", "kind": "domain", "status": "ready",
@@ -978,7 +978,9 @@ class M4AgentWorkspaceTests(unittest.TestCase):
                     "type": "tool_call", "tool": "attachment.inspect",
                     "arguments": {"attachment_id": attachment_id, "prompt": "读取页码和正文"},
                 },
-            ) as model, patch("research_workbench.agent_runtime._execute_tool", side_effect=execute):
+            ) as model, patch("research_workbench.agent_runtime._execute_tool", side_effect=execute), patch(
+                "research_workbench.codex_harness.run_turn",
+            ) as codex_turn:
                 result = send_message(
                     self.project, self.thread["thread_id"], "读取附件后交给灾害史专业Agent判断。",
                     context={"attached_refs": [{"attachment_id": attachment_id, "original_name": "page.png"}]},
@@ -988,7 +990,48 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(result["messages"][-1]["content"]["text"], "本页没有可提取的灾害记载。")
         self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
         self.assertIn("ATTACHMENT_INSPECTION_RECEIPTS", calls[1][1]["question"])
-        model.assert_called_once()
+        model.assert_not_called()
+        codex_turn.assert_not_called()
+
+    def test_generic_spreadsheet_attachment_uses_the_only_inspector_domain_agent(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+            "HRW_MOA_ENABLED": "0", "WENJIN_HARNESS_BACKEND": "codex",
+        }
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["inspect_half_finished_workbook"], "agent": {"routing_triggers": []},
+        }
+        attachment_id = "ATT_" + "b" * 32
+        calls = []
+
+        def execute(_project, _run, tool, arguments):
+            calls.append((tool, arguments))
+            if tool == "attachment.inspect":
+                return {"kind": "spreadsheet", "absolute_path": "C:/tmp/source.xlsx"}
+            return {
+                "latest_message": {"content": {"text": "只读检查完成。"}},
+                "latest_run": {"status": "COMPLETED"},
+            }
+
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}), patch(
+                "research_workbench.agent_runtime._execute_tool", side_effect=execute,
+            ), patch(
+                "research_workbench.agent_runtime._model_action",
+                return_value={"type": "tool_call", "tool": "attachment.inspect", "arguments": {"attachment_id": attachment_id}},
+            ), patch("research_workbench.codex_harness.run_turn") as codex_turn:
+                result = send_message(
+                    self.project, self.thread["thread_id"], "请检查本轮附件",
+                    context={"attached_refs": [{"attachment_id": attachment_id, "original_name": "source.xlsx"}]},
+                    access_mode="research_assist",
+                )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual([item[0] for item in calls], ["attachment.inspect", "domain_agent.consult"])
+        codex_turn.assert_not_called()
 
     def test_explicit_domain_tool_still_routes_directly_to_its_domain_agent(self) -> None:
         environment = {

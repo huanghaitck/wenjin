@@ -291,25 +291,28 @@ def _record_artifact(
     project_root: Path, session_id: str, run_id: str, tool_name: str, payload: dict[str, Any]
 ) -> None:
     candidate = payload.get("result") if isinstance(payload.get("result"), dict) else payload
-    output_path = next(
+    output_paths = [next(
         (str(candidate.get(key, "")) for key in ("output_path", "workbook_path", "database_path") if candidate.get(key)),
         "",
-    )
-    if not output_path:
+    )]
+    output_paths.extend(str(value) for value in candidate.get("deliverables", []) if value)
+    output_paths = list(dict.fromkeys(value for value in output_paths if value))
+    if not output_paths:
         return
-    path = Path(output_path).expanduser().resolve()
-    try:
-        relative = str(path.relative_to(project_root.resolve()))
-    except ValueError:
-        relative = str(path)
     with connect(project_root) as connection:
-        connection.execute(
-            """INSERT INTO domain_agent_artifacts(
-                   artifact_id, session_id, run_id, artifact_type, title, project_path,
-                   payload_json, status, created_at
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?)""",
-            (_id("DAR"), session_id, run_id, tool_name, path.name, relative, _json(candidate), utc_now()),
-        )
+        for output_path in output_paths:
+            path = Path(output_path).expanduser().resolve()
+            try:
+                relative = str(path.relative_to(project_root.resolve()))
+            except ValueError:
+                relative = str(path)
+            connection.execute(
+                """INSERT INTO domain_agent_artifacts(
+                       artifact_id, session_id, run_id, artifact_type, title, project_path,
+                       payload_json, status, created_at
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, 'candidate', ?)""",
+                (_id("DAR"), session_id, run_id, tool_name, path.name, relative, _json(candidate), utc_now()),
+            )
 
 
 def _apply_domain_run_controls(project_root: Path, run_id: str) -> str:
@@ -393,14 +396,36 @@ def send_domain_message(
             })
     observations: list[dict[str, Any]] = []
     requirements = _tool_requirements(plugin, content)
+    embedded_receipts: list[dict[str, Any]] = []
+    if "ATTACHMENT_INSPECTION_RECEIPTS " in request_text:
+        try:
+            parsed = json.loads(request_text.split("ATTACHMENT_INSPECTION_RECEIPTS ", 1)[1])
+            embedded_receipts = [item for item in parsed if isinstance(item, dict)] if isinstance(parsed, list) else []
+            for item in embedded_receipts:
+                if item.get("attachment_id") and not (item.get("tool_path") or item.get("absolute_path")):
+                    item["tool_path"] = inspect_attachment(project_root, str(item["attachment_id"]))["absolute_path"]
+            content = request_text.split("ATTACHMENT_INSPECTION_RECEIPTS ", 1)[0] + \
+                "ATTACHMENT_INSPECTION_RECEIPTS " + _json(embedded_receipts)
+        except json.JSONDecodeError:
+            pass
     spreadsheet_paths = [
         str(item["tool_path"]) for item in attachment_receipts
         if item.get("kind") == "spreadsheet" and item.get("tool_path")
     ]
+    spreadsheet_paths.extend(
+        str(item.get("tool_path") or item.get("absolute_path"))
+        for item in embedded_receipts
+        if item.get("kind") == "spreadsheet" and (item.get("tool_path") or item.get("absolute_path"))
+    )
+    inspect_only = bool(
+        spreadsheet_paths
+        and re.search(r"(?:查看|检查|读取|识别|预览|盘点)", request_text)
+        and not re.search(r"(?:转换|转成|生成|导出|输出|成品表|标准表|自定义表头|schema|22\s*列)", request_text, flags=re.IGNORECASE)
+    )
     if (
         spreadsheet_paths
         and "inspect_half_finished_workbook" in {str(value) for value in plugin.get("agent_tools", [])}
-        and re.search(r"(?:查看|检查|读取|识别).{0,12}(?:表头|前三行|前三条|工作表)", request_text)
+        and (inspect_only or re.search(r"(?:查看|检查|读取|识别).{0,12}(?:表头|前三行|前三条|工作表)", request_text))
     ):
         requirements = [
             item for item in requirements if item.get("tool") != "inspect_half_finished_workbook"
@@ -426,10 +451,18 @@ def send_domain_message(
             domain_plugin_tool_specs(find_config_root(project_root), plugin_name)
             if plugin.get("runtime_command") else []
         )
+        available_tool_specs = tool_specs if inspect_only else all_tool_specs
+        domain_prompt = _domain_prompt(plugin, available_tool_specs, native_tools=True)
+        if requirements:
+            domain_prompt += (
+                "\nREQUEST_TOOL_CONTRACT " + _json(requirements)
+                + "\nComplete every required tool call before returning a final answer. "
+                "In research_assist mode, routine candidate-file writes are allowed; only sensitive actions pause."
+            )
         try:
             final = _clean_final_text(run_domain_turn(
                 project_root, str(session["session_id"]), run_id, content, profile, plugin,
-                all_tool_specs, _domain_prompt(plugin, all_tool_specs, native_tools=True),
+                available_tool_specs, domain_prompt,
                 access_mode, reasoning_effort, parent_run_id, reasoning_mode,
                 _domain_history(project_root, str(session["session_id"]), main_thread_id),
             ))

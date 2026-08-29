@@ -464,6 +464,17 @@ def queue_run_control(
             "INSERT INTO agent_run_controls(control_id,run_kind,run_id,action,content,status,created_at) VALUES (?,?,?,?,?,'pending',?)",
             (control_id, run_kind, row["run_id"], action, content, now),
         )
+        linked_domain_run_ids: list[str] = []
+        if run_kind == "main" and action == "stop":
+            linked_domain_run_ids = [str(item["run_id"]) for item in connection.execute(
+                "SELECT run_id FROM domain_agent_runs WHERE main_thread_id=? AND status='RUNNING'",
+                (row["thread_id"],),
+            ).fetchall()]
+            connection.executemany(
+                "INSERT INTO agent_run_controls(control_id,run_kind,run_id,action,content,status,created_at) "
+                "VALUES (?,'domain',?,'stop','','pending',?)",
+                [(_id("CTL"), domain_run_id, now) for domain_run_id in linked_domain_run_ids],
+            )
         if action == "steer":
             if run_kind == "main":
                 connection.execute(
@@ -478,7 +489,8 @@ def queue_run_control(
                     "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) VALUES (?,?, 'user', ?, ?)",
                     (_id("DMS"), session["session_id"], _json({"text": content, "main_thread_id": row["thread_id"] or "", "steering_for_run": row["run_id"], "run_control_id": control_id}), now),
                 )
-        return {"control_id": control_id, "run_id": row["run_id"], "action": action, "status": "pending"}
+        return {"control_id": control_id, "run_id": row["run_id"], "action": action,
+                "status": "pending", "linked_domain_run_ids": linked_domain_run_ids}
 
 
 def revise_run_control(
@@ -1306,8 +1318,7 @@ def send_message(project_root: Path, thread_id: str, content: str,
         ))
         if (
             snapshot["harness_backend"] == "codex"
-            and not attachment_ids
-            and _matching_domain_agent(project_root, objective, history)
+            and (attachment_ids or _matching_domain_agent(project_root, objective, history))
         ):
             _advance_run(
                 project_root, run_id, objective, profile, design_context, history,
@@ -1366,6 +1377,41 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     required_tool = explicit_required or (
         "attachment.inspect" if attachment_ids else "domain_agent.consult" if domain_plugin else ""
     )
+    if attachment_ids and not observations:
+        receipts = []
+        for attachment_id in attachment_ids:
+            receipt = _execute_tool(
+                project_root, run_id, "attachment.inspect", {"attachment_id": attachment_id}
+            )
+            observations.append({
+                "tool": "attachment.inspect", "arguments": {"attachment_id": attachment_id},
+                "result": receipt,
+            })
+            receipts.append(receipt)
+        if not domain_plugin and any(
+            isinstance(item, dict) and item.get("kind") == "spreadsheet" for item in receipts
+        ):
+            spreadsheet_agents = [
+                item for item in _ready_domain_agents(project_root)
+                if "inspect_half_finished_workbook" in item.get("agent_tools", [])
+            ]
+            if len(spreadsheet_agents) == 1:
+                domain_plugin = str(spreadsheet_agents[0]["name"])
+        if domain_plugin:
+            domain_result = _execute_tool(
+                project_root, run_id, "domain_agent.consult",
+                {
+                    "plugin_name": domain_plugin,
+                    "question": objective + "\n\nATTACHMENT_INSPECTION_RECEIPTS " + _json(receipts),
+                },
+            )
+            latest = domain_result.get("latest_message") if isinstance(domain_result, dict) else None
+            latest_run = domain_result.get("latest_run") if isinstance(domain_result, dict) else None
+            if isinstance(latest_run, dict) and latest_run.get("status") != "COMPLETED":
+                raise RuntimeError(str(latest_run.get("error") or "领域 Agent 未完成本轮任务"))
+            content = str(((latest or {}).get("content") or {}).get("text", "")).strip()
+            _complete_run(project_root, run_id, content or "领域 Agent 已根据附件完成处理。")
+            return
     if domain_plugin and not attachment_ids and not any(item.get("tool") == "domain_agent.consult" for item in observations):
         result = _execute_tool(
             project_root, run_id, "domain_agent.consult",
@@ -1584,6 +1630,16 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
         if isinstance(result, dict) and result.get("waiting_for_approval"):
             return
         observations.append({"tool": tool_name, "arguments": arguments, "result": result})
+        if (
+            tool_name == "attachment.inspect" and not domain_plugin
+            and isinstance(result, dict) and result.get("kind") == "spreadsheet"
+        ):
+            spreadsheet_agents = [
+                item for item in _ready_domain_agents(project_root)
+                if "inspect_half_finished_workbook" in item.get("agent_tools", [])
+            ]
+            if len(spreadsheet_agents) == 1:
+                domain_plugin = str(spreadsheet_agents[0]["name"])
         if tool_name == "attachment.inspect" and domain_plugin:
             inspected = {
                 str((item.get("arguments") or {}).get("attachment_id", ""))

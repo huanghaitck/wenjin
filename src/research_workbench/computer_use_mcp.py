@@ -10,6 +10,7 @@ import sys
 import tempfile
 import uuid
 import warnings
+from _ctypes import COMError
 from pathlib import Path
 from typing import Any
 
@@ -117,10 +118,14 @@ def _node(control: Any, reference: str) -> dict[str, Any]:
 def _walk(control: Any, reference: str, depth: int, limit: int, output: list[dict[str, Any]]) -> None:
     if len(output) >= limit:
         return
-    output.append(_node(control, reference))
-    if depth <= 0:
+    try:
+        output.append(_node(control, reference))
+        if depth <= 0:
+            return
+        children = control.GetChildren()
+    except COMError:
         return
-    for index, child in enumerate(control.GetChildren()):
+    for index, child in enumerate(children):
         if len(output) >= limit:
             break
         _walk(child, f"{reference}.{index}", depth - 1, limit, output)
@@ -213,9 +218,12 @@ def window_list(limit: int = 50) -> dict[str, Any]:
     """List visible top-level desktop windows without reading password values."""
     windows = []
     for control in automation.GetRootControl().GetChildren():
-        if control.IsOffscreen or not control.Name:
+        try:
+            if control.IsOffscreen or not control.Name:
+                continue
+            windows.append(_node(control, f"w{int(control.NativeWindowHandle)}"))
+        except COMError:
             continue
-        windows.append(_node(control, f"w{int(control.NativeWindowHandle)}"))
         if len(windows) >= max(1, min(limit, 100)):
             break
     return {"windows": windows, "count": len(windows)}
@@ -231,9 +239,13 @@ def desktop_snapshot(window_handle: int = 0, depth: int = 4, limit: int = 250) -
         _walk(root, f"w{window_handle}", depth, limit, controls)
     else:
         for root in automation.GetRootControl().GetChildren():
-            if root.IsOffscreen or not root.Name:
+            try:
+                if root.IsOffscreen or not root.Name:
+                    continue
+                reference = f"w{int(root.NativeWindowHandle)}"
+            except COMError:
                 continue
-            _walk(root, f"w{int(root.NativeWindowHandle)}", min(depth, 2), limit, controls)
+            _walk(root, reference, min(depth, 2), limit, controls)
             if len(controls) >= limit:
                 break
     return {"controls": controls, "count": len(controls), "truncated": len(controls) >= limit}

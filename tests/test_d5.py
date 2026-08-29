@@ -159,6 +159,8 @@ class D5DesktopPackagingTests(unittest.TestCase):
         self.assertIn('"agent-browser": "0.33.0"', package)
         offline_installer = (Path(__file__).parents[1] / "scripts" / "install-wenjin.cmd").read_text(encoding="utf-8")
         self.assertIn("MicrosoftEdgeWebView2RuntimeInstallerX64.exe", offline_installer)
+        offline_entry = (Path(__file__).parents[1] / "scripts" / "双击这里离线安装问津.cmd").read_text(encoding="utf-8")
+        self.assertIn("install-wenjin.cmd", offline_entry)
         self.assertIn("F3017226-FE2A-4295-8BDF-00C3A9A7E4C5", offline_installer)
         self.assertIn("smoke_desktop_sidecar.py", build_script)
 

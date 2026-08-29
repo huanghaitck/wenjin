@@ -36,7 +36,7 @@ Download `wenjin-0.1.3-x64-setup.exe` from the [v0.1.3 release](https://github.c
 
 On a fresh installation with no real main model, Wenjin first offers to connect local Ollama or an OpenAI-compatible API. Mock is test-only: it is absent from the production client and never silently replaces a failed configuration. Every new project receives an empty research thread automatically; library, project organization, and manual verification remain usable without a model.
 
-Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, use `wenjin-0.1.3-win64-complete.zip`, which also contains the WebView2 offline installer and `install-wenjin.cmd`.
+Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, extract `wenjin-0.1.3-win64-complete.zip` and run `双击这里离线安装问津.cmd` (or `install-wenjin.cmd`) instead of launching the bare setup executable.
 
 The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
