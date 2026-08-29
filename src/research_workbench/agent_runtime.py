@@ -1301,6 +1301,19 @@ def send_message(project_root: Path, thread_id: str, content: str,
             "packs for this run. Password controls, credential extraction, CAPTCHA solving and payment "
             "confirmation remain unavailable in every mode."
         )
+        attachment_ids = list(dict.fromkeys(
+            re.findall(r'"attachment_id"\s*:\s*"(ATT_[a-f0-9]+)"', objective)
+        ))
+        if (
+            snapshot["harness_backend"] == "codex"
+            and not attachment_ids
+            and _matching_domain_agent(project_root, objective, history)
+        ):
+            _advance_run(
+                project_root, run_id, objective, profile, design_context, history,
+                reasoning_mode=reasoning_mode, reasoning_effort=reasoning_effort,
+            )
+            return thread_view(project_root, thread_id)
         if snapshot["harness_backend"] == "codex":
             from .codex_harness import run_turn
 

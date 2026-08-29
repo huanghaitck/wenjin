@@ -915,6 +915,38 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         consult.assert_called_once()
         model.assert_not_called()
 
+    def test_codex_backend_uses_the_same_natural_domain_routing(self) -> None:
+        environment = {
+            "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
+            "HRW_AGENT_BASE_URL": "https://example.invalid/v1", "HRW_AGENT_API_KEY": "secret",
+            "HRW_HARNESS_BACKEND": "codex", "HRW_MOA_ENABLED": "0",
+        }
+        plugin = {
+            "name": "disaster-history", "kind": "domain", "status": "ready",
+            "agent_tools": ["chronology_vocabulary"],
+            "agent": {"id": "disaster-researcher", "routing_triggers": ["灾害史"]},
+        }
+        view = {
+            "session": {"session_id": "DAS_1", "plugin_name": "disaster-history"},
+            "messages": [{"role": "assistant", "content": {"text": "纪年词表已读取。"}}],
+            "runs": [{"run_id": "DRN_1", "status": "COMPLETED"}],
+            "artifacts": [],
+        }
+        with patch.dict(os.environ, environment, clear=False):
+            sync_model_profiles(self.project)
+            assign_model(self.project, "environment-main")
+            with patch("research_workbench.domain_plugins.plugin_state", return_value={"plugins": [plugin]}), patch(
+                "research_workbench.domain_agents.send_domain_message", return_value=view,
+            ) as consult, patch("research_workbench.codex_harness.run_turn") as codex_turn:
+                result = send_message(
+                    self.project, self.thread["thread_id"],
+                    "请让灾害史领域 Agent 检查纪年词表。", access_mode="research_assist",
+                )
+        self.assertEqual(result["runs"][0]["status"], "COMPLETED")
+        self.assertEqual(result["messages"][-1]["content"]["text"], "纪年词表已读取。")
+        consult.assert_called_once()
+        codex_turn.assert_not_called()
+
     def test_attachment_is_inspected_once_then_delegated_without_a_second_main_model_step(self) -> None:
         environment = {
             "HRW_AGENT_PROVIDER": "openai_compatible", "HRW_AGENT_MODEL": "test-model",
