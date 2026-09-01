@@ -6,8 +6,16 @@ from pathlib import Path
 from typing import Any
 
 from .backups import backup_project
-from .computer_use_mcp import runtime_status
 from .domain_plugins import plugin_state, repair_domain_plugin
+
+if os.name == "nt":
+    from .computer_use_mcp import runtime_status
+else:
+    def runtime_status() -> dict[str, Any]:
+        return {
+            "desktop_pack": {"installed": False, "status": "not_applicable"},
+            "boundary": "Windows Computer Use is not available on this platform.",
+        }
 
 
 def _database_integrity(path: Path) -> str:
