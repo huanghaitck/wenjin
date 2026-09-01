@@ -4,13 +4,13 @@
 
 问津是一个本地优先、模型可选、面向人文社会科学研究过程的 Agent 工作台。每项研究先落在一个独立的本地项目工作区，再把研究对话、个人图书馆、原页清洗、联网检索、证据固定、学术史、写作、Word 往返、Skills、CLI 与 MCP 组织在同一套可审计的项目数据上。
 
-当前正式版本为 **0.1.3**，主要支持 Windows 10/11。
+当前公开版本为 **0.1.4**。Windows 10/11 x64 提供安装包与完整离线包；macOS Apple Silicon 提供未公证预览包。
 
-![问津项目工作区](docs/screenshots/wenjin-project-workspace-zh.png)
+![问津知识图谱](docs/screenshots/release-0.1.4-r1/wenjin-0.1.4-knowledge-graph.png)
 
-![问津研究对话](docs/screenshots/wenjin-research-chat-zh.png)
+![问津模型设置](docs/screenshots/release-0.1.4-r1/wenjin-0.1.4-settings.png)
 
-![问津Codex app-server运行状态](docs/screenshots/wenjin-agent-runtime-status-zh.png)
+[下载问津 0.1.4](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.4-r1)
 
 ## 主要能力
 
@@ -31,7 +31,7 @@
 
 ## 安装
 
-普通用户可从发布页下载 Windows 安装程序。安装包包含冻结的问津 Python 核心、Codex app-server 与桌面运行时；运行问津和自包含领域 Agent 不需要另装 Python、Node.js、PowerShell 7、Rust 或 Codex。只有明确运行包外脚本时才需要可选脚本环境，主 Agent 会先自检，并在用户批准后按需安装。Windows 10/11通常已有WebView2；断网机器请下载完整离线包，解压后双击`双击这里离线安装问津.cmd`，不要直接运行其中的裸安装程序。
+普通用户可从 [0.1.4 发布页](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.4-r1)下载 Windows 安装程序或完整离线包。安装包包含冻结的问津 Python 核心、Codex app-server 与桌面运行时；运行问津和自包含领域 Agent 不需要另装 Python、Node.js、PowerShell 7、Rust 或 Codex。只有明确运行包外脚本时才需要可选脚本环境，主 Agent 会先自检，并在用户批准后按需安装。Windows 10/11通常已有WebView2；断网机器请下载完整离线包，解压后双击`双击这里离线安装问津.cmd`，不要直接运行其中的裸安装程序。
 
 首次启动若没有真实主模型，问津会先引导连接本机Ollama或OpenAI兼容接口。Mock只用于自动化测试，不出现在正式客户端，也不会在配置失败时自动接管对话。每个新项目会自动建立一个空白研究线程；图书馆、项目整理和人工复核可以在暂不配置模型时继续使用。
 
@@ -124,23 +124,23 @@ MCP默认提供只读项目状态、来源、页面、图书馆和稿件结构�
 
 在“AI 与 Agent—连接器、MCP与微信”中生成二维码并用普通微信扫码，可以试用微信私聊连接。只有获准联系人能够使用。登录信息保存在Windows安全凭据中，不写入研究项目。
 
-0.1.3仅支持由对方发起的私聊文字消息。群聊、主动或定时推送、文件收发、付款、验证码代填均未开放。需要执行工具时仍服从“请求批准、帮我批准、完全访问”三档权限；等待审批的动作只会在微信中提示回到问津客户端处理。
+0.1.4仅支持由对方发起的私聊文字消息。群聊、主动或定时推送、文件收发、付款、验证码代填均未开放。需要执行工具时仍服从“请求批准、帮我批准、完全访问”三档权限；等待审批的动作只会在微信中提示回到问津客户端处理。
 
 ## 平台支持
 
-0.1.3目前只发布Windows 10/11 x64版本。macOS版本尚未发布：当前的电脑控制和安全凭据组件使用Windows接口，必须在Mac上另行适配、构建和测试后才能提供下载，不能直接把未经测试的程序标成Mac版。
+0.1.4 正式提供 Windows 10/11 x64 安装包和完整离线包。macOS Apple Silicon 版已在 GitHub macOS runner 完成平台测试、sidecar 启动测试及 `.app`/`.dmg` 构建，但目前仅使用 ad-hoc 签名且未经 Apple 公证，首次打开可能需要在“系统设置 → 隐私与安全性”中手动允许。它是预览包，不等同于完成 Developer ID 签名与公证的正式 macOS 发行版。
 
 ## 数据、隐私与凭据
 
 - 项目、图书馆、备份和记忆适配器默认保存在本机；
-- API Key写入Windows凭据管理器，不进入项目数据库、浏览器快照或源码；
+- API Key写入 Windows 凭据管理器或 macOS Keychain，不进入项目数据库、浏览器快照或源码；
 - 远程模型只接收研究者明确选择的页块、章节或选区；
 - 登录数据库、验证码、付费和下载由研究者在合法权限内操作；
 - `historical-memory`与`codex-memory`等私人记忆库不属于公开源码，也不会随安装包上传。
 
 ## 当前限制
 
-- 安装程序未签名，无自动更新；
+- Windows 安装程序未商业代码签名；macOS 预览包未经 Apple 公证；目前无自动更新；
 - DOCX往返不承诺保留复杂域、修订、批注和任意嵌入对象；
 - 自动书目识别和书架分类只是候选，需要人工抽查；
 - 已登录数据库不提供绕过验证码或访问控制的无人值守爬取；
@@ -152,6 +152,7 @@ MCP默认提供只读项目状态、来源、页面、图书馆和稿件结构�
 - [中文使用手册](docs/USER_MANUAL_ZH.md)
 - [English User Manual](docs/USER_MANUAL_EN.md)
 - [领域包工程说明](docs/WENJIN_PLUGIN_SDK.md)
+- [macOS 构建与签名说明](docs/MACOS_BUILD_ZH.md)
 - [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 许可证
