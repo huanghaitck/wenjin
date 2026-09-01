@@ -4,13 +4,13 @@ English | [中文](README.md)
 
 Wenjin is a local-first, model-selectable Agent workbench for humanities and social science research. Each study lives in an independent local project workspace, which connects research conversations, a personal library, source-page repair, bounded web research, evidence, historiography, drafting, Word round trips, Skills, CLI, and MCP through one auditable project data model.
 
-The current stable release is **0.1.3** for Windows 10/11.
+The current public release is **0.1.4**. Windows 10/11 x64 installers and a complete offline bundle are available; an unnotarized Apple Silicon preview is also provided.
 
-![Wenjin Project Workspace](docs/screenshots/wenjin-project-workspace-en.png)
+![Wenjin knowledge graph](docs/screenshots/release-0.1.4-r1/wenjin-0.1.4-knowledge-graph.png)
 
-![Wenjin Writing Studio](docs/screenshots/wenjin-writing-studio-en.png)
+![Wenjin model settings](docs/screenshots/release-0.1.4-r1/wenjin-0.1.4-settings.png)
 
-![Wenjin model settings](docs/screenshots/wenjin-model-settings-en.png)
+[Download Wenjin 0.1.4](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.4-r1)
 
 ## Highlights
 
@@ -32,11 +32,11 @@ The current stable release is **0.1.3** for Windows 10/11.
 
 ## Installation
 
-Download `wenjin-0.1.3-x64-setup.exe` from the [v0.1.3 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.3). It includes the frozen Wenjin Python core, Codex app-server, and desktop runtime. End users do not need Python, Node.js, PowerShell 7, Rust, or a separate Codex installation to run Wenjin or a self-contained Domain Agent.
+Download the Windows installer or complete offline bundle from the [0.1.4 release](https://github.com/huanghaitck/wenjin/releases/tag/v0.1.4-r1). It includes the frozen Wenjin Python core, Codex app-server, and desktop runtime. End users do not need Python, Node.js, PowerShell 7, Rust, or a separate Codex installation to run Wenjin or a self-contained Domain Agent.
 
 On a fresh installation with no real main model, Wenjin first offers to connect local Ollama or an OpenAI-compatible API. Mock is test-only: it is absent from the production client and never silently replaces a failed configuration. Every new project receives an empty research thread automatically; library, project organization, and manual verification remain usable without a model.
 
-Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, extract `wenjin-0.1.3-win64-complete.zip` and run `双击这里离线安装问津.cmd` (or `install-wenjin.cmd`) instead of launching the bare setup executable.
+Most Windows 10/11 installations already include Microsoft Edge WebView2. For an offline machine, extract the `win64-offline.zip` asset and run `双击这里离线安装问津.cmd` (or `install-wenjin.cmd`) instead of launching the bare setup executable.
 
 The installer is not code-signed and Windows may display an unknown-publisher warning. Download it only from the project release page.
 
@@ -115,11 +115,11 @@ The MCP server exposes qualified project status, source pages, library results, 
 
 Open **AI & Agent > Connectors & MCP**, generate a QR code, and scan it with ordinary Weixin to try the experimental private-text connection. Approved private contacts can then continue the current local research conversation through Weixin. Sign-in information is kept in Windows secure credentials and is not written into the research project.
 
-Version 0.1.3 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
+Version 0.1.4 supports replies to inbound private text only. Group chat, scheduled or proactive push, file transfer, payments, and CAPTCHA handling are not available. Tool calls still obey the selected Agent access mode; a paused action must be reviewed in the desktop application.
 
 ## Platform support
 
-Version 0.1.3 is released for Windows 10/11 x64 only. A macOS binary is not yet available: computer control and secure-credential components currently use Windows interfaces and must be ported, built, and tested on macOS before a supported download can be published.
+Version 0.1.4 provides Windows 10/11 x64 installer and offline assets. The Apple Silicon preview has passed platform tests, sidecar startup smoke testing, and `.app`/`.dmg` construction on a GitHub macOS runner. It uses ad-hoc signing and is not notarized, so macOS may require manual approval in Privacy & Security. It is not equivalent to a Developer ID signed and notarized release.
 
 ## Data, privacy, and credentials
 

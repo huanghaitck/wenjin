@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apple-silicon:
@@ -58,3 +58,9 @@ jobs:
             src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
             src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
+      - name: Attach preview DMG to the 0.1.4 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg wenjin-0.1.4-macos-arm64-unsigned-preview.dmg
+          gh release upload v0.1.4-r1 wenjin-0.1.4-macos-arm64-unsigned-preview.dmg --clobber
