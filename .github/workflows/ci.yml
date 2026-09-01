@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -27,10 +28,16 @@ jobs:
           python -m pip install -e .
       - name: Run Python tests
         run: python -m unittest discover -s tests -v
+      - name: Install JavaScript dependencies
+        run: npm ci
       - name: Check browser application syntax
         run: node --check src/research_workbench/web_assets/app.js
-      - name: Install desktop build dependencies
-        run: npm ci
+      - name: Check MCP contracts with Inspector
+        run: python scripts/ci/mcp_contract.py
+      - name: Install Playwright Chromium
+        run: npx playwright install chromium
+      - name: Run critical desktop-web interactions
+        run: npx playwright test
       - name: Create external-binary placeholder for Rust metadata check
         shell: pwsh
         run: |

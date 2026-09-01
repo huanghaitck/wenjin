@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any, TextIO
 
+from . import __version__
 from .agent_profile import public_agent_profile
 from .authoring import authoring_state, manuscript_detail
 from .library import search_library
@@ -49,7 +50,7 @@ def handle_request(project_root: Path, library_root: Path | None, request: dict[
         return None
     try:
         if method == "initialize":
-            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": "0.1.2"}}
+            result = {"protocolVersion": PROTOCOL_VERSION, "capabilities": {"tools": {"listChanged": False}, "resources": {"subscribe": False, "listChanged": False}, "prompts": {"listChanged": False}}, "serverInfo": {"name": "wenjin-research", "title": "问津研究服务", "version": __version__}}
         elif method == "ping":
             result = {}
         elif method == "tools/list":

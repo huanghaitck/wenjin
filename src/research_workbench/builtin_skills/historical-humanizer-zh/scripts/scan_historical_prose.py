@@ -48,6 +48,8 @@ ABSTRACT_TERMS = {
 }
 
 ABSTRACT_PREDICATES = re.compile(r"共同|形成|决定|限定|影响|构成|转化|塑造|生产|进入")
+TIME_MARKERS = re.compile(r"(?:18|19|20)\d{2}年|[七八九]十年代")
+SYNOPTIC_MARKERS = re.compile(r"集中|转疏|重组|再调查|重新组织|相继|先后|时间节奏")
 
 
 def paragraphs(text: str) -> list[str]:
@@ -83,6 +85,12 @@ def analyze(text: str) -> dict[str, object]:
         repeated_balanced_clauses = paragraph.count("；") >= 3 and len(abstract_hits) >= 4
         if dense_abstract_list or repeated_balanced_clauses:
             tags.append("H05_DENSE_ENUMERATION")
+        if (
+            len(paragraph) >= 180
+            and len(TIME_MARKERS.findall(paragraph)) >= 5
+            and len(SYNOPTIC_MARKERS.findall(paragraph)) >= 2
+        ):
+            tags.append("H14_SYNOPTIC_GRID_PROSE")
         lengths = sentence_lengths(paragraph)
         if len(lengths) >= 4:
             mean = sum(lengths) / len(lengths)
@@ -114,12 +122,22 @@ def self_test() -> int:
     )
     report = analyze(sample)
     standalone = analyze("第一层：先检查证据强度。")
+    synoptic = analyze(
+        "1860年换约以后，旅行已有依据。1872年甲进入山地，1875年乙又到此处。"
+        "此后丙、丁和戊相继经过同一区域，分别从事道路调查、标本采集、外交观察和官方考察。"
+        "几项旅行彼此并无统属，所负任务也不相同，却都在七十年代留下记录。"
+        "进入八十年代，类似活动转疏，域外机构的调查方向也发生变化。"
+        "1892年以后，专业学会重新组织人员，至1894年又形成新的调查。"
+        "数次活动由此呈现集中、转疏和再调查的时间节奏。"
+    )
     standalone_tags = set(standalone["findings"][0]["risk_tags"])
+    synoptic_tags = set(synoptic["findings"][0]["risk_tags"])
     ok = (
         report["flagged_paragraph_count"] == 1
         and len(report["findings"][0]["risk_tags"]) >= 4
         and {"H04_EVIDENCE_LEDGER_PROSE", "H05_SYMMETRIC_LAYERS"}
         <= standalone_tags
+        and "H14_SYNOPTIC_GRID_PROSE" in synoptic_tags
     )
     print(
         json.dumps(
@@ -127,6 +145,7 @@ def self_test() -> int:
                 "self_test": "PASS" if ok else "FAIL",
                 "report": report,
                 "standalone_layer": standalone,
+                "synoptic_grid": synoptic,
             },
             ensure_ascii=False,
             indent=2,

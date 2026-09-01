@@ -17,3 +17,6 @@ src-tauri/binaries/*.exe
 .server-*
 .tmp-*
 artifacts/
+.playwright-data/
+test-results/
+playwright-report/

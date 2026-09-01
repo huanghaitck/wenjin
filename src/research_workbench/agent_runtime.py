@@ -52,6 +52,7 @@ from .plugin_sdk import create_local_skill, create_plugin_project
 from .attachments import inspect_attachment
 from .library import library_assets, library_graph, library_status, search_library, work_detail
 from .project_library import add_library_file_to_project
+from .system_health import diagnose_system, repair_system
 
 
 MAIN_ROLE = "main_reasoning"
@@ -194,8 +195,10 @@ SYSTEM_PROMPT = """You are a general local computer-use agent optimized for huma
 Use tools to inspect project facts. Never claim you read a source unless a tool returned it.
 Return exactly one JSON object for exactly one action and no markdown. If several tools are needed,
 request them one at a time and wait for each TOOL_RESULT before choosing the next action.
-Available actions:
-{"type":"tool_call","tool":"project.status","arguments":{}}
+ Available actions:
+ {"type":"tool_call","tool":"system.diagnose","arguments":{}}
+ {"type":"tool_call","tool":"system.repair","arguments":{}}
+ {"type":"tool_call","tool":"project.status","arguments":{}}
 {"type":"tool_call","tool":"source.list","arguments":{"source_ids":["optional-exact-source-id"],"query":"optional title or id fragment","limit":20}}
 {"type":"tool_call","tool":"source.search","arguments":{"query":"...","source_id":"optional","limit":10}}
 {"type":"tool_call","tool":"source.page","arguments":{"page_id":"exact composite id"}}
@@ -264,9 +267,12 @@ may support drafting.
 Use plugin.list only when the user requests a small-domain capability. plugin.call accepts only tools
 explicitly approved by the installed plugin manifest; plugin output remains a candidate and cannot bypass
 Wenjin source, evidence, writing or review gates.
-If plugin.list reports package_changed or runtime_missing and the user asked to fix it, call plugin.repair once.
+ If plugin.list reports package_changed or runtime_missing and the user asked to fix it, call plugin.repair once.
 It reinstalls from the recorded local ZIP/directory and revalidates the self-contained runtime. If that source no
-longer exists, ask the user to import the ZIP again; do not search for unrelated workflow scripts.
+ longer exists, ask the user to import the ZIP again; do not search for unrelated workflow scripts.
+ Use system.diagnose for a general Wenjin self-check. It is read-only. Call system.repair only after the user
+ explicitly asks to repair; it backs up the project and repairs only plugins with a recorded local source.
+ It never installs optional runtimes, restores databases, changes research rules, or overwrites source/output files.
 Use domain_agent.consult when a stateful installed specialist should work through a bounded domain task.
 The specialist has an isolated thread and tool history. Treat its answer and artifacts as candidates; you
 remain responsible for cross-domain judgment and must not present a candidate artifact as approved.
@@ -453,10 +459,15 @@ def queue_run_control(
                 (thread_id,),
             ).fetchone()
         else:
-            row = connection.execute(
-                "SELECT run_id,main_thread_id AS thread_id FROM domain_agent_runs WHERE session_id=? AND status='RUNNING' ORDER BY created_at DESC LIMIT 1",
-                (session_id,),
-            ).fetchone()
+            query = (
+                "SELECT run_id,main_thread_id AS thread_id FROM domain_agent_runs "
+                "WHERE session_id=? AND status='RUNNING'"
+            )
+            params: tuple[str, ...] = (session_id,)
+            if thread_id:
+                query += " AND main_thread_id=?"
+                params += (thread_id,)
+            row = connection.execute(query + " ORDER BY created_at DESC LIMIT 1", params).fetchone()
         if row is None:
             raise ValueError("there is no running agent task to control")
         control_id, now = _id("CTL"), utc_now()
@@ -777,6 +788,21 @@ def create_thread(project_root: Path, title: str, parent_thread_id: str = "") ->
         "thread_id": thread_id, "title": title, "status": "active", "created_at": now,
         "parent_thread_id": parent_thread_id,
     }
+
+
+def rename_thread(project_root: Path, thread_id: str, title: str) -> dict[str, Any]:
+    title = title.strip()
+    if not title:
+        raise ValueError("thread title is required")
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT thread_id FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        connection.execute(
+            "UPDATE threads SET title=?,updated_at=? WHERE thread_id=?",
+            (title[:120], utc_now(), thread_id),
+        )
+    return {"thread_id": thread_id, "title": title[:120]}
 
 
 def _maybe_title_thread(project_root: Path, thread_id: str, content: str) -> None:
@@ -1403,6 +1429,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                 {
                     "plugin_name": domain_plugin,
                     "question": objective + "\n\nATTACHMENT_INSPECTION_RECEIPTS " + _json(receipts),
+                    "new_thread": _new_domain_thread_requested(objective),
                 },
             )
             latest = domain_result.get("latest_message") if isinstance(domain_result, dict) else None
@@ -1415,7 +1442,8 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
     if domain_plugin and not attachment_ids and not any(item.get("tool") == "domain_agent.consult" for item in observations):
         result = _execute_tool(
             project_root, run_id, "domain_agent.consult",
-            {"plugin_name": domain_plugin, "question": objective},
+            {"plugin_name": domain_plugin, "question": objective,
+             "new_thread": _new_domain_thread_requested(objective)},
         )
         latest = result.get("latest_message") if isinstance(result, dict) else None
         latest_run = result.get("latest_run") if isinstance(result, dict) else None
@@ -1656,6 +1684,7 @@ def _advance_run(project_root: Path, run_id: str, objective: str, profile: Model
                     {
                         "plugin_name": domain_plugin,
                         "question": objective + "\n\nATTACHMENT_INSPECTION_RECEIPTS " + _json(receipts),
+                        "new_thread": _new_domain_thread_requested(objective),
                     },
                 )
                 latest = domain_result.get("latest_message") if isinstance(domain_result, dict) else None
@@ -1701,7 +1730,20 @@ def _explicit_required_tool(objective: str) -> str:
         return "computer.runtime_repair"
     if re.search(r"(?:修复|重装|恢复).{0,24}(?:领域\s*Agent|领域包|插件).{0,24}(?:运行|工具|环境|安装)?", objective, re.I):
         return "plugin.repair"
+    if re.search(r"(?:系统|问津|工作台).{0,16}(?:自检|诊断|健康检查)|(?:自检|诊断).{0,16}(?:系统|问津|工作台)", objective, re.I):
+        return "system.diagnose"
+    if re.search(r"(?:系统|问津|工作台).{0,16}(?:自修复|安全修复|自动修复)|(?:自修复|安全修复).{0,16}(?:系统|问津|工作台)", objective, re.I):
+        return "system.repair"
     return ""
+
+
+def _new_domain_thread_requested(objective: str) -> bool:
+    normalized = re.sub(r"\s+", "", objective).lower()
+    action = any(word in normalized for word in ("新建", "创建", "另建", "另开", "新开", "重新开", "单独开", "另起"))
+    scope = any(word in normalized for word in ("领域agent", "领域智能体", "领域代理", "智能体", "subagent"))
+    target = any(word in normalized for word in ("线程", "对话", "会话", "任务"))
+    no_reuse = ("不复用" in normalized or "不要复用" in normalized or "别复用" in normalized) and target
+    return (action and scope and target) or (scope and no_reuse)
 
 
 def _ready_domain_agents(project_root: Path) -> list[dict[str, Any]]:
@@ -2404,7 +2446,7 @@ def _record_auto_approval(
 
 
 def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    allowed = {"harness.status", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.add_to_project", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
+    allowed = {"harness.status", "system.diagnose", "system.repair", "project.status", "source.list", "source.search", "source.page", "library.status", "library.search", "library.assets", "library.work", "library.add_to_project", "library.graph", "research.state", "research.plan_context", "retrieval.list", "research.search", "plugin.list", "plugin.call", "plugin.repair", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read", "skill.create", "attachment.inspect", "domain_pack.validate", "domain_pack.create", "browser.start", "browser.snapshot", "browser.read", "browser.open", "authoring.state", "authoring.section", "research_design.current", "research_design.propose", "research_event.list", "research_event.coverage", "research_event.propose_batch", "reading_job.create", "reading_job.batch", "reading_note.save", "historiography.create", "save_research_note", *COMPUTER_TOOL_ALIASES}
     if tool_name not in allowed:
         raise ValueError(f"unknown M4 tool: {tool_name}")
     call_id, now = _id("TCL"), utc_now()
@@ -2440,6 +2482,16 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
         elif tool_name == "harness.status":
             from .codex_harness import harness_status
             result = harness_status()
+        elif tool_name == "system.diagnose":
+            result = diagnose_system(project_root, find_config_root(project_root))
+        elif tool_name == "system.repair":
+            config_root = find_config_root(project_root)
+            request_payload = {"risk": "routine"}
+            access_mode = _run_access_mode(project_root, run_id)
+            if _must_pause_for_permission(access_mode, "routine"):
+                return _pause_tool_for_approval(project_root, run_id, call_id, tool_name, request_payload, "routine")
+            result = repair_system(project_root, config_root)
+            _record_auto_approval(project_root, run_id, call_id, tool_name, request_payload, result, access_mode, "routine")
         elif tool_name == "project.status":
             result: Any = project_status(project_root)
         elif tool_name == "source.list":
@@ -2570,14 +2622,30 @@ def _execute_tool(project_root: Path, run_id: str, tool_name: str, arguments: di
             from .domain_agents import send_domain_message
             plugin_name = str(arguments.get("plugin_name", ""))
             question = str(arguments.get("question", ""))
+            parent_thread_id = _run_thread_id(project_root, run_id)
+            prefix = f"领域 Agent｜{plugin_name}｜"
+            existing = None
+            if not bool(arguments.get("new_thread", False)):
+                with connect(project_root) as connection:
+                    existing = connection.execute(
+                        "SELECT t.thread_id,t.title FROM threads t JOIN thread_inheritance i "
+                        "ON i.child_thread_id=t.thread_id WHERE i.parent_thread_id=? AND t.title LIKE ? "
+                        "ORDER BY t.created_at LIMIT 1",
+                        (parent_thread_id, f"{prefix}%"),
+                    ).fetchone()
+            domain_thread = dict(existing) if existing else create_thread(
+                project_root, f"{prefix}{question.strip()[:36] or '新任务'}",
+                parent_thread_id=parent_thread_id,
+            )
             view = send_domain_message(
                 project_root, plugin_name, question,
-                main_thread_id=_run_thread_id(project_root, run_id),
+                main_thread_id=domain_thread["thread_id"],
                 access_mode=_run_access_mode(project_root, run_id),
                 parent_run_id=run_id,
             )
             result = {
                 "session": view["session"],
+                "domain_thread_id": domain_thread["thread_id"],
                 "latest_message": view["messages"][-1] if view["messages"] else None,
                 "latest_run": view["runs"][0] if view["runs"] else None,
                 "candidate_artifacts": view["artifacts"][:10],
@@ -3217,7 +3285,10 @@ def decide_approval(
         raise ValueError("edited request must be an object")
     output: dict[str, Any]
     if approved:
-        if row["tool_name"] == "plugin.repair":
+        if row["tool_name"] == "system.repair":
+            output = repair_system(project_root, find_config_root(project_root))
+            final_text = f"系统安全修复已由 {reviewer} 核准并执行。"
+        elif row["tool_name"] == "plugin.repair":
             output = repair_domain_plugin(
                 find_config_root(project_root), str(final_request.get("plugin_name", "")),
             )

@@ -26,6 +26,7 @@ from research_workbench.agent_runtime import (
     _compact_source_list,
     _clean_final_text,
     _model_action,
+    _new_domain_thread_requested,
     _looks_like_internal_tool_transcript,
     _parse_action,
     _planning_context,
@@ -79,12 +80,14 @@ class M4AgentWorkspaceTests(unittest.TestCase):
         self.assertEqual(_explicit_required_tool("检查这台电脑的 Python 和 PowerShell 运行环境"), "computer.runtime_status")
         self.assertEqual(_explicit_required_tool("请修复缺少的 PowerShell 运行环境"), "computer.runtime_repair")
         self.assertEqual(_explicit_required_tool("请修复灾害史领域 Agent 的运行工具"), "plugin.repair")
+        self.assertEqual(_explicit_required_tool("请给问津做一次系统自检"), "system.diagnose")
+        self.assertEqual(_explicit_required_tool("请对工作台执行安全修复"), "system.repair")
 
     def test_public_final_text_strips_provider_protocol_prefix(self) -> None:
         self.assertEqual(_clean_final_text("final answer:\n这是给研究者的答复。"), "这是给研究者的答复。")
 
     def test_main_agent_keeps_general_file_web_office_and_skill_capabilities(self) -> None:
-        for tool in ("computer.file_search", "computer.launch", "computer.runtime_status", "computer.runtime_repair", "research.search", "browser.start", "skill.create"):
+        for tool in ("system.diagnose", "system.repair", "computer.file_search", "computer.launch", "computer.runtime_status", "computer.runtime_repair", "research.search", "browser.start", "skill.create"):
             self.assertIn(f'"tool":"{tool}"', SYSTEM_PROMPT)
         self.assertIn("general local computer-use agent", SYSTEM_PROMPT)
 
@@ -362,8 +365,35 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             })
         self.assertEqual(result["latest_message"]["content"]["text"], "candidate")
         self.assertEqual(result["candidate_artifacts"][0]["status"], "candidate")
+        self.assertTrue(result["domain_thread_id"].startswith("THR_"))
+        self.assertEqual(consult.call_args.kwargs["main_thread_id"], result["domain_thread_id"])
+        with connect(self.project) as connection:
+            parent_thread_id = connection.execute(
+                "SELECT thread_id FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()[0]
+            self.assertEqual(connection.execute(
+                "SELECT parent_thread_id FROM thread_inheritance WHERE child_thread_id=?", (result["domain_thread_id"],)
+            ).fetchone()[0], parent_thread_id)
+        with patch("research_workbench.domain_agents.send_domain_message", return_value=view) as consult_again:
+            again = _execute_tool(self.project, run_id, "domain_agent.consult", {
+                "plugin_name": "disaster-history", "question": "inspect another grading rule",
+            })
+        self.assertEqual(again["domain_thread_id"], result["domain_thread_id"])
         consult.assert_called_once()
+        consult_again.assert_called_once()
+        with patch("research_workbench.domain_agents.send_domain_message", return_value=view):
+            separate = _execute_tool(self.project, run_id, "domain_agent.consult", {
+                "plugin_name": "disaster-history", "question": "start a separate task", "new_thread": True,
+            })
+        self.assertNotEqual(separate["domain_thread_id"], result["domain_thread_id"])
         self.assertIn('"tool":"domain_agent.consult"', SYSTEM_PROMPT)
+
+    def test_domain_thread_creation_intent_is_generic_and_does_not_match_continuation(self) -> None:
+        self.assertTrue(_new_domain_thread_requested("在领域 Agent 内新建一个对话"))
+        self.assertTrue(_new_domain_thread_requested("灾害史智能体新建对话"))
+        self.assertTrue(_new_domain_thread_requested("新建对应领域 Agent 线程"))
+        self.assertTrue(_new_domain_thread_requested("另起一个碑刻智能体任务"))
+        self.assertFalse(_new_domain_thread_requested("继续当前灾害史领域 Agent 任务"))
 
     def test_mock_profile_is_absent_outside_explicit_test_mode(self) -> None:
         other = self.project.parent / "production-profile-project"
@@ -2096,6 +2126,9 @@ class M4AgentWorkspaceTests(unittest.TestCase):
             return json.loads(urlopen(request, timeout=5).read())
 
         try:
+            icon = urlopen(base + "/vendor/icons/settings.svg", timeout=5)
+            self.assertEqual(icon.headers.get_content_type(), "image/svg+xml")
+            self.assertIn(b"<svg", icon.read())
             snapshot = json.loads(urlopen(base + "/api/snapshot", timeout=5).read())
             self.assertEqual(snapshot["model_profiles"][0]["profile_id"], "builtin-mock")
             created = post("/api/thread/create", {"title": "API thread"})

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +13,7 @@ from research_workbench.agent_runtime import create_thread, recover_interrupted_
 from research_workbench.attachments import save_attachment
 from research_workbench.db import SCHEMA_VERSION, connect, utc_now
 from research_workbench.domain_agents import (
-    _domain_history, _domain_prompt, _nested_domain_tool_action, _tool_requirements, ensure_domain_session,
+    _domain_history, _domain_prompt, _nested_domain_tool_action, _tool_requirements, domain_agent_view, ensure_domain_session,
     send_domain_message,
 )
 from research_workbench.service import initialize_project
@@ -32,6 +34,14 @@ class DomainAgentTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temporary.cleanup()
+
+    def test_chat_review_answer_requires_record_then_merge_tools(self) -> None:
+        plugin = {**self.plugin, "agent_tools": ["record_review_decisions", "apply_review_workbook"]}
+        requirements = _tool_requirements(
+            plugin,
+            "这是我的复核决定，请按我的回答写入新复核表，再合并生成新版主表和下一轮复核表。",
+        )
+        self.assertEqual([item["tool"] for item in requirements], ["record_review_decisions", "apply_review_workbook"])
 
     def test_schema_23_adds_isolated_domain_agent_tables(self) -> None:
         with connect(self.project) as connection:
@@ -120,6 +130,33 @@ class DomainAgentTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM messages WHERE thread_id=?", (main_thread["thread_id"],)
             ).fetchone()[0]
         self.assertEqual(main_messages, 0)
+
+    def test_two_domain_task_threads_can_run_concurrently_without_mixing_views(self) -> None:
+        first = create_thread(self.project, "parallel A")
+        second = create_thread(self.project, "parallel B")
+        barrier = threading.Barrier(2)
+        running_counts: list[int] = []
+        with patch("research_workbench.domain_agents._plugin", return_value=self.plugin):
+            ensure_domain_session(self.project, "disaster-history")
+
+            def finish(*args, **kwargs):
+                barrier.wait(timeout=5)
+                with connect(self.project) as connection:
+                    running_counts.append(connection.execute(
+                        "SELECT COUNT(*) FROM domain_agent_runs WHERE status='RUNNING'"
+                    ).fetchone()[0])
+                return {"type": "final", "content": f"completed {args[1]}"}
+
+            with patch("research_workbench.domain_agents._model_action", side_effect=finish), ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [
+                    pool.submit(send_domain_message, self.project, "disaster-history", "task A", main_thread_id=first["thread_id"]),
+                    pool.submit(send_domain_message, self.project, "disaster-history", "task B", main_thread_id=second["thread_id"]),
+                ]
+                views = [future.result(timeout=10) for future in futures]
+        self.assertEqual(max(running_counts), 2)
+        self.assertEqual([[item["content"]["text"] for item in view["messages"]] for view in views], [
+            ["task A", "completed task A"], ["task B", "completed task B"],
+        ])
 
     def test_codex_backend_keeps_domain_session_and_existing_view_contract(self) -> None:
         with patch.dict(os.environ, {
@@ -481,6 +518,32 @@ class DomainAgentTests(unittest.TestCase):
                 )
         history = _domain_history(self.project, session["session_id"], child["thread_id"])
         self.assertEqual([item["content"] for item in history], ["parent path"])
+
+    def test_domain_view_filters_messages_runs_and_artifacts_by_task_thread(self) -> None:
+        first = create_thread(self.project, "first")
+        other = create_thread(self.project, "other")
+        with patch("research_workbench.domain_agents._plugin", return_value=self.plugin):
+            session = ensure_domain_session(self.project, "disaster-history")
+        now = utc_now()
+        with connect(self.project) as connection:
+            for suffix, thread, text in (("FIRST", first, "first task"), ("OTHER", other, "other task")):
+                run_id = f"DRN_{suffix}"
+                connection.execute(
+                    "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) VALUES (?,?, 'user', ?, ?)",
+                    (f"DMS_{suffix}", session["session_id"], json.dumps({"text": text, "main_thread_id": thread["thread_id"]}, ensure_ascii=False), now),
+                )
+                connection.execute(
+                    "INSERT INTO domain_agent_runs(run_id,session_id,main_thread_id,status,model_snapshot_json,created_at,updated_at) VALUES (?,?,?,'COMPLETED','{}',?,?)",
+                    (run_id, session["session_id"], thread["thread_id"], now, now),
+                )
+                connection.execute(
+                    "INSERT INTO domain_agent_artifacts(artifact_id,session_id,run_id,artifact_type,title,project_path,payload_json,status,created_at) VALUES (?,?,?,?,?,?,?,'candidate',?)",
+                    (f"DAR_{suffix}", session["session_id"], run_id, "test", f"{suffix}.xlsx", f"{suffix}.xlsx", "{}", now),
+                )
+        view = domain_agent_view(self.project, session["session_id"], first["thread_id"])
+        self.assertEqual([item["content"]["text"] for item in view["messages"]], ["first task"])
+        self.assertEqual([item["run_id"] for item in view["runs"]], ["DRN_FIRST"])
+        self.assertEqual([item["artifact_id"] for item in view["artifacts"]], ["DAR_FIRST"])
 
 
 if __name__ == "__main__":

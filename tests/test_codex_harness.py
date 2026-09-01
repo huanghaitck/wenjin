@@ -10,13 +10,24 @@ from unittest.mock import patch
 import pymupdf as fitz
 
 from research_workbench.agent_runtime import create_thread, decide_approval, send_message
-from research_workbench.codex_harness import _Host
+from research_workbench.codex_harness import _domain_thread_mapping_key, _EAGER_TOOLS, _Host
 from research_workbench.library import approve_candidates, scan_directory, work_detail
 from research_workbench.service import initialize_project, project_status
 from research_workbench.db import connect, utc_now
 
 
 class CodexHarnessTests(unittest.TestCase):
+    def test_domain_codex_thread_changes_when_dynamic_tool_contract_changes(self) -> None:
+        first = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}])
+        same = _domain_thread_mapping_key("S", [{"inputSchema": {"type": "object"}, "name": "inspect"}])
+        changed = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}, {"name": "write", "inputSchema": {"type": "object"}}])
+        self.assertEqual(first, same)
+        self.assertNotEqual(first, changed)
+    def test_sensitive_command_tool_is_visible_for_bounded_self_repair(self) -> None:
+        self.assertIn("computer.run", _EAGER_TOOLS)
+        self.assertIn("system.diagnose", _EAGER_TOOLS)
+        self.assertIn("system.repair", _EAGER_TOOLS)
+
     def test_domain_tool_reuses_an_identical_successful_receipt(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

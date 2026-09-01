@@ -49,6 +49,8 @@ _NATIVE_TOOLS = {
     "research.search": "按 provider、query 和 limit 执行有界联网书目检索。",
     "plugin.call": "调用已安装插件清单中明确开放的工具。",
     "plugin.repair": "按已记录来源修复一个已安装插件。",
+    "system.diagnose": "只读检查项目数据库、插件构建身份和可选运行环境。",
+    "system.repair": "备份项目后，仅修复有可靠来源记录的损坏插件。",
     "domain_agent.consult": "让指定领域 Agent 在隔离会话中处理一个有界问题。",
     "skill.create": "按用户已明确的目的、边界与说明创建本地 Skill。",
     "domain_pack.create": "按用户已明确的范围创建领域 Agent 工程骨架。",
@@ -65,6 +67,8 @@ _NATIVE_TOOLS = {
 
 _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "harness.status": {"type": "object", "properties": {}, "additionalProperties": False},
+    "system.diagnose": {"type": "object", "properties": {}, "additionalProperties": False},
+    "system.repair": {"type": "object", "properties": {}, "additionalProperties": False},
     "project.status": {"type": "object", "properties": {}, "additionalProperties": False},
     "source.list": {"type": "object", "properties": {"source_ids": {"type": "array", "items": {"type": "string"}}, "query": {"type": "string"}, "limit": {"type": "integer"}}, "additionalProperties": False},
     "source.search": {"type": "object", "properties": {"query": {"type": "string"}, "source_id": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["query"], "additionalProperties": False},
@@ -83,7 +87,7 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "plugin.call": {"type": "object", "properties": {"plugin_name": {"type": "string"}, "tool_name": {"type": "string"}, "arguments": {"type": "object"}}, "required": ["plugin_name", "tool_name", "arguments"], "additionalProperties": False},
     "plugin.repair": {"type": "object", "properties": {"plugin_name": {"type": "string"}}, "required": ["plugin_name"], "additionalProperties": False},
     "domain_agent.list": {"type": "object", "properties": {}, "additionalProperties": False},
-    "domain_agent.consult": {"type": "object", "properties": {"plugin_name": {"type": "string"}, "question": {"type": "string"}}, "required": ["plugin_name", "question"], "additionalProperties": False},
+    "domain_agent.consult": {"type": "object", "properties": {"plugin_name": {"type": "string"}, "question": {"type": "string"}, "new_thread": {"type": "boolean"}}, "required": ["plugin_name", "question"], "additionalProperties": False},
     "skill.list": {"type": "object", "properties": {}, "additionalProperties": False},
     "skill.read": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"], "additionalProperties": False},
     "skill.create": {"type": "object", "properties": {"name": {"type": "string"}, "display_name": {"type": "string"}, "description": {"type": "string"}, "instructions": {"type": "string"}, "allow_implicit_invocation": {"type": "boolean"}}, "required": ["name", "display_name", "description", "instructions"], "additionalProperties": False},
@@ -109,12 +113,13 @@ _TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 _EAGER_TOOLS = {
-    "harness.status", "project.status", "source.list", "source.search", "source.page",
+    "harness.status", "system.diagnose", "system.repair",
+    "project.status", "source.list", "source.search", "source.page",
     "library.status", "library.search", "library.assets", "library.work", "library.add_to_project", "library.graph",
     "research.state", "research.plan_context", "retrieval.list", "research.search",
     "plugin.list", "domain_agent.list", "domain_agent.consult", "skill.list", "skill.read",
     "attachment.inspect", "browser.start", "browser.snapshot", "browser.read", "browser.open",
-    "computer.status", "computer.runtime_status", "computer.roots", "computer.file_search",
+    "computer.status", "computer.runtime_status", "computer.roots", "computer.file_search", "computer.run",
     "computer.windows", "computer.snapshot", "computer.capture", "authoring.state",
 }
 
@@ -538,8 +543,9 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
         }
         for item in tool_specs if str(item.get("name", "")) in set(plugin.get("agent_tools", []))
     ]
+    mapping_key = _domain_thread_mapping_key(session_id, tools)
     with host.lock:
-        codex_thread_id = _load_thread_id(project_root, session_id, host.profile_key)
+        codex_thread_id = _load_thread_id(project_root, mapping_key, host.profile_key)
         if codex_thread_id:
             try:
                 host.client.thread_resume(codex_thread_id, {"cwd": str(project_root)})
@@ -554,7 +560,7 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
                 "dynamicTools": [{**item, "name": "domain__" + item["name"]} for item in tools],
             })
             codex_thread_id = started.thread.id
-            _save_thread_id(project_root, session_id, host.profile_key, codex_thread_id)
+            _save_thread_id(project_root, mapping_key, host.profile_key, codex_thread_id)
         host.domain_runs[codex_thread_id] = {
             "run_id": run_id, "session_id": session_id, "plugin_name": plugin_name,
             "plugin": plugin, "tools": {item["name"] for item in tools},
@@ -582,6 +588,11 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
             return text
         finally:
             host.domain_runs.pop(codex_thread_id, None)
+
+
+def _domain_thread_mapping_key(session_id: str, tools: list[dict[str, Any]]) -> str:
+    payload = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return f"{session_id}:tools-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
 
 
 def close_hosts() -> None:

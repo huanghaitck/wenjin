@@ -232,6 +232,44 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("Codex 双向桥接", script)
         self.assertIn("/api/codex/register-mcp", script)
         self.assertIn("领域包编排教程", script)
+        self.assertIn("function reconcileThreadSelection()", script)
+        self.assertIn("async function recoverMainThread()", script)
+        self.assertIn("旧对话编号已经失效，已自动建立可用线程并恢复当前任务", script)
+
+    def test_main_and_domain_chat_share_scroll_and_run_status_contract(self) -> None:
+        root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="mainRunStatus"', html)
+        self.assertIn('id="domainRunStatus"', html)
+        self.assertIn('id="mainSteeringDraft"', html)
+        self.assertIn('id="domainSteeringDraft"', html)
+        self.assertIn('id="mainJumpToLatest"', html)
+        self.assertIn('id="domainJumpToLatest"', html)
+        self.assertIn("function captureConversationScroll", script)
+        self.assertIn("function restoreConversationScroll", script)
+        self.assertIn("function renderRunStatus", script)
+        self.assertIn("function renderSteeringDraft", script)
+        self.assertIn("正在卖力运行中", script)
+        self.assertIn("₍^. .^₎⟆", script)
+        self.assertIn("queued-message", script)
+        self.assertIn("queued-direction-actions", script)
+        self.assertNotIn("messages.scrollTop = messages.scrollHeight", script)
+
+    def test_compact_settings_help_and_inline_domain_run_contract(self) -> None:
+        root = Path(__file__).parents[1] / "src" / "research_workbench" / "web_assets"
+        html = (root / "index.html").read_text(encoding="utf-8")
+        script = (root / "app.js").read_text(encoding="utf-8")
+        styles = (root / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="helpMode"', html)
+        self.assertIn('id="helpDialog"', html)
+        self.assertIn('id="settingsFeedback"', html)
+        self.assertIn('data-settings-tab="plugins"', html)
+        self.assertIn('data-settings-tab="appearance"', html)
+        self.assertIn("function renderDomainRunProcess", script)
+        self.assertIn("wenjinDensity", script)
+        self.assertIn(".settings-feedback", styles)
+        self.assertIn("body[data-density=\"compact\"]", styles)
 
     def test_english_ui_has_an_english_history_template_and_domain_pack_copy(self) -> None:
         ensure_journal_templates(self.project)
@@ -276,13 +314,15 @@ class WenjinV01Tests(unittest.TestCase):
         script = (root / "app.js").read_text(encoding="utf-8")
         styles = (root / "styles.css").read_text(encoding="utf-8")
         self.assertIn('id="settingsTabs"', html)
+        self.assertIn('id="settingsSummary"', html)
+        self.assertIn('id="primarySidebarToggle"', html)
         self.assertIn('id="projectWorkbench"', html)
         self.assertIn('id="projectMode"', html)
         self.assertIn('/api/project/workspace', script)
         self.assertIn('/api/project/register', script)
         for tab in ("models", "routing", "persona", "memory", "connectors", "runtime"):
             self.assertIn(f'data-settings-tab="{tab}"', html)
-        self.assertNotIn('data-settings-tab="plugins"', html)
+        self.assertIn('data-settings-tab="plugins"', html)
         for control in ("domainImportToggle", "domainCreateToggle", "domainAttachmentInput", "domainReasoningMode", "domainReasoningEffort", "domainConfigureModel"):
             self.assertIn(f'id="{control}"', html)
         self.assertIn('id="libraryViews"', html)
@@ -325,6 +365,10 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn(".library-workbench.mode-intake", styles)
         self.assertIn(".check-label input[type=\"checkbox\"]", styles)
         self.assertIn("overflow-wrap: anywhere", styles)
+        self.assertIn(".settings-receipt", styles)
+        self.assertIn(".agent-workbench.left-collapsed", styles)
+        self.assertIn("$('messageInput').value = '';", script)
+        self.assertIn("state.pendingAttachments = [];", script)
 
 
 if __name__ == "__main__":

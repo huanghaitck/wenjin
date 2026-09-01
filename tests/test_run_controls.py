@@ -51,10 +51,29 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(connection.execute("SELECT status FROM runs WHERE run_id='R'").fetchone()[0], "STOPPED")
 
     def test_domain_run_uses_the_same_stop_control(self) -> None:
-        queue_run_control(self.project, "domain", "stop", session_id="S")
+        queue_run_control(
+            self.project, "domain", "stop",
+            session_id="S", thread_id=self.thread["thread_id"],
+        )
         self.assertEqual(_apply_domain_run_controls(self.project, "D"), "stop")
         with connect(self.project) as connection:
             self.assertEqual(connection.execute("SELECT status FROM domain_agent_runs WHERE run_id='D'").fetchone()[0], "STOPPED")
+
+    def test_domain_control_targets_only_the_selected_task_thread(self) -> None:
+        other = create_thread(self.project, "other")
+        now = utc_now()
+        with connect(self.project) as connection:
+            connection.execute(
+                "INSERT INTO domain_agent_runs(run_id,session_id,main_thread_id,status,model_snapshot_json,created_at,updated_at) VALUES ('D2','S',?,'RUNNING','{}',?,?)",
+                (other["thread_id"], now, now),
+            )
+        queued = queue_run_control(
+            self.project, "domain", "stop",
+            session_id="S", thread_id=self.thread["thread_id"],
+        )
+        self.assertEqual(queued["run_id"], "D")
+        self.assertEqual(_apply_domain_run_controls(self.project, "D"), "stop")
+        self.assertEqual(_apply_domain_run_controls(self.project, "D2"), "")
 
     def test_queued_direction_can_be_edited_or_deleted_before_it_is_applied(self) -> None:
         queued = queue_run_control(self.project, "main", "steer", "旧方向", thread_id=self.thread["thread_id"])

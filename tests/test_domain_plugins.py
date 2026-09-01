@@ -127,6 +127,22 @@ class DomainPluginTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escapes"):
             install_domain_plugin(self.config, self.plugin)
 
+    def test_declared_build_id_requires_matching_runtime_and_data_receipts(self) -> None:
+        data = json.loads((self.plugin / "wenjin-plugin.json").read_text(encoding="utf-8"))
+        data["build_id"] = "0.1.0+abc"
+        (self.plugin / "wenjin-plugin.json").write_text(json.dumps(data), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "build receipt is missing"):
+            install_domain_plugin(self.config, self.plugin)
+        (self.plugin / "runtime").mkdir()
+        (self.plugin / "domain" / "data").mkdir(parents=True)
+        (self.plugin / "runtime" / "build.json").write_text(json.dumps({"build_id": "0.1.0+abc"}), encoding="utf-8")
+        (self.plugin / "domain" / "data" / "DATA_MANIFEST.json").write_text(json.dumps({"build_id": "other"}), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "build_id mismatch"):
+            install_domain_plugin(self.config, self.plugin)
+        (self.plugin / "domain" / "data" / "DATA_MANIFEST.json").write_text(json.dumps({"build_id": "0.1.0+abc"}), encoding="utf-8")
+        state = install_domain_plugin(self.config, self.plugin)
+        self.assertEqual(state["plugins"][0]["name"], "sample-domain")
+
     def test_main_agent_cannot_call_a_tool_outside_manifest_allowlist(self) -> None:
         install_domain_plugin(self.config, self.plugin, runtime_command=__file__)
         with self.assertRaisesRegex(ValueError, "not approved"):

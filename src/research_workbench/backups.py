@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 
+_IGNORED_PROJECT_DIRECTORIES = {"logs", "tmp", "runtime"}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -35,7 +38,7 @@ def _source_signature(project_root: Path, database: Path) -> str:
         }:
             continue
         relative = path.relative_to(project_root)
-        if relative.parts and relative.parts[0] in {"logs", "tmp"}:
+        if relative.parts and relative.parts[0] in _IGNORED_PROJECT_DIRECTORIES:
             continue
         stat = path.stat()
         values.append(f"{relative.as_posix()}:{stat.st_size}:{stat.st_mtime_ns}")
@@ -108,7 +111,7 @@ def backup_project(project_root: Path, backup_root: Path, reason: str = "manual"
             }:
                 continue
             relative = source.relative_to(project_root)
-            if relative.parts and relative.parts[0] in {"logs", "tmp"}:
+            if relative.parts and relative.parts[0] in _IGNORED_PROJECT_DIRECTORIES:
                 continue
             bundle.write(source, relative.as_posix())
     yaml_source = project_root / "project.yaml"

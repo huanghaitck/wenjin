@@ -144,10 +144,22 @@ fn open_path(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_help_document(app: tauri::AppHandle, name: String) -> Result<(), String> {
+    let relative = match name.as_str() {
+        "manual_zh" => "help/USER_MANUAL_ZH.md",
+        "manual_en" => "help/USER_MANUAL_EN.md",
+        "changelog" => "help/CHANGELOG.md",
+        _ => return Err("未知帮助文档".into()),
+    };
+    let path = app.path().resource_dir().map_err(|error| error.to_string())?.join(relative);
+    open_path(path.to_string_lossy().into_owned())
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word, open_path])
+        .invoke_handler(tauri::generate_handler![desktop_status, desktop_url, open_data_directory, open_sidecar_log, choose_folder, choose_file, open_in_word, open_path, open_help_document])
         .setup(|app| {
             app.manage(StartupState(Mutex::new(None)));
             let data_root = data_root(app.handle()).map_err(std::io::Error::other)?;
@@ -159,7 +171,7 @@ fn main() {
                 .args([
                     "desktop-serve", "--data-root", &data_root.to_string_lossy(),
                     "--host", "127.0.0.1", "--port", &port.to_string(),
-                    "--desktop-build", env!("CARGO_PKG_VERSION"),
+                    "--desktop-build", concat!(env!("CARGO_PKG_VERSION"), "+", env!("WENJIN_BUILD_ID")),
                 ])
                 .env("PYTHONUNBUFFERED", "1")
                 .spawn()?;

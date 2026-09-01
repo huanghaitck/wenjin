@@ -269,6 +269,10 @@ def _tool_requirements(plugin: dict[str, Any], content: str) -> list[dict[str, A
         and any(word in content for word in ("全部", "所有", "补齐"))
     ):
         requirements[grade_tool] = {"tool": grade_tool, "minimum_calls": 1, "paths": []}
+    if "record_review_decisions" in tools and re.search(r"(?:复核决定|回答复核|写入.{0,8}复核|按我的回答)", content):
+        requirements["record_review_decisions"] = {"tool": "record_review_decisions", "minimum_calls": 1, "paths": []}
+    if "apply_review_workbook" in tools and re.search(r"(?:合并生成|新版主表|下一轮复核|完成合并)", content):
+        requirements["apply_review_workbook"] = {"tool": "apply_review_workbook", "minimum_calls": 1, "paths": []}
     return list(requirements.values())
 
 
@@ -291,10 +295,12 @@ def _record_artifact(
     project_root: Path, session_id: str, run_id: str, tool_name: str, payload: dict[str, Any]
 ) -> None:
     candidate = payload.get("result") if isinstance(payload.get("result"), dict) else payload
-    output_paths = [next(
-        (str(candidate.get(key, "")) for key in ("output_path", "workbook_path", "database_path") if candidate.get(key)),
-        "",
-    )]
+    output_paths = [
+        str(candidate.get(key, "")) for key in (
+            "output_path", "output_workbook", "workbook_path", "database_path",
+            "main_workbook", "remaining_review_workbook", "audit_workbook",
+        ) if candidate.get(key)
+    ]
     output_paths.extend(str(value) for value in candidate.get("deliverables", []) if value)
     output_paths = list(dict.fromkeys(value for value in output_paths if value))
     if not output_paths:
@@ -471,7 +477,7 @@ def send_domain_message(
                     "SELECT status FROM domain_agent_runs WHERE run_id=?", (run_id,)
                 ).fetchone()
                 if current is not None and current["status"] == "STOPPED":
-                    return domain_agent_view(project_root, str(session["session_id"]))
+                    return domain_agent_view(project_root, str(session["session_id"]), main_thread_id)
                 connection.execute(
                     "INSERT INTO domain_agent_messages(message_id,session_id,role,content_json,created_at) "
                     "VALUES (?,?, 'assistant', ?, ?)",
@@ -491,7 +497,7 @@ def send_domain_message(
                     _append_run_event(connection, parent_run_id, "domain_run_completed", {
                         "domain_run_id": run_id, "plugin_name": plugin_name,
                     })
-            return domain_agent_view(project_root, str(session["session_id"]))
+            return domain_agent_view(project_root, str(session["session_id"]), main_thread_id)
         except Exception as error:
             with connect(project_root) as connection:
                 connection.execute(
@@ -512,7 +518,7 @@ def send_domain_message(
     try:
         for _ in range(tool_budget + 1):
             if _apply_domain_run_controls(project_root, run_id) == "stop":
-                return domain_agent_view(project_root, session["session_id"])
+                return domain_agent_view(project_root, session["session_id"], main_thread_id)
             action = {"type": "final", "content": forced_final} if forced_final else _model_action(
                 profile, content, observations, tool_budget - len(observations),
                 "DOMAIN_SUBAGENT: private memory; return candidates to the main agent.",
@@ -524,7 +530,7 @@ def send_domain_message(
             forced_final = ""
             control = _apply_domain_run_controls(project_root, run_id)
             if control == "stop":
-                return domain_agent_view(project_root, session["session_id"])
+                return domain_agent_view(project_root, session["session_id"], main_thread_id)
             if control == "steer":
                 continue
             if action.get("type") == "final":
@@ -560,7 +566,7 @@ def send_domain_message(
                             _append_run_event(connection, parent_run_id, "domain_run_completed", {
                                 "domain_run_id": run_id, "plugin_name": plugin_name,
                             })
-                    return domain_agent_view(project_root, session["session_id"])
+                    return domain_agent_view(project_root, session["session_id"], main_thread_id)
             if action.get("type") != "tool_call":
                 raise ValueError("domain subagent returned an invalid action")
             tool_name = str(action.get("tool", ""))
@@ -712,13 +718,23 @@ def send_domain_message(
         raise
 
 
-def domain_agent_view(project_root: Path, session_id: str) -> dict[str, Any]:
+def domain_agent_view(
+    project_root: Path, session_id: str, main_thread_id: str = "",
+) -> dict[str, Any]:
     with connect(project_root) as connection:
         session = connection.execute(
             "SELECT * FROM domain_agent_sessions WHERE session_id=?", (session_id,)
         ).fetchone()
         if session is None:
             raise KeyError(f"unknown domain-agent session: {session_id}")
+        allowed_threads: set[str] = set()
+        current = main_thread_id
+        while current and current not in allowed_threads and len(allowed_threads) < 8:
+            allowed_threads.add(current)
+            parent = connection.execute(
+                "SELECT parent_thread_id FROM thread_inheritance WHERE child_thread_id=?", (current,),
+            ).fetchone()
+            current = str(parent["parent_thread_id"]) if parent else ""
         messages = [dict(row) for row in connection.execute(
             "SELECT * FROM domain_agent_messages WHERE session_id=? ORDER BY created_at,message_id",
             (session_id,),
@@ -734,6 +750,12 @@ def domain_agent_view(project_root: Path, session_id: str) -> dict[str, Any]:
                     "SELECT status FROM agent_run_controls WHERE control_id=?", (control_id,),
                 ).fetchone()
                 message["run_control_status"] = str(control["status"]) if control else "deleted"
+        if allowed_threads:
+            messages = [
+                message for message in messages
+                if str(message["content"].get("main_thread_id", "")) in allowed_threads
+            ]
+            runs = [run for run in runs if str(run.get("main_thread_id") or "") in allowed_threads]
         for run in runs:
             run["model_snapshot"] = _decode(run.pop("model_snapshot_json"), {})
             run["tool_calls"] = []
@@ -747,11 +769,14 @@ def domain_agent_view(project_root: Path, session_id: str) -> dict[str, Any]:
         artifacts = [dict(row) for row in connection.execute(
             "SELECT * FROM domain_agent_artifacts WHERE session_id=? ORDER BY created_at DESC", (session_id,),
         )]
+        if allowed_threads:
+            run_ids = {str(run["run_id"]) for run in runs}
+            artifacts = [artifact for artifact in artifacts if str(artifact.get("run_id") or "") in run_ids]
         for artifact in artifacts:
             artifact["payload"] = _decode(artifact.pop("payload_json"), {})
             path = Path(artifact["project_path"])
             artifact["native_path"] = str(path if path.is_absolute() else (project_root / path).resolve())
-    return {"session": dict(session), "messages": messages, "runs": runs, "artifacts": artifacts}
+    return {"session": dict(session), "messages": messages, "runs": runs, "artifacts": artifacts, "main_thread_id": main_thread_id}
 
 
 def domain_agent_state(project_root: Path) -> dict[str, Any]:

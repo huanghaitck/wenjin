@@ -5,43 +5,46 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>问津｜人文社会科学研究工作台</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/a2.css">
 </head>
-<body>
+<body data-density="compact">
   <header class="topbar">
-    <div><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台</span></div>
-    <div class="importer">
-      <button id="agentMode" class="mode-active" data-i18n="nav_agent">研究对话</button>
-      <button id="projectMode" data-i18n="nav_project">项目工作区</button>
-      <button id="domainMode" data-i18n="nav_domain">领域 Agent</button>
-      <button id="libraryMode" data-i18n="nav_library">研究图书馆</button>
-      <button id="articleMode" data-i18n="nav_article">文章工作台</button>
-      <button id="skillsMode" data-i18n="nav_skills">技能与插件</button>
-      <button id="settingsMode" data-i18n="nav_settings">AI 与 Agent</button>
-      <button id="languageToggle" title="Switch language">EN</button>
-    </div>
+    <div class="brand-cluster"><button id="primarySidebarToggle" class="icon-button topbar-icon" title="隐藏左侧栏" aria-label="隐藏左侧栏"><img src="/vendor/icons/panel-left-close.svg" alt="" aria-hidden="true"></button><div class="brand-copy"><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台</span></div></div>
+    <nav class="workspace-nav importer" aria-label="主要工作区">
+      <button id="agentMode" class="mode-active"><img src="/vendor/icons/message-circle.svg" alt="" aria-hidden="true"><span data-i18n="nav_agent">研究对话</span></button>
+      <button id="projectMode"><img src="/vendor/icons/folder-kanban.svg" alt="" aria-hidden="true"><span data-i18n="nav_project">项目</span></button>
+      <button id="domainMode"><img src="/vendor/icons/bot.svg" alt="" aria-hidden="true"><span data-i18n="nav_domain">领域 Agent</span></button>
+      <button id="libraryMode"><img src="/vendor/icons/library.svg" alt="" aria-hidden="true"><span data-i18n="nav_library">图书馆</span></button>
+      <button id="articleMode"><img src="/vendor/icons/file-pen-line.svg" alt="" aria-hidden="true"><span data-i18n="nav_article">写作</span></button>
+    </nav>
+    <div class="utility-nav"><button id="skillsMode" class="icon-button" title="技能与插件" aria-label="技能与插件"><img src="/vendor/icons/puzzle.svg" alt="" aria-hidden="true"></button><button id="settingsMode" class="icon-button" title="设置" aria-label="设置"><img src="/vendor/icons/settings.svg" alt="" aria-hidden="true"></button><button id="helpMode" class="icon-button" title="帮助" aria-label="帮助"><img src="/vendor/icons/circle-help.svg" alt="" aria-hidden="true"></button><button id="languageToggle" class="language-button" title="Switch language">EN</button></div>
   </header>
 
-  <div id="notice" role="status">正在读取本地项目……</div>
+  <div class="noticebar"><div id="notice" role="status">正在读取本地项目……</div><button id="secondarySidebarToggle" class="icon-button" title="隐藏右侧栏" aria-label="隐藏右侧栏"><img src="/vendor/icons/panel-right-close.svg" alt="" aria-hidden="true"></button></div>
   <dialog id="imagePreviewDialog" class="image-preview-dialog"><button id="closeImagePreview" aria-label="关闭大图">×</button><img id="imagePreviewLarge" alt=""><a id="openImageOriginal" target="_blank" rel="noreferrer">打开原图</a></dialog>
+  <dialog id="textPromptDialog" class="text-prompt-dialog"><form method="dialog"><h2 id="textPromptTitle">请输入</h2><label id="textPromptLabel">内容<input id="textPromptInput" autocomplete="off"></label><div class="dialog-actions"><button value="cancel">取消</button><button value="confirm" class="primary-inline">确定</button></div></form></dialog>
+  <dialog id="modelRoleDialog" class="model-role-dialog"><header><div><h2 id="modelRoleDialogTitle">辅助模型设置</h2><p>只修改当前岗位；默认为跟随主模型。</p></div><button id="closeModelRoleDialog" class="icon-button" aria-label="关闭辅助模型设置"><img src="/vendor/icons/x.svg" alt="" aria-hidden="true"></button></header><div id="modelRoleDialogBody"></div></dialog>
+  <dialog id="skillDetailDialog" class="skill-detail-dialog"><header><div><h2 id="skillDetailTitle">技能详情</h2><p id="skillDetailKind"></p></div><button id="closeSkillDetailDialog" class="icon-button" aria-label="关闭技能详情"><img src="/vendor/icons/x.svg" alt="" aria-hidden="true"></button></header><div id="skillDetailBody"></div></dialog>
+  <dialog id="projectCreateDialog" class="project-create-dialog"><form><header><div><h2 data-zh="新建研究项目" data-en="New research project">新建研究项目</h2><p data-zh="项目之间的文献、证据、记忆和稿件保持隔离" data-en="Sources, evidence, memory, and manuscripts remain separated by project">项目之间的文献、证据、记忆和稿件保持隔离</p></div><button id="closeProjectCreateDialog" type="button" class="icon-button" aria-label="关闭新建项目"><img src="/vendor/icons/x.svg" alt="" aria-hidden="true"></button></header><div class="project-create-body"><label><span data-zh="项目名称" data-en="Project name">项目名称</span><input id="projectCreateTitle" autocomplete="off" value="新的历史研究项目"></label><fieldset><legend data-zh="项目位置" data-en="Project location">项目位置</legend><label class="location-option"><input type="radio" name="project-location" value="workspace" checked><span><strong data-zh="问津工作区" data-en="Wenjin workspace">问津工作区</strong><small data-zh="由问津统一管理，适合新用户" data-en="Managed automatically by Wenjin">由问津统一管理，适合新用户</small></span></label><label class="location-option"><input id="projectLocationLocal" type="radio" name="project-location" value="local"><span><strong data-zh="本地文件夹" data-en="Local folder">本地文件夹</strong><small data-zh="项目放在你选择的目录中" data-en="Keep the project in a folder you choose">项目放在你选择的目录中</small></span></label></fieldset><div id="projectLocalPathRow" class="project-local-path" hidden><input id="projectCreatePath" readonly placeholder="请选择本地文件夹"><button id="chooseProjectCreatePath" type="button">选择文件夹</button></div></div><div class="dialog-actions"><button id="cancelProjectCreate" type="button">取消</button><button id="confirmProjectCreate" type="button" class="primary-inline">建立项目</button></div></form></dialog>
   <main id="projectWorkbench" class="project-workbench" hidden>
-    <aside class="project-list-panel surface">
-      <header class="agent-heading"><div><h2 data-zh="研究项目" data-en="Research projects">研究项目</h2><p data-zh="项目之间的材料、证据和稿件相互隔离" data-en="Sources, evidence, and manuscripts remain separated by project">项目之间的材料、证据和稿件相互隔离</p></div><button id="toggleProjectActivity">隐藏动态</button></header>
+    <aside id="projectListPanel" class="project-list-panel surface">
+      <header class="agent-heading"><div><h2 data-zh="研究项目" data-en="Research projects">研究项目</h2><p data-zh="项目之间的材料、证据和稿件相互隔离" data-en="Sources, evidence, and manuscripts remain separated by project">项目之间的材料、证据和稿件相互隔离</p></div></header>
       <div id="projectWorkspaceList" class="project-workspace-list"></div>
       <button id="projectWorkspaceCreate" class="primary-inline" data-zh="新建研究项目" data-en="New research project">新建研究项目</button>
     </aside>
-    <section class="project-dashboard-panel surface">
+    <div id="projectLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整项目列表宽度"></div><section class="project-dashboard-panel surface">
       <div id="projectWorkspaceOverview"></div>
       <div id="projectWorkspaceObjects" class="project-object-grid"></div>
       <div id="projectWorkspaceSources"></div>
     </section>
-    <div id="projectActivityResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整项目动态侧栏宽度"></div><aside id="projectActivityPanel" class="project-activity-panel surface">
+    <div id="projectActivityResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整项目动态侧栏宽度"></div><aside id="projectActivityPanel" class="project-activity-panel surface"><header class="agent-heading"><div><h2>项目建议</h2><p>准备情况与最近动态</p></div><button id="toggleProjectActivity" class="sidebar-toggle">›</button></header>
       <div id="projectWorkspaceNext"></div>
       <div id="projectWorkspaceActivity"></div>
     </aside>
   </main>
   <main id="domainWorkbench" class="domain-workbench" hidden>
-    <aside class="domain-list-panel surface">
-      <header class="agent-heading"><div><h2 data-zh="领域 Agent" data-en="Domain agents">领域 Agent</h2><p data-zh="导入、创建或选择专业智能体" data-en="Import, create, or choose a specialist agent">导入、创建或选择专业智能体</p></div><button id="toggleDomainActivity">隐藏产物</button></header>
+    <aside id="domainListPanel" class="domain-list-panel surface">
+      <header class="agent-heading"><div><h2 data-zh="领域 Agent" data-en="Domain agents">领域 Agent</h2><p data-zh="导入、创建或选择专业智能体" data-en="Import, create, or choose a specialist agent">导入、创建或选择专业智能体</p></div></header>
       <div class="domain-manager-actions"><button id="domainImportToggle" data-zh="导入 Agent" data-en="Import agent">导入 Agent</button><button id="domainCreateToggle" data-zh="创建 Agent" data-en="Create agent">创建 Agent</button></div>
       <section id="domainImportPanel" class="domain-manager-panel" hidden>
         <strong data-zh="导入已有领域 Agent" data-en="Import an existing domain agent">导入已有领域 Agent</strong>
@@ -58,11 +61,13 @@
       <h3 class="domain-list-title" data-zh="已安装 Agent" data-en="Installed agents">已安装 Agent</h3>
       <div id="domainAgentList" class="domain-agent-list"></div>
     </aside>
-    <section class="domain-conversation-panel surface">
-      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
+    <div id="domainLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整领域 Agent 列表宽度"></div><section class="domain-conversation-panel surface">
+      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div class="domain-thread-controls"><label><span data-zh="任务线程" data-en="Task thread">任务线程</span><select id="domainThreadSelect"></select></label><button id="renameDomainThread" class="icon-only" title="重命名当前线程" aria-label="重命名当前线程">✎</button><button id="newDomainThread" data-zh="＋ 新线程" data-en="＋ New thread">＋ 新线程</button></div><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
       <div id="domainFunctions" class="domain-functions"></div>
+      <div class="run-status-row"><div id="domainRunStatus" class="run-status" role="status" aria-live="polite"></div><button id="domainJumpToLatest" class="jump-to-latest" hidden data-zh="回到最新消息" data-en="Jump to latest">回到最新消息</button></div>
       <div id="domainMessages" class="messages domain-messages"></div>
       <div class="composer domain-compose">
+        <div id="domainSteeringDraft" class="steering-draft" hidden></div>
         <div id="domainAttachmentChips" class="attachment-chips"></div>
         <input id="domainAttachmentInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles" hidden>
         <div class="composer-main"><textarea id="domainMessageInput" placeholder="直接向当前领域 Agent 提出任务"></textarea><button id="sendDomainMessage" class="primary-inline" data-zh="发送" data-en="Send">发送</button></div>
@@ -73,7 +78,7 @@
       </div>
     </section>
     <div id="domainActivityResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整领域产物侧栏宽度"></div><aside id="domainActivityPanel" class="domain-activity-panel surface">
-      <header class="agent-heading"><div><h2 data-zh="运行与产物" data-en="Runs and artifacts">运行与产物</h2><p data-zh="本轮过程优先，旧产物折叠显示" data-en="Current run first; older artifacts are collapsed">本轮过程优先，旧产物折叠显示</p></div></header>
+       <header class="agent-heading"><div><h2 data-zh="运行与产物" data-en="Runs and artifacts">运行与产物</h2><p data-zh="本轮过程优先，旧产物折叠显示" data-en="Current run first; older artifacts are collapsed">本轮过程优先，旧产物折叠显示</p></div><button id="toggleDomainActivity" class="sidebar-toggle">›</button></header>
       <section id="domainModelPanel" class="domain-model-panel" hidden></section>
       <div id="domainActivity"></div>
       <div id="domainArtifacts"></div>
@@ -136,7 +141,7 @@
   </main>
 
   <main id="agentWorkbench" class="agent-workbench">
-    <aside class="thread-panel surface">
+    <aside id="threadPanel" class="thread-panel surface">
       <header class="project-heading">
         <label>当前项目<select id="projectSelect"></select></label>
         <button id="newProject">新建项目</button>
@@ -145,7 +150,7 @@
       <div id="threadList" class="thread-list"></div>
     </aside>
 
-    <section class="conversation-panel surface">
+    <div id="agentLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整研究线程列表宽度"></div><section class="conversation-panel surface">
       <header class="agent-heading">
         <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
         <div class="conversation-heading-actions">
@@ -154,11 +159,12 @@
             <label>本轮使用<select id="planningMode"><option value="independent_planning">只处理当前问题</option><option value="guided_execution">沿用已批准研究计划</option></select></label>
             <small>项目已有批准计划时，可以选择沿用；历史版本继续保留。</small>
           </details>
-          <button id="toggleContextPanel">隐藏侧栏</button>
         </div>
       </header>
+      <div class="run-status-row"><div id="mainRunStatus" class="run-status" role="status" aria-live="polite"></div><button id="mainJumpToLatest" class="jump-to-latest" hidden data-zh="回到最新消息" data-en="Jump to latest">回到最新消息</button></div>
       <div id="messages" class="messages"></div>
       <div class="composer">
+        <div id="mainSteeringDraft" class="steering-draft" hidden></div>
         <div id="attachmentChips" class="attachment-chips"></div>
         <div class="composer-main">
           <textarea id="messageInput" placeholder="例如：查看当前来源和异常，并把结论保存为研究札记"></textarea>
@@ -182,7 +188,7 @@
 
     <div id="contextResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整研究上下文侧栏宽度"></div>
     <aside class="activity-panel surface">
-      <header class="agent-heading"><div><h2>研究上下文</h2><p>项目材料与研究记录</p></div></header>
+      <header class="agent-heading"><div><h2>研究上下文</h2><p>项目材料与研究记录</p></div><button id="toggleContextPanel" class="sidebar-toggle">›</button></header>
       <nav id="contextTabs" class="context-tabs">
         <button data-context="sources" class="selected">项目文献</button>
         <button data-context="design">研究计划</button>
@@ -206,13 +212,13 @@
         <div><h1>技能与插件库</h1><p>研究技能、内部流程和外部工具分开列出</p></div>
         <input id="skillQuery" placeholder="搜索技能、产物或 Agent 程序">
       </header>
-      <div id="skillCatalog" class="settings-grid"></div>
+      <div id="skillCatalog" class="settings-grid"><p class="loading-placeholder">正在读取技能与插件……</p></div>
     </section>
   </main>
 
   <main id="articleWorkbench" class="article-workbench" hidden>
-    <aside class="manuscript-panel surface">
-      <header class="agent-heading"><div><h2>稿件与章节</h2><p>稿件结构与历史版本</p></div><button id="toggleAuthoringControl">隐藏研究侧栏</button></header>
+    <aside id="manuscriptPanel" class="manuscript-panel surface">
+      <header class="agent-heading"><div><h2>稿件与章节</h2><p>稿件结构与历史版本</p></div></header>
       <details class="import-manuscript">
         <summary>新建或导入稿件</summary>
         <label>稿件题名<input id="manuscriptTitle" placeholder="论文题目"></label>
@@ -225,7 +231,7 @@
       <div id="manuscriptList" class="manuscript-list"></div>
     </aside>
 
-    <section class="section-editor surface">
+    <div id="articleLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整稿件列表宽度"></div><section class="section-editor surface">
       <header class="agent-heading"><div><h1 id="sectionHeading">选择一个章节</h1><p id="sectionVersion">人工批准后才产生新版本</p></div></header>
       <div class="editor-toolbar">
         <label class="toolbar-select">稿件题名<input id="manuscriptTitleEdit" aria-label="稿件题名"></label>
@@ -245,7 +251,7 @@
     </section>
 
     <div id="authoringControlResizeHandle" class="panel-resize-handle" role="separator" aria-label="调整文章研究侧栏宽度"></div><aside id="authoringControlPanel" class="authoring-control surface">
-      <header class="agent-heading"><div><h2>研究侧栏</h2><p id="selectionContext">当前稿件、修订、章节与选区会随消息保存</p></div></header>
+      <header class="agent-heading"><div><h2>研究侧栏</h2><p id="selectionContext">当前稿件、修订、章节与选区会随消息保存</p></div><button id="toggleAuthoringControl" class="sidebar-toggle">›</button></header>
       <nav id="authoringTabs" class="context-tabs">
         <button data-authoring="dialogue" class="selected">研究对话</button>
         <button data-authoring="write">润色/分节</button>
@@ -271,18 +277,27 @@
   </main>
 
   <main id="settingsWorkbench" class="settings-workbench" hidden>
-    <section class="settings-main surface">
-      <header class="agent-heading"><div><h1 id="settingsHeading">AI 与 Agent</h1><p id="settingsLead">主模型、辅助模型、MoA、研究人格、记忆与连接器</p></div></header>
-      <nav id="settingsTabs" class="subview-tabs settings-tabs" aria-label="AI 与 Agent 子页面">
-        <button data-settings-tab="models" class="selected" data-zh="模型" data-en="Models">模型</button>
-        <button data-settings-tab="routing" data-zh="辅助与 MoA" data-en="Routing & MoA">辅助与 MoA</button>
+    <aside class="settings-sidebar surface">
+      <header class="agent-heading"><div><h1 id="settingsHeading">设置</h1><p id="settingsLead">模型、Agent、连接、数据与应用设置</p></div></header>
+      <nav id="settingsTabs" class="subview-tabs settings-tabs" aria-label="设置子页面">
+        <span class="settings-group-label" data-zh="智能体" data-en="Agent">智能体</span>
+        <button data-settings-tab="models" class="selected" data-zh="模型与岗位" data-en="Models & roles">模型与岗位</button>
+        <button data-settings-tab="routing" data-zh="Agent 行为与 MoA" data-en="Agent behavior & MoA">Agent 行为与 MoA</button>
         <button data-settings-tab="persona" data-zh="研究人格" data-en="Persona">研究人格</button>
-        <button data-settings-tab="memory" data-zh="记忆" data-en="Memory">记忆</button>
-        <button data-settings-tab="connectors" data-zh="连接器、MCP与微信" data-en="Connectors, MCP & Weixin">连接器、MCP与微信</button>
-        <button data-settings-tab="runtime" data-zh="当前状态" data-en="Status">当前状态</button>
+        <span class="settings-group-label" data-zh="研究环境" data-en="Research environment">研究环境</span>
+        <button data-settings-tab="memory" data-zh="记忆与数据" data-en="Memory & data">记忆与数据</button>
+        <button data-settings-tab="connectors" data-zh="连接与微信" data-en="Connections & Weixin">连接与微信</button>
+        <button data-settings-tab="plugins" data-zh="技能与插件" data-en="Skills & plugins">技能与插件</button>
+        <span class="settings-group-label" data-zh="应用" data-en="Application">应用</span>
+        <button data-settings-tab="appearance" data-zh="外观与语言" data-en="Appearance & language">外观与语言</button>
+        <button data-settings-tab="runtime" data-zh="系统与更新" data-en="System & updates">系统与更新</button>
       </nav>
-      <div id="settingsContent" class="settings-grid"></div>
+    </aside>
+    <section class="settings-main surface">
+      <div id="settingsFeedback" class="settings-feedback" role="status" aria-live="polite" hidden></div>
+      <div id="settingsContent" class="settings-grid"><p class="loading-placeholder">正在读取设置……</p></div>
     </section>
+    <aside class="settings-receipt surface"><header class="agent-heading"><div><h2 data-zh="当前状态" data-en="Current status">当前状态</h2><p data-zh="配置、检测与保存回执" data-en="Configuration, checks, and save receipts">配置、检测与保存回执</p></div></header><div id="settingsSummary" class="settings-summary"></div></aside>
   </main>
 
   <main id="pdfWorkbench" class="workbench" hidden>
@@ -350,6 +365,15 @@
     <div class="button-row">
       <button id="configureMainModel" class="primary-inline">设置主模型</button>
       <button id="continueWithoutModel">暂不设置，只使用图书馆和项目功能</button>
+    </div>
+  </dialog>
+  <dialog id="helpDialog" class="help-dialog">
+    <header><div><h2 data-zh="帮助与文档" data-en="Help & documentation">帮助与文档</h2><p data-zh="从入门、排错到版本说明" data-en="Getting started, troubleshooting, and release notes">从入门、排错到版本说明</p></div><button id="closeHelp" class="icon-only" aria-label="关闭帮助">×</button></header>
+    <div class="help-grid">
+      <button id="openHelpManual"><strong data-zh="完整使用手册" data-en="User manual">完整使用手册</strong><small data-zh="模型、项目、图书馆、领域 Agent 与写作" data-en="Models, projects, library, domain agents, and writing">模型、项目、图书馆、领域 Agent 与写作</small></button>
+      <button id="openHelpChangelog"><strong data-zh="更新记录" data-en="Release notes">更新记录</strong><small data-zh="查看版本变化与已知限制" data-en="Version changes and known limitations">查看版本变化与已知限制</small></button>
+      <button id="openHelpData"><strong data-zh="打开数据目录" data-en="Open data folder">打开数据目录</strong><small data-zh="项目、图书馆、运行回执与导出文件" data-en="Projects, library, receipts, and exports">项目、图书馆、运行回执与导出文件</small></button>
+      <button id="openHelpLog"><strong data-zh="启动与排错日志" data-en="Startup & diagnostics log">启动与排错日志</strong><small data-zh="客户端无法启动或工具不可用时查看" data-en="Use when startup or tools fail">客户端无法启动或工具不可用时查看</small></button>
     </div>
   </dialog>
   <script src="/vendor/cytoscape.min.js"></script>

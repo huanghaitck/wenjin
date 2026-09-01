@@ -121,6 +121,15 @@ def _manifest(plugin_root: Path) -> tuple[dict[str, Any], str]:
         entries = contributions.get(key, [])
         if not isinstance(entries, list) or any(not isinstance(entry, str) for entry in entries):
             raise ValueError(f"plugin contribution {key} must be a list of strings")
+    build_id = str(value.get("build_id") or "").strip()
+    if build_id:
+        receipts = [root / "runtime" / "build.json", root / "domain" / "data" / "DATA_MANIFEST.json"]
+        for receipt in receipts:
+            if not receipt.is_file():
+                raise ValueError(f"plugin build receipt is missing: {receipt.relative_to(root)}")
+            recorded = str(json.loads(receipt.read_text(encoding="utf-8-sig")).get("build_id") or "").strip()
+            if recorded != build_id:
+                raise ValueError(f"plugin build_id mismatch: {receipt.relative_to(root)}")
     return value, hashlib.sha256(raw).hexdigest()
 
 

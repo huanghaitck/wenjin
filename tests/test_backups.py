@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from research_workbench.backups import backup_existing_projects, backup_project, list_backups, restore_backup
@@ -23,11 +24,16 @@ class BackupTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_online_backup_is_integrity_checked_and_unchanged_run_is_deduplicated(self) -> None:
+        runtime = self.project / "runtime" / "codex_home" / "thread-writer-locks"
+        runtime.mkdir(parents=True)
+        (runtime / "active.lock").write_text("ephemeral", encoding="utf-8")
         first = backup_project(self.project, self.backups, "test")
         second = backup_project(self.project, self.backups, "test")
         self.assertEqual(first["backup_id"], second["backup_id"])
         self.assertEqual(second["status"], "unchanged")
         self.assertEqual(len(list_backups(self.backups)), 1)
+        with zipfile.ZipFile(first["project_archive_path"]) as archive:
+            self.assertNotIn("runtime/codex_home/thread-writer-locks/active.lock", archive.namelist())
 
     def test_restore_creates_a_new_project_without_overwriting_original(self) -> None:
         backup = backup_project(self.project, self.backups, "test")

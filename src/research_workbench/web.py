@@ -14,6 +14,7 @@ from . import authoring as authoring_module
 from .agent_runtime import (
     assign_model, clear_model_assignment,
     create_thread,
+    rename_thread,
     ensure_default_thread,
     decide_approval,
     list_threads,
@@ -62,6 +63,7 @@ from .backups import backup_project, list_backups, restore_backup
 from .memory_adapter import (
     memory_promotion_receipts, memory_settings, promote_memory_candidate, save_memory_settings,
 )
+from .system_health import diagnose_system, repair_system
 from .pdf_ingestion import ingest_pdf
 from .source_documents import export_reading_markdown
 from .library import (
@@ -223,6 +225,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/health":
                 self._json({"status": "ok", "mode": "desktop" if self.server.desktop_mode else "browser"})
                 return
+            if parsed.path == "/api/system/diagnose":
+                self._json(diagnose_system(self.server.project_root, self.server.config_root))
+                return
             if parsed.path == "/api/session":
                 self._json({"token": self.server.session_token})
                 return
@@ -238,7 +243,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/domain-agent":
                 params = parse_qs(parsed.query)
                 self._json(domain_agent_view(
-                    self.server.project_root, params.get("id", [""])[0]
+                    self.server.project_root, params.get("id", [""])[0],
+                    params.get("main_thread_id", [""])[0],
                 ))
                 return
             if parsed.path == "/api/domain-model-settings":
@@ -391,15 +397,19 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 self._send(200, target.read_bytes(), content_type)
                 return
             name = "index.html" if parsed.path == "/" else parsed.path.lstrip("/")
-            if name not in {
-                "index.html", "app.js", "styles.css", "vendor/cytoscape.min.js",
+            standard_asset = name in {
+                "index.html", "app.js", "styles.css", "a2.css", "vendor/cytoscape.min.js",
                 "vendor/layout-base.js", "vendor/cose-base.js",
                 "vendor/cytoscape-fcose.js",
-            }:
+            }
+            icon_root = (WEB_ROOT / "vendor" / "icons").resolve()
+            target = (WEB_ROOT / name).resolve()
+            icon_asset = target.suffix.lower() == ".svg" and target.parent == icon_root and target.is_file()
+            if not standard_asset and not icon_asset:
                 self._json({"error": "not_found"}, 404)
                 return
-            content_type = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8"}[Path(name).suffix]
-            self._send(200, (WEB_ROOT / name).read_bytes(), content_type)
+            content_type = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml"}[target.suffix.lower()]
+            self._send(200, target.read_bytes(), content_type)
         except (KeyError, ValueError, FileNotFoundError) as error:
             self._json({"error": str(error)}, 404)
         except Exception as error:
@@ -570,6 +580,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = create_thread(
                     self.server.project_root, str(payload["title"]),
                     str(payload.get("parent_thread_id", "")),
+                )
+            elif parsed.path == "/api/thread/rename":
+                result = rename_thread(
+                    self.server.project_root, str(payload["thread_id"]), str(payload["title"]),
                 )
             elif parsed.path == "/api/domain-agent/message":
                 result = send_domain_message(
@@ -949,6 +963,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 result = backup_project(
                     self.server.project_root, self.server.config_root.parent / "backups", "manual_ui",
                 )
+            elif parsed.path == "/api/system/repair":
+                result = repair_system(self.server.project_root, self.server.config_root)
             elif parsed.path == "/api/backups/restore":
                 result = restore_backup(
                     self.server.config_root.parent / "backups",
