@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -76,7 +77,8 @@ class D5DesktopPackagingTests(unittest.TestCase):
             self.assertEqual(os.environ["HRW_AGENT_MODEL"], "local-history-model")
             self.assertEqual(os.environ["HRW_AGENT_BASE_URL"], "http://127.0.0.1:11434")
             self.assertEqual(len(result["roles"]), 9)
-            self.assertEqual(public_settings(root)["credential_backend"], "windows_credential_manager")
+            expected = "windows_credential_manager" if os.name == "nt" else "macos_keychain" if sys.platform == "darwin" else "unavailable"
+            self.assertEqual(public_settings(root)["credential_backend"], expected)
 
     def test_model_settings_distinguish_direct_and_reserved_auxiliary_routes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -151,11 +153,16 @@ class D5DesktopPackagingTests(unittest.TestCase):
         self.assertIn("libssl-3-x64.dll", build_script)
         self.assertIn("libcrypto-3-x64.dll", build_script)
         self.assertIn('"--collect-data", "certifi"', build_script)
-        tauri = (Path(__file__).parents[1] / "src-tauri" / "tauri.conf.json").read_text(encoding="utf-8")
+        tauri_root = Path(__file__).parents[1] / "src-tauri"
+        tauri = (tauri_root / "tauri.conf.json").read_text(encoding="utf-8")
+        tauri_windows = (tauri_root / "tauri.windows.conf.json").read_text(encoding="utf-8")
+        tauri_macos = (tauri_root / "tauri.macos.conf.json").read_text(encoding="utf-8")
         package = (Path(__file__).parents[1] / "package.json").read_text(encoding="utf-8")
-        self.assertIn("agent-browser-win32-x64.exe", tauri)
+        self.assertIn("agent-browser-win32-x64.exe", tauri_windows)
         self.assertIn("agent-browser-APACHE-2.0.txt", tauri)
-        self.assertIn('"type": "downloadBootstrapper"', tauri)
+        self.assertIn('"type": "downloadBootstrapper"', tauri_windows)
+        self.assertIn("agent-browser-darwin-arm64", tauri_macos)
+        self.assertIn('"signingIdentity": "-"', tauri_macos)
         self.assertIn('"agent-browser": "0.33.0"', package)
         offline_installer = (Path(__file__).parents[1] / "scripts" / "install-wenjin.cmd").read_text(encoding="utf-8")
         self.assertIn("MicrosoftEdgeWebView2RuntimeInstallerX64.exe", offline_installer)

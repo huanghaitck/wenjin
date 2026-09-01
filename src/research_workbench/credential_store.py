@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
+import sys
 from ctypes import wintypes
 from typing import Any
 
@@ -30,6 +32,14 @@ def _api() -> Any:
 def save_credential(target: str, secret: str, user_name: str = "Wenjin") -> None:
     if not target.strip() or not secret:
         raise ValueError("credential target and secret are required")
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["security", "add-generic-password", "-U", "-a", user_name, "-s", target, "-w", secret],
+            check=True, capture_output=True, text=True,
+        )
+        return
+    if os.name != "nt":
+        raise RuntimeError("system credential storage is unavailable on this platform")
     encoded = secret.encode("utf-16-le")
     blob = (ctypes.c_ubyte * len(encoded)).from_buffer_copy(encoded)
     credential = _Credential()
@@ -47,7 +57,15 @@ def save_credential(target: str, secret: str, user_name: str = "Wenjin") -> None
 
 
 def read_credential(target: str) -> str:
-    if not target.strip() or os.name != "nt":
+    if not target.strip():
+        return ""
+    if sys.platform == "darwin":
+        completed = subprocess.run(
+            ["security", "find-generic-password", "-s", target, "-w"],
+            capture_output=True, text=True,
+        )
+        return completed.stdout.strip() if completed.returncode == 0 else ""
+    if os.name != "nt":
         return ""
     api = _api()
     pointer = ctypes.POINTER(_Credential)()
@@ -69,7 +87,15 @@ def read_credential(target: str) -> str:
 
 
 def delete_credential(target: str) -> None:
-    if not target.strip() or os.name != "nt":
+    if not target.strip():
+        return
+    if sys.platform == "darwin":
+        subprocess.run(
+            ["security", "delete-generic-password", "-s", target],
+            capture_output=True, text=True,
+        )
+        return
+    if os.name != "nt":
         return
     api = _api()
     api.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]

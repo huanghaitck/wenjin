@@ -8,7 +8,7 @@ version = "0.1.4"
 description = "Wenjin: a local-first, model-selectable humanities and social science research workbench"
 requires-python = ">=3.13"
 license = "AGPL-3.0-only"
-dependencies = ["certifi>=2025.1,<2027", "mcp>=1.10,<2", "openai-codex==0.147.0", "Pillow>=10.4,<13", "PyMuPDF>=1.26,<2", "python-docx>=1.2,<2", "qrcode>=8.2,<9", "uiautomation==2.0.29"]
+dependencies = ["certifi>=2025.1,<2027", "mcp>=1.10,<2", "openai-codex==0.147.0", "Pillow>=10.4,<13", "PyMuPDF>=1.26,<2", "python-docx>=1.2,<2", "qrcode>=8.2,<9", "uiautomation==2.0.29; sys_platform == 'win32'"]
 
 [project.optional-dependencies]
 desktop = ["pyinstaller>=6.21,<7"]

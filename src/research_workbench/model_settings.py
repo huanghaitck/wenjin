@@ -4,6 +4,7 @@ import ctypes
 import json
 import os
 import ssl
+import sys
 from ctypes import wintypes
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import certifi
+from .credential_store import delete_credential, read_credential, save_credential
 
 
 SETTINGS_FILE = "model-settings.json"
@@ -80,6 +82,9 @@ def _credential_api() -> Any:
 def save_secret(role: str, secret: str) -> None:
     if role not in ROLES:
         raise KeyError(f"unknown model role: {role}")
+    if os.name != "nt":
+        save_credential(_target(role), secret, "Wenjin model settings")
+        return
     encoded = secret.encode("utf-16-le")
     blob = (ctypes.c_ubyte * len(encoded)).from_buffer_copy(encoded)
     credential = _Credential()
@@ -97,8 +102,10 @@ def save_secret(role: str, secret: str) -> None:
 
 
 def read_secret(role: str) -> str:
-    if role not in ROLES or os.name != "nt":
+    if role not in ROLES:
         return ""
+    if os.name != "nt":
+        return read_credential(_target(role))
     api = _credential_api()
     pointer = ctypes.POINTER(_Credential)()
     api.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
@@ -117,7 +124,10 @@ def read_secret(role: str) -> str:
 
 
 def delete_secret(role: str) -> None:
-    if role not in ROLES or os.name != "nt":
+    if role not in ROLES:
+        return
+    if os.name != "nt":
+        delete_credential(_target(role))
         return
     api = _credential_api()
     api.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
@@ -177,12 +187,12 @@ def public_settings(config_root: Path) -> dict[str, Any]:
             "context_window": int(item.get("context_window", 0) or 0),
             "preset_id": str(item.get("preset_id", "custom")),
             "reasoning_controls": reasoning_controls(item["provider"], item["model"], item["base_url"]),
-            "credential_ref": f"windows-credential:{_target(role)}" if item["provider"] == "openai_compatible" else "none",
+            "credential_ref": f"system-credential:{_target(role)}" if item["provider"] == "openai_compatible" else "none",
             "has_secret": bool(read_secret(role)) if item["provider"] == "openai_compatible" else False,
         })
     return {"schema_version": settings["schema_version"], "roles": roles,
             "provider_presets": PROVIDER_PRESETS, "moa": settings["moa"],
-            "credential_backend": "windows_credential_manager" if os.name == "nt" else "unavailable"}
+            "credential_backend": "windows_credential_manager" if os.name == "nt" else "macos_keychain" if sys.platform == "darwin" else "unavailable"}
 
 
 def save_role(config_root: Path, role: str, payload: dict[str, Any]) -> dict[str, Any]:

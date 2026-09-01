@@ -34,15 +34,47 @@ fn desktop_url(state: tauri::State<'_, StartupState>) -> Option<String> {
     state.0.lock().ok().and_then(|value| value.clone())
 }
 
+#[cfg(target_os = "windows")]
+fn open_system_path(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        std::process::Command::new("explorer.exe")
+            .arg(path)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+        return Ok(());
+    }
+    let operation: Vec<u16> = "open\0".encode_utf16().collect();
+    let target: Vec<u16> = format!("{}\0", path.display()).encode_utf16().collect();
+    let result = unsafe {
+        windows_sys::Win32::UI::Shell::ShellExecuteW(
+            std::ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        )
+    };
+    if result as isize <= 32 {
+        return Err("系统没有找到可打开该产物的应用".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn open_system_path(path: &Path) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(path)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_data_directory(app: tauri::AppHandle) -> Result<(), String> {
     let path = data_root(&app)?;
     fs::create_dir_all(&path).map_err(|error| error.to_string())?;
-    std::process::Command::new("explorer.exe")
-        .arg(&path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    open_system_path(&path)
 }
 
 #[tauri::command]
@@ -51,11 +83,7 @@ fn open_sidecar_log(app: tauri::AppHandle) -> Result<(), String> {
     if !path.is_file() {
         return Err("启动日志尚未生成".into());
     }
-    std::process::Command::new("notepad.exe")
-        .arg(&path)
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    open_system_path(&path)
 }
 
 #[tauri::command]
@@ -73,7 +101,10 @@ fn choose_file(kind: String) -> Option<String> {
         "docx" => dialog.add_filter("Microsoft Word 稿件", &["docx"]),
         "data" => dialog.add_filter(
             "本地数据库与数据文件",
-            &["sqlite", "sqlite3", "db", "duckdb", "csv", "tsv", "json", "jsonl", "parquet", "geojson"],
+            &[
+                "sqlite", "sqlite3", "db", "duckdb", "csv", "tsv", "json", "jsonl", "parquet",
+                "geojson",
+            ],
         ),
         "plugin" => dialog.add_filter("问津领域包", &["zip"]),
         _ => return None,
@@ -95,6 +126,11 @@ fn open_in_word(path: String) -> Result<(), String> {
     {
         return Err("只能把已经存在的 DOCX 交给 Microsoft Word".into());
     }
+    open_word_file(selected)
+}
+
+#[cfg(target_os = "windows")]
+fn open_word_file(selected: &Path) -> Result<(), String> {
     let operation: Vec<u16> = "open\0".encode_utf16().collect();
     let executable: Vec<u16> = "WINWORD.EXE\0".encode_utf16().collect();
     let parameters: Vec<u16> = format!("\"{}\"\0", selected.display())
@@ -116,32 +152,23 @@ fn open_in_word(path: String) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn open_word_file(selected: &Path) -> Result<(), String> {
+    std::process::Command::new("open")
+        .args(["-a", "Microsoft Word"])
+        .arg(selected)
+        .spawn()
+        .map_err(|_| "没有找到可用的 Microsoft Word；请确认桌面版 Word 已安装".to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn open_path(path: String) -> Result<(), String> {
     let selected = Path::new(&path);
     if !selected.exists() {
         return Err("文件或目录已经不存在".into());
     }
-    if selected.is_dir() {
-        std::process::Command::new("explorer.exe")
-            .arg(selected)
-            .spawn()
-            .map_err(|error| error.to_string())?;
-        return Ok(());
-    }
-    let operation: Vec<u16> = "open\0".encode_utf16().collect();
-    let target: Vec<u16> = format!("{}\0", selected.display()).encode_utf16().collect();
-    let result = unsafe {
-        windows_sys::Win32::UI::Shell::ShellExecuteW(
-            std::ptr::null_mut(), operation.as_ptr(), target.as_ptr(),
-            std::ptr::null(), std::ptr::null(),
-            windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
-        )
-    };
-    if result as isize <= 32 {
-        return Err("系统没有找到可打开该产物的应用".into());
-    }
-    Ok(())
+    open_system_path(selected)
 }
 
 #[tauri::command]
@@ -152,7 +179,11 @@ fn open_help_document(app: tauri::AppHandle, name: String) -> Result<(), String>
         "changelog" => "help/CHANGELOG.md",
         _ => return Err("未知帮助文档".into()),
     };
-    let path = app.path().resource_dir().map_err(|error| error.to_string())?.join(relative);
+    let path = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?
+        .join(relative);
     open_path(path.to_string_lossy().into_owned())
 }
 
@@ -226,9 +257,12 @@ fn main() {
             if let Some(state) = handle.try_state::<SidecarState>() {
                 if let Ok(mut child) = state.0.lock() {
                     if let Some(process) = child.take() {
+                        #[cfg(target_os = "windows")]
                         let _ = std::process::Command::new("taskkill")
                             .args(["/PID", &process.pid().to_string(), "/T", "/F"])
                             .output();
+                        #[cfg(not(target_os = "windows"))]
+                        let _ = process.kill();
                     }
                 }
             }

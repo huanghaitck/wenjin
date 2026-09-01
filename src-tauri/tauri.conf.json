@@ -26,7 +26,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
     "license": "AGPL-3.0-only",
     "licenseFile": "../LICENSE",
     "resources": {
@@ -42,19 +41,8 @@
       "../docs/USER_MANUAL_EN.md": "help/USER_MANUAL_EN.md",
       "../CHANGELOG.md": "help/CHANGELOG.md",
       "../src/research_workbench/builtin_skillpacks/historical-research/LICENSE-APACHE-2.0": "licenses/openai-codex-APACHE-2.0.txt",
-      "../node_modules/agent-browser/bin/agent-browser-win32-x64.exe": "tools/agent-browser.exe",
       "../node_modules/agent-browser/LICENSE": "licenses/agent-browser-APACHE-2.0.txt"
     },
-    "externalBin": ["binaries/hrw-sidecar"],
-    "windows": {
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": true
-      },
-      "nsis": {
-        "installMode": "currentUser",
-        "installerHooks": "./windows/hooks.nsh"
-      }
-    }
+    "externalBin": ["binaries/hrw-sidecar"]
   }
 }

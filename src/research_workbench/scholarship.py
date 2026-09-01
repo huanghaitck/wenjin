@@ -621,8 +621,12 @@ def _agent_browser_executable() -> tuple[str, str]:
     candidates = []
     if configured:
         candidates.append((Path(configured), "configured"))
-    candidates.append((Path(sys.executable).resolve().parent / "tools" / "agent-browser.exe", "bundled"))
-    candidates.append((Path(__file__).resolve().parents[2] / "node_modules" / "agent-browser" / "bin" / "agent-browser-win32-x64.exe", "project"))
+    executable_dir = Path(sys.executable).resolve().parent
+    bundled_name = "agent-browser.exe" if os.name == "nt" else "agent-browser"
+    candidates.append((executable_dir / "tools" / bundled_name, "bundled"))
+    candidates.append((executable_dir.parent / "Resources" / "tools" / bundled_name, "bundled"))
+    project_binary = "agent-browser-win32-x64.exe" if os.name == "nt" else "agent-browser-darwin-arm64"
+    candidates.append((Path(__file__).resolve().parents[2] / "node_modules" / "agent-browser" / "bin" / project_binary, "project"))
     located = shutil.which("agent-browser")
     if located:
         candidates.append((Path(located), "system"))
@@ -646,6 +650,12 @@ def _chromium_browser_executable() -> tuple[str, str]:
         root = os.getenv(variable, "").strip()
         if root:
             candidates.append((Path(root) / relative, label))
+    if sys.platform == "darwin":
+        candidates.extend([
+            (Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), "system_chrome"),
+            (Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"), "system_edge"),
+            (Path("/Applications/Chromium.app/Contents/MacOS/Chromium"), "system_chromium"),
+        ])
     for command, label in (("msedge", "system_edge"), ("chrome", "system_chrome")):
         located = shutil.which(command)
         if located:
