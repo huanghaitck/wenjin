@@ -635,6 +635,10 @@ def repair_domain_plugin(config_root: Path, plugin_name: str) -> dict[str, Any]:
     if current is None:
         raise KeyError(f"unknown plugin: {plugin_name}")
     source = Path(str(current.get("source_path") or "")).expanduser().resolve()
+    if plugin_name == "computer-use":
+        bundled = Path(__file__).resolve().parent / "builtin_plugins" / "computer-use"
+        if bundled.is_dir():
+            source = bundled
     installed = Path(str(current.get("installed_path") or "")).resolve()
     if not source.exists() or source == installed:
         raise FileNotFoundError("the original plugin ZIP or source directory is unavailable; import it again")

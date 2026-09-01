@@ -263,6 +263,7 @@ def _stream_turn(host: "_Host", thread_id: str, run_id: str, content: str,
     watcher.start()
     chunks: list[str] = []
     compact_needed = False
+    latest_usage: dict[str, Any] = {}
     try:
         while True:
             notification = host.client.next_turn_notification(turn_id)
@@ -270,6 +271,11 @@ def _stream_turn(host: "_Host", thread_id: str, run_id: str, content: str,
                 chunks.append(str(getattr(notification.payload, "delta", "")))
             if notification.method == "thread/tokenUsage/updated":
                 usage = getattr(notification.payload, "token_usage", None)
+                if usage is not None:
+                    latest_usage = (
+                        usage.model_dump(mode="json", by_alias=True)
+                        if hasattr(usage, "model_dump") else {}
+                    )
                 total = getattr(getattr(usage, "total", None), "total_tokens", 0)
                 window = getattr(usage, "model_context_window", 0) or 0
                 compact_needed = bool(window and total >= int(window * 0.9))
@@ -283,6 +289,20 @@ def _stream_turn(host: "_Host", thread_id: str, run_id: str, content: str,
         finished.set()
         watcher.join(timeout=1)
         host.client.unregister_turn_notifications(turn_id)
+    if latest_usage:
+        with connect(host.project_root) as connection:
+            if run_kind == "main":
+                _append_run_event(connection, run_id, "model_usage", latest_usage)
+            else:
+                row = connection.execute(
+                    "SELECT model_snapshot_json FROM domain_agent_runs WHERE run_id=?", (run_id,),
+                ).fetchone()
+                snapshot = json.loads(row["model_snapshot_json"]) if row else {}
+                snapshot["token_usage"] = latest_usage
+                connection.execute(
+                    "UPDATE domain_agent_runs SET model_snapshot_json=?,updated_at=? WHERE run_id=?",
+                    (json.dumps(snapshot, ensure_ascii=False, sort_keys=True), utc_now(), run_id),
+                )
     if compact_needed and not stopped.is_set():
         host.client.thread_compact(thread_id)
         if run_kind == "main":
@@ -532,7 +552,8 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
                     profile: Any, plugin: dict[str, Any], tool_specs: list[dict[str, Any]],
                     instructions: str, access_mode: str, reasoning_effort: str,
                     parent_run_id: str = "", reasoning_mode: str = "standard",
-                    history: list[dict[str, str]] | None = None) -> str:
+                    history: list[dict[str, str]] | None = None,
+                    main_thread_id: str = "") -> str:
     plugin_name = str(plugin["name"])
     host = _host(project_root, profile, f"domain:{plugin_name}")
     tools = [
@@ -543,7 +564,7 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
         }
         for item in tool_specs if str(item.get("name", "")) in set(plugin.get("agent_tools", []))
     ]
-    mapping_key = _domain_thread_mapping_key(session_id, tools)
+    mapping_key = _domain_thread_mapping_key(session_id, tools, main_thread_id)
     with host.lock:
         codex_thread_id = _load_thread_id(project_root, mapping_key, host.profile_key)
         if codex_thread_id:
@@ -590,9 +611,11 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
             host.domain_runs.pop(codex_thread_id, None)
 
 
-def _domain_thread_mapping_key(session_id: str, tools: list[dict[str, Any]]) -> str:
+def _domain_thread_mapping_key(
+    session_id: str, tools: list[dict[str, Any]], main_thread_id: str = "",
+) -> str:
     payload = json.dumps(tools, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return f"{session_id}:tools-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
+    return f"{session_id}:{main_thread_id or 'default'}:tools-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:12]}"
 
 
 def close_hosts() -> None:

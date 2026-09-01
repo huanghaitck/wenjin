@@ -201,12 +201,8 @@ class M5ResearchLibraryTests(unittest.TestCase):
         linked_graph = library_graph(self.project, "Imperial Archive", library_root=self.library)
         self.assertEqual(linked_graph["work_cards"][0]["project_source"]["source_id"], added["source"]["source_id"])
         content_graph = library_graph(self.project, library_root=self.library)["content_graph"]
-        content_types = {node["node_type"] for node in content_graph["nodes"]}
-        self.assertIn("source", content_types)
-        self.assertIn("page", content_types)
-        self.assertIn("content", content_types)
-        self.assertTrue(any("Historical archive" in node.get("excerpt", "") for node in content_graph["nodes"]))
-        self.assertIn("contains_content", {edge["relation"] for edge in content_graph["edges"]})
+        self.assertEqual(content_graph["nodes"], [])
+        self.assertEqual(content_graph["edges"], [])
         version = linked["files"][0]["versions"][0]
         self.assertEqual(version["skill_name"], "historical-material-intake")
         self.assertEqual(len(version["skill_sha256"]), 64)
@@ -563,6 +559,8 @@ Shen Hou, “Nature's Tonic: Beer, Ecology, and Urbanization in a Chinese City, 
     def test_material_type_uses_project_location_only_as_a_classification_hint(self) -> None:
         self.assertEqual(_material_type("未定名", "内容", r"D:\\研究\\个人论文与稿件\\草稿.docx"), "personal_manuscript")
         self.assertEqual(_material_type("某书", "CIP 某出版社"), "monograph")
+        self.assertEqual(_material_type("秦岭地图", "", r"D:\\资料\\秦岭地图.png"), "map")
+        self.assertEqual(_material_type("县界", "", r"D:\\资料\\county.geojson"), "map")
 
     def test_loopback_library_api_scans_approves_and_shows_versions(self) -> None:
         source = self.materials / "api-history.txt"

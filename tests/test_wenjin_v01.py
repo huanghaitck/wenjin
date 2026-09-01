@@ -101,12 +101,11 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertLess(index.index("/vendor/cytoscape.min.js"), index.index("/vendor/cytoscape-fcose.js"))
         script = (vendor.parent / "app.js").read_text(encoding="utf-8")
         self.assertIn("name:'fcose'", script)
-        self.assertIn("packComponents:true", script)
+        self.assertIn("packComponents:false", script)
         self.assertIn("sparseLargeGraph", script)
         self.assertIn("nodeOverlap:40", script)
         self.assertIn("minZoom:.05", script)
         self.assertIn("layoutElements=sparseLargeGraph&&connected.length?connected.union(cy.edges()):cy.elements()", script)
-        self.assertIn("name:'breadthfirst'", script)
         self.assertIn("golden=Math.PI", script)
         self.assertIn("drawMode('work');return", script)
         self.assertNotIn("placeIsolated", script)
@@ -254,6 +253,7 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("₍^. .^₎⟆", script)
         self.assertIn("queued-message", script)
         self.assertIn("queued-direction-actions", script)
+        self.assertIn("state.domainView=await request(domainViewUrl(state.domainSessionId));run=state.domainView?.runs?.[0]", script)
         self.assertNotIn("messages.scrollTop = messages.scrollHeight", script)
 
     def test_compact_settings_help_and_inline_domain_run_contract(self) -> None:
@@ -331,6 +331,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("renderSourceChronicle", script)
         self.assertIn("/api/source-chronicle", script)
         self.assertIn("renderKnowledgeGraph", script)
+        self.assertIn("kind==='maps'&&['png','jpg','jpeg','webp','gif'].includes(format)", script)
+        self.assertIn(".library-asset-grid .button-row{gap:8px", styles)
         self.assertIn("How to use this graph", script)
         self.assertIn("labels.textContent='Aa'", script)
         self.assertIn("labels-always", script)
@@ -339,7 +341,7 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn("edge.composite", script)
         self.assertIn("作品关系", script)
         self.assertIn("书目实体", script)
-        self.assertIn("项目内容实体", script)
+        self.assertNotIn("contentMode=actionButton", script)
         self.assertIn("作品关系图例", script)
         self.assertIn("书目实体图例", script)
         self.assertIn("项目内容图例", script)
@@ -369,6 +371,8 @@ class WenjinV01Tests(unittest.TestCase):
         self.assertIn(".agent-workbench.left-collapsed", styles)
         self.assertIn("$('messageInput').value = '';", script)
         self.assertIn("state.pendingAttachments = [];", script)
+        self.assertIn("state.domainPendingAttachments=[];state.domainView={session,messages:[],runs:[],artifacts:[],main_thread_id:created.thread_id}", script)
+        self.assertIn("view?.main_thread_id===state.domainThreadId&&!threadOptions.some", script)
 
 
 if __name__ == "__main__":

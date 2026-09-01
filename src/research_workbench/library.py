@@ -15,7 +15,6 @@ import pymupdf as fitz
 from .db import connect, project_id, utc_now
 from .library_store import connect_library, initialize_library, resolve_library_root
 from .skill_registry import discover_skills, get_skill
-from .content_graph import project_content_graph
 
 
 SUPPORTED_SUFFIXES = {
@@ -31,7 +30,8 @@ HISTORY_TERMS = (
 LIBRARY_SHELVES = {
     "primary_sources": "原始史料", "academic_articles": "学术论文",
     "monographs": "学术专著", "personal_manuscripts": "个人论文与稿件",
-    "reading_notes": "读书笔记", "reference_works": "工具书与目录", "unclassified": "待分类",
+    "reading_notes": "读书笔记", "reference_works": "工具书与目录",
+    "maps": "地图", "unclassified": "待分类",
 }
 GRAPH_WORK_SHELVES = frozenset({
     "primary_sources", "academic_articles", "monographs",
@@ -45,6 +45,7 @@ SUGGESTED_SHELVES = {
     "personal_manuscript": "personal_manuscripts",
     "reading_note": "reading_notes",
     "reference_work": "reference_works",
+    "map": "maps",
 }
 SCAN_PAGE_SIZE = 50
 SCAN_MAX_PAGE_SIZE = 50
@@ -261,6 +262,14 @@ def _language(text: str) -> str:
 
 def _material_type(title: str, sample: str, path: str = "") -> str:
     combined = f"{path}\n{title}\n{sample[:5000]}".lower()
+    suffix = Path(path).suffix.casefold()
+    if suffix in {".geojson", ".gpkg", ".kml", ".kmz", ".mbtiles"}:
+        return "map"
+    if suffix in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".tif", ".tiff"} and any(
+        term in Path(path).stem.casefold()
+        for term in ("地图", "舆图", "地形图", "交通图", "map", "atlas")
+    ):
+        return "map"
     if any(term in combined for term in ("读书报告", "读书笔记", "读书报", "阅读札记")) or ("课程" in combined and "作业" in combined):
         return "reading_note"
     if any(term in combined for term in (
@@ -959,8 +968,11 @@ def archive_uploaded_file(
         root = library_root_for(project_root, library_root)
         with connect_library(root) as connection:
             current = connection.execute(
-                "SELECT canonical_title FROM works WHERE work_id=?", (work_id,),
+                "SELECT canonical_title,material_type FROM works WHERE work_id=?", (work_id,),
             ).fetchone()
+            material_type = _material_type(
+                title, str(candidate.get("sample_text") or ""), display_name,
+            )
             if current and (
                 candidate["proposed_action"] != "unchanged"
                 or
@@ -968,9 +980,16 @@ def archive_uploaded_file(
                 or re.fullmatch(r"[0-9a-f]{64}", str(current["canonical_title"]), re.IGNORECASE)
             ):
                 connection.execute(
-                    "UPDATE works SET canonical_title=?,updated_at=? WHERE work_id=?",
-                    (title, utc_now(), work_id),
+                    "UPDATE works SET canonical_title=?,material_type=?,updated_at=? WHERE work_id=?",
+                    (title, material_type, utc_now(), work_id),
                 )
+                connection.execute(
+                    """DELETE FROM work_tags WHERE work_id=? AND origin='system' AND tag_id IN
+                       (SELECT tag_id FROM tags WHERE name LIKE 'material:%' OR name LIKE 'shelf:%')""",
+                    (work_id,),
+                )
+                _add_tag(connection, work_id, f"material:{material_type}", "system")
+                _add_tag(connection, work_id, f"shelf:{SUGGESTED_SHELVES.get(material_type, 'unclassified')}", "system")
                 _refresh_search(connection, work_id)
                 _sync_work_graph(connection, work_id)
     return {
@@ -1328,15 +1347,22 @@ def library_assets(
     root = library_root_for(project_root, library_root)
     with connect_library(root) as connection:
         rows = connection.execute(
-            """SELECT w.work_id,w.canonical_title,w.author,f.file_id,f.path,v.format,v.byte_count
+            """SELECT w.work_id,w.canonical_title,w.author,w.material_type,f.file_id,f.path,v.format,v.byte_count,
+                      COALESCE((SELECT substr(t.name,7) FROM work_tags wt JOIN tags t ON t.tag_id=wt.tag_id
+                                WHERE wt.work_id=w.work_id AND t.name LIKE 'shelf:%' LIMIT 1),'unclassified') AS shelf
                FROM works w JOIN library_files f ON f.work_id=w.work_id
                JOIN file_versions v ON v.file_id=f.file_id AND v.is_current=1
                ORDER BY w.updated_at DESC,f.path"""
         ).fetchall()
-    return [
-        {**dict(row), "available": Path(row["path"]).is_file()}
-        for row in rows if str(row["format"]).casefold() in suffixes
-    ]
+    def included(row: Any) -> bool:
+        format_name = str(row["format"]).casefold()
+        raster_map_title = format_name in {"png", "jpg", "jpeg", "webp", "gif", "tif", "tiff"} and any(
+            term in str(row["canonical_title"]).casefold()
+            for term in ("地图", "舆图", "地形图", "交通图", "map", "atlas")
+        )
+        is_map = format_name in {"geojson", "gpkg", "kml", "kmz", "mbtiles"} or row["material_type"] == "map" or row["shelf"] == "maps" or raster_map_title
+        return is_map if kind == "maps" else format_name in suffixes and not (kind == "images" and is_map)
+    return [{**dict(row), "available": Path(row["path"]).is_file()} for row in rows if included(row)]
 
 
 def work_detail(project_root: Path, work_id: str, library_root: Path | None = None) -> dict[str, Any]:
@@ -1565,7 +1591,7 @@ def library_graph(project_root: Path, query: str = "", limit: int = 200,
     root = library_root_for(project_root, library_root)
     limit = max(1, min(int(limit), 500))
     selected_shelf = shelf if shelf in LIBRARY_SHELVES else ""
-    content_graph = project_content_graph(project_root, query, max(40, limit * 5))
+    content_graph = {"nodes": [], "edges": [], "node_count": 0, "edge_count": 0, "type_counts": {}}
     with connect_library(root) as connection:
         literature_relations = _literature_relation_candidates(project_root, connection, query, max(60, limit * 4))
         missing_work_ids = [

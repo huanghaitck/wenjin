@@ -68,8 +68,9 @@ class AttachmentTests(unittest.TestCase):
     def test_library_separates_maps_and_images_without_new_databases(self) -> None:
         library = Path(self.temporary.name) / "library-assets"
         save_attachment(self.project, self.thread["thread_id"], "counties.geojson", b'{"type":"FeatureCollection","features":[]}', library)
+        save_attachment(self.project, self.thread["thread_id"], "秦岭地图.png", b"not-a-decoded-map", library)
         save_attachment(self.project, self.thread["thread_id"], "page.png", b"not-a-decoded-image", library)
-        self.assertEqual(library_assets(self.project, "maps", library)[0]["canonical_title"], "counties")
+        self.assertEqual({item["canonical_title"] for item in library_assets(self.project, "maps", library)}, {"counties", "秦岭地图"})
         self.assertEqual(library_assets(self.project, "images", library)[0]["canonical_title"], "page")
 
 

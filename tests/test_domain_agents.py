@@ -13,7 +13,7 @@ from research_workbench.agent_runtime import create_thread, recover_interrupted_
 from research_workbench.attachments import save_attachment
 from research_workbench.db import SCHEMA_VERSION, connect, utc_now
 from research_workbench.domain_agents import (
-    _domain_history, _domain_prompt, _nested_domain_tool_action, _tool_requirements, domain_agent_view, ensure_domain_session,
+    _artifact_inspection_requirements, _domain_history, _domain_prompt, _nested_domain_tool_action, _tool_requirements, domain_agent_state, domain_agent_view, ensure_domain_session,
     send_domain_message,
 )
 from research_workbench.service import initialize_project
@@ -43,12 +43,44 @@ class DomainAgentTests(unittest.TestCase):
         )
         self.assertEqual([item["tool"] for item in requirements], ["record_review_decisions", "apply_review_workbook"])
 
+    def test_review_artifact_verification_requires_each_registered_workbook(self) -> None:
+        plugin = {**self.plugin, "agent_tools": ["inspect_half_finished_workbook"]}
+        artifacts = [
+            {"title": "待人工复核_下一轮.xlsx", "tool_path": r"D:\run\待人工复核_下一轮.xlsx"},
+            {"title": "复核合并审计.xlsx", "tool_path": r"D:\run\复核合并审计.xlsx"},
+            {"title": "其他产物.xlsx", "tool_path": r"D:\run\其他产物.xlsx"},
+        ]
+        requirements = _artifact_inspection_requirements(
+            plugin, "只读核验下一轮复核表和合并审计", artifacts,
+        )
+        self.assertEqual(requirements[0]["minimum_calls"], 2)
+        self.assertEqual(requirements[0]["paths"], [
+            r"D:\run\待人工复核_下一轮.xlsx", r"D:\run\复核合并审计.xlsx",
+        ])
+
     def test_schema_23_adds_isolated_domain_agent_tables(self) -> None:
         with connect(self.project) as connection:
             version = connection.execute("SELECT MAX(version) FROM schema_meta").fetchone()[0]
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertEqual(version, SCHEMA_VERSION)
         self.assertTrue({"domain_agent_sessions", "domain_agent_messages", "domain_agent_runs", "domain_agent_tool_calls", "domain_agent_artifacts"} <= tables)
+
+    def test_domain_agent_state_lists_threads_that_actually_have_domain_runs(self) -> None:
+        parent = create_thread(self.project, "main")
+        child = create_thread(self.project, "领域 Agent｜disaster-history｜任务", parent_thread_id=parent["thread_id"])
+        with patch("research_workbench.domain_agents.plugin_state", return_value={"plugins": [self.plugin]}), patch(
+            "research_workbench.domain_agents.public_domain_model_settings", return_value={"roles": []}
+        ):
+            session = ensure_domain_session(self.project, "disaster-history")
+            now = utc_now()
+            with connect(self.project) as connection:
+                connection.execute(
+                    "INSERT INTO domain_agent_runs(run_id,session_id,main_thread_id,status,model_snapshot_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?)",
+                    ("DRN_test", session["session_id"], child["thread_id"], "COMPLETED", "{}", now, now),
+                )
+            state = domain_agent_state(self.project)
+        self.assertEqual(state["sessions"][0]["task_threads"][0]["thread_id"], child["thread_id"])
+        self.assertEqual(state["sessions"][0]["task_threads"][0]["parent_thread_id"], parent["thread_id"])
 
     def test_domain_agent_prompt_loads_its_installed_skill(self) -> None:
         root = self.project / "plugin"
@@ -71,6 +103,16 @@ class DomainAgentTests(unittest.TestCase):
         }])
         self.assertIn('"input_path"', prompt)
         self.assertIn('"required": ["input_path"]', prompt)
+
+    def test_domain_agent_prompt_keeps_generated_workbooks_out_of_reference_search(self) -> None:
+        plugin = {
+            **self.plugin,
+            "agent_tools": ["inspect_half_finished_workbook", "reference_search_excel"],
+        }
+        prompt = _domain_prompt(plugin, native_tools=True)
+        self.assertIn("Generated workbook artifacts must be inspected with inspect_half_finished_workbook", prompt)
+        self.assertIn("input/references", prompt)
+        self.assertIn("choose a new relative outputs/ directory", prompt)
 
     def test_numbered_disaster_samples_require_one_program_call_each(self) -> None:
         plugin = {
@@ -130,6 +172,34 @@ class DomainAgentTests(unittest.TestCase):
                 "SELECT COUNT(*) FROM messages WHERE thread_id=?", (main_thread["thread_id"],)
             ).fetchone()[0]
         self.assertEqual(main_messages, 0)
+
+    def test_followup_receives_same_thread_artifact_paths_without_probing(self) -> None:
+        main_thread = create_thread(self.project, "artifact followup")
+        output = self.project / "domain" / "review.xlsx"
+        first_actions = iter([
+            {"type": "tool_call", "tool": "build_candidate", "arguments": {"input": "source.xlsx"}},
+            {"type": "final", "content": "复核表已生成。"},
+        ])
+        with patch("research_workbench.domain_agents._plugin", return_value=self.plugin), patch(
+            "research_workbench.domain_agents._model_action", side_effect=lambda *args, **kwargs: next(first_actions),
+        ), patch(
+            "research_workbench.domain_agents.call_domain_plugin_tool",
+            return_value={"structuredContent": {"deliverables": [str(output)], "status": "candidate"}},
+        ):
+            send_domain_message(
+                self.project, "disaster-history", "建立复核表",
+                main_thread_id=main_thread["thread_id"], access_mode="research_assist",
+            )
+        with patch("research_workbench.domain_agents._plugin", return_value=self.plugin), patch(
+            "research_workbench.domain_agents._model_action",
+            return_value={"type": "final", "content": "已找到上一轮复核表。"},
+        ) as model:
+            send_domain_message(
+                self.project, "disaster-history", "继续处理上一轮产物",
+                main_thread_id=main_thread["thread_id"],
+            )
+        self.assertIn("DOMAIN_ARTIFACTS", model.call_args.args[1])
+        self.assertIn(json.dumps(str(output.resolve()))[1:-1], model.call_args.args[1])
 
     def test_two_domain_task_threads_can_run_concurrently_without_mixing_views(self) -> None:
         first = create_thread(self.project, "parallel A")
@@ -372,6 +442,38 @@ class DomainAgentTests(unittest.TestCase):
         self.assertEqual(model.call_args.kwargs["reasoning_effort"], "high")
         self.assertIn('\"tool_path\":', model.call_args.args[1])
         self.assertIn("source.txt", model.call_args.args[1])
+
+    def test_domain_tool_rewrites_attached_display_path_to_absolute_tool_path(self) -> None:
+        thread = create_thread(self.project, "domain attachment path")
+        attachment = save_attachment(
+            self.project, thread["thread_id"], "source.txt", b"workbook",
+        )
+        plugin = {
+            **self.plugin,
+            "agent_tools": ["inspect_half_finished_workbook"],
+            "tool_permissions": {"inspect_half_finished_workbook": "read"},
+        }
+        actions = iter([
+            {
+                "type": "tool_call", "tool": "inspect_half_finished_workbook",
+                "arguments": {"input_path": attachment["project_path"]},
+            },
+            {"type": "final", "content": "附件已经检查。"},
+        ])
+        with patch("research_workbench.domain_agents._plugin", return_value=plugin), patch(
+            "research_workbench.domain_agents._model_action", side_effect=lambda *args, **kwargs: next(actions),
+        ), patch(
+            "research_workbench.domain_agents.call_domain_plugin_tool",
+            return_value={"structuredContent": {"read_only": True}},
+        ) as tool:
+            send_domain_message(
+                self.project, "disaster-history", "检查附件",
+                main_thread_id=thread["thread_id"], attached_refs=[attachment],
+            )
+        self.assertEqual(
+            tool.call_args.args[3]["input_path"],
+            str((self.project / attachment["project_path"]).resolve()),
+        )
 
     def test_all_rows_wording_cannot_reuse_an_old_answer_without_running_the_tool(self) -> None:
         plugin = {

@@ -9,6 +9,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import research_workbench.domain_plugins as domain_plugins
+
 from research_workbench.domain_plugins import (
     _plugin_model_environment, bind_domain_plugin_data, call_domain_plugin_tool,
     install_codex_plugin, install_domain_plugin, is_codex_plugin_package,
@@ -108,6 +110,22 @@ class DomainPluginTests(unittest.TestCase):
         (installed / "skills" / "sample" / "SKILL.md").write_text("broken", encoding="utf-8")
         repaired = repair_domain_plugin(self.config, "sample-domain")
         self.assertIn("# Sample", (Path(repaired["plugins"][0]["installed_path"]) / "skills" / "sample" / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_builtin_computer_use_repairs_from_the_current_bundle_not_stale_temp_source(self) -> None:
+        package = self.root / "package"
+        bundled = package / "builtin_plugins" / "computer-use"
+        shutil.copytree(self.plugin, bundled)
+        manifest = json.loads((bundled / "wenjin-plugin.json").read_text(encoding="utf-8"))
+        manifest["name"] = "computer-use"
+        (bundled / "wenjin-plugin.json").write_text(json.dumps(manifest), encoding="utf-8")
+        state = install_domain_plugin(self.config, bundled, runtime_command=__file__)
+        registry = self.config / "plugins" / "registry.json"
+        saved = json.loads(registry.read_text(encoding="utf-8"))
+        saved["plugins"][0]["source_path"] = str(self.root / "vanished-mei-source")
+        registry.write_text(json.dumps(saved), encoding="utf-8")
+        with patch.object(domain_plugins, "__file__", str(package / "domain_plugins.py")):
+            repaired = repair_domain_plugin(self.config, "computer-use")
+        self.assertEqual(repaired["plugins"][0]["status"], "ready")
 
     def test_remove_deletes_only_the_named_plugin_copy(self) -> None:
         install_domain_plugin(self.config, self.plugin)

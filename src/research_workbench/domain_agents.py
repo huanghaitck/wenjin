@@ -132,6 +132,54 @@ def _domain_history(
     return history[-limit:]
 
 
+def _domain_artifact_context(
+    project_root: Path, session_id: str, main_thread_id: str, limit: int = 20,
+) -> list[dict[str, str]]:
+    with connect(project_root) as connection:
+        rows = connection.execute(
+            """SELECT a.title,a.project_path,a.artifact_type,a.status
+               FROM domain_agent_artifacts a
+               JOIN domain_agent_runs r ON r.run_id=a.run_id
+               WHERE a.session_id=? AND COALESCE(r.main_thread_id,'')=?
+               ORDER BY a.created_at DESC LIMIT ?""",
+            (session_id, main_thread_id, limit),
+        ).fetchall()
+    artifacts = []
+    for row in rows:
+        path = Path(str(row["project_path"]))
+        artifacts.append({
+            "title": str(row["title"]),
+            "tool_path": str(path if path.is_absolute() else (project_root / path).resolve()),
+            "artifact_type": str(row["artifact_type"]),
+            "status": str(row["status"]),
+        })
+    return artifacts
+
+
+def _artifact_inspection_requirements(
+    plugin: dict[str, Any], content: str, artifacts: list[dict[str, str]],
+) -> list[dict[str, Any]]:
+    if "inspect_half_finished_workbook" not in {str(value) for value in plugin.get("agent_tools", [])}:
+        return []
+    if not re.search(r"(?:核验|检查|查看|读取)", content):
+        return []
+    keywords = []
+    if "下一轮复核" in content or "待人工复核_下一轮" in content:
+        keywords.extend(("待人工复核_下一轮", "下一轮复核"))
+    if "合并审计" in content or "复核合并审计" in content:
+        keywords.extend(("复核合并审计", "合并审计"))
+    paths = list(dict.fromkeys(
+        item["tool_path"] for item in artifacts
+        if Path(item["tool_path"]).suffix.casefold() in {".xlsx", ".xlsm"}
+        and any(keyword in item["title"] for keyword in keywords)
+    ))
+    return [{
+        "tool": "inspect_half_finished_workbook",
+        "minimum_calls": len(paths),
+        "paths": paths,
+    }] if paths else []
+
+
 def _domain_prompt(plugin: dict[str, Any], tool_specs: list[dict[str, Any]] | None = None,
                    native_tools: bool = False) -> str:
     tools = [str(value) for value in plugin.get("agent_tools", [])]
@@ -149,12 +197,21 @@ def _domain_prompt(plugin: dict[str, Any], tool_specs: list[dict[str, Any]] | No
             if path.is_file() and path.is_relative_to(root):
                 skill_texts.append(path.read_text(encoding="utf-8"))
     skill_context = "\n\n".join(skill_texts)[:30000]
+    workbook_routing = (
+        "Generated workbook artifacts must be inspected with inspect_half_finished_workbook. "
+        "Use reference_search_excel only for source workbooks inside input/references; never use it "
+        "to inspect deliverables, review workbooks, or audit workbooks. "
+        "For convert_half_finished_workbook, choose a new relative outputs/ directory inside the current "
+        "project; do not ask the researcher to create a folder and do not target Desktop or another "
+        "external directory.\n"
+        if {"inspect_half_finished_workbook", "reference_search_excel"} <= set(tools) else ""
+    )
     if native_tools:
         return f"""You are the stateful specialist Agent for {plugin.get('display_name') or plugin.get('name')}.
 Use the exposed deterministic domain tools directly from the researcher's natural-language request.
 Do not emit JSON tool protocols or hidden work language. Never claim a tool ran without its receipt.
 Preserve row, page, source and file identity. Do not overwrite originals; generated files are candidates.
-The main Agent remains responsible for cross-domain judgment, formal evidence and final computer authority.
+{workbook_routing}The main Agent remains responsible for cross-domain judgment, formal evidence and final computer authority.
 Domain boundaries:
 {boundaries or '- No additional boundary was declared.'}
 Installed domain skill:
@@ -351,9 +408,18 @@ def send_domain_message(
     if reasoning_effort not in {"low", "medium", "high", "max"}:
         raise ValueError("unknown domain-agent reasoning effort")
     attachment_receipts = []
+    attachment_tool_paths: dict[str, str] = {}
     for reference in attached_refs:
         attachment = inspect_attachment(project_root, str(reference.get("attachment_id", "")))
         attachment["tool_path"] = attachment["absolute_path"]
+        for alias in (
+            str(reference.get("project_path", "")),
+            str(reference.get("original_name", "")),
+            str(attachment.get("project_path", "")),
+            str(attachment.get("original_name", "")),
+        ):
+            if alias:
+                attachment_tool_paths[alias] = str(attachment["absolute_path"])
         if attachment["kind"] == "image":
             vision = _domain_profile(project_root, plugin_name, "vision_primary", "vision_ocr")
             if vision is None:
@@ -400,8 +466,23 @@ def send_domain_message(
             _append_run_event(connection, parent_run_id, "domain_run_started", {
                 "domain_run_id": run_id, "plugin_name": plugin_name,
             })
+    model_content = content
+    artifact_context = _domain_artifact_context(
+        project_root, str(session["session_id"]), main_thread_id,
+    )
+    if artifact_context:
+        model_content += "\n\nDOMAIN_ARTIFACTS " + _json(artifact_context)
     observations: list[dict[str, Any]] = []
     requirements = _tool_requirements(plugin, content)
+    for artifact_requirement in _artifact_inspection_requirements(plugin, content, artifact_context):
+        existing = next((item for item in requirements if item.get("tool") == artifact_requirement["tool"]), None)
+        if existing:
+            existing["paths"] = list(dict.fromkeys([
+                *existing.get("paths", []), *artifact_requirement["paths"],
+            ]))
+            existing["minimum_calls"] = max(int(existing.get("minimum_calls", 1)), len(existing["paths"]))
+        else:
+            requirements.append(artifact_requirement)
     embedded_receipts: list[dict[str, Any]] = []
     if "ATTACHMENT_INSPECTION_RECEIPTS " in request_text:
         try:
@@ -467,10 +548,11 @@ def send_domain_message(
             )
         try:
             final = _clean_final_text(run_domain_turn(
-                project_root, str(session["session_id"]), run_id, content, profile, plugin,
+                project_root, str(session["session_id"]), run_id, model_content, profile, plugin,
                 available_tool_specs, domain_prompt,
                 access_mode, reasoning_effort, parent_run_id, reasoning_mode,
                 _domain_history(project_root, str(session["session_id"]), main_thread_id),
+                main_thread_id=main_thread_id,
             ))
             with connect(project_root) as connection:
                 current = connection.execute(
@@ -520,7 +602,7 @@ def send_domain_message(
             if _apply_domain_run_controls(project_root, run_id) == "stop":
                 return domain_agent_view(project_root, session["session_id"], main_thread_id)
             action = {"type": "final", "content": forced_final} if forced_final else _model_action(
-                profile, content, observations, tool_budget - len(observations),
+                profile, model_content, observations, tool_budget - len(observations),
                 "DOMAIN_SUBAGENT: private memory; return candidates to the main agent.",
                 _domain_history(project_root, session["session_id"], main_thread_id),
                 system_prompt=_domain_prompt(plugin, tool_specs),
@@ -592,6 +674,19 @@ def send_domain_message(
                 continue
             if not isinstance(arguments, dict):
                 raise ValueError("domain tool arguments must be an object")
+            for key, value in list(arguments.items()):
+                if not isinstance(value, str) or not (key.endswith("_path") or key in {"review_workbook", "main_workbook"}):
+                    continue
+                resolved = attachment_tool_paths.get(value)
+                if not resolved and value and not Path(value).is_absolute():
+                    matches = {
+                        tool_path for alias, tool_path in attachment_tool_paths.items()
+                        if Path(alias).name.casefold() == Path(value).name.casefold()
+                    }
+                    if len(matches) == 1:
+                        resolved = matches.pop()
+                if resolved:
+                    arguments[key] = resolved
             exact_failures = [
                 item for item in observations
                 if item.get("tool") == tool_name and item.get("arguments") == arguments
@@ -787,6 +882,19 @@ def domain_agent_state(project_root: Path) -> dict[str, Any]:
     sessions = []
     for plugin in plugins:
         session = ensure_domain_session(project_root, str(plugin["name"]))
+        with connect(project_root) as connection:
+            task_threads = [dict(row) for row in connection.execute(
+                """SELECT t.thread_id,t.title,t.updated_at,
+                          COALESCE(i.parent_thread_id,'') AS parent_thread_id,
+                          MAX(r.created_at) AS last_domain_run_at
+                   FROM domain_agent_runs r
+                   JOIN threads t ON t.thread_id=r.main_thread_id
+                   LEFT JOIN thread_inheritance i ON i.child_thread_id=t.thread_id
+                   WHERE r.session_id=?
+                   GROUP BY t.thread_id,t.title,t.updated_at,i.parent_thread_id
+                   ORDER BY last_domain_run_at DESC""",
+                (session["session_id"],),
+            )]
         sessions.append({
             **session,
             "display_name": plugin.get("display_name") or plugin.get("name"),
@@ -795,5 +903,6 @@ def domain_agent_state(project_root: Path) -> dict[str, Any]:
             "model_roles": plugin.get("model_roles", []),
             "model_settings": public_domain_model_settings(find_config_root(project_root), str(plugin["name"])),
             "workspace": plugin.get("workspace", {}),
+            "task_threads": task_threads,
         })
     return {"sessions": sessions, "count": len(sessions)}

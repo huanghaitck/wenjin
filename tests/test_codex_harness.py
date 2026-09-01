@@ -18,11 +18,13 @@ from research_workbench.db import connect, utc_now
 
 class CodexHarnessTests(unittest.TestCase):
     def test_domain_codex_thread_changes_when_dynamic_tool_contract_changes(self) -> None:
-        first = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}])
-        same = _domain_thread_mapping_key("S", [{"inputSchema": {"type": "object"}, "name": "inspect"}])
-        changed = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}, {"name": "write", "inputSchema": {"type": "object"}}])
+        first = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}], "T1")
+        same = _domain_thread_mapping_key("S", [{"inputSchema": {"type": "object"}, "name": "inspect"}], "T1")
+        changed = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}, {"name": "write", "inputSchema": {"type": "object"}}], "T1")
+        other_thread = _domain_thread_mapping_key("S", [{"name": "inspect", "inputSchema": {"type": "object"}}], "T2")
         self.assertEqual(first, same)
         self.assertNotEqual(first, changed)
+        self.assertNotEqual(first, other_thread)
     def test_sensitive_command_tool_is_visible_for_bounded_self_repair(self) -> None:
         self.assertIn("computer.run", _EAGER_TOOLS)
         self.assertIn("system.diagnose", _EAGER_TOOLS)

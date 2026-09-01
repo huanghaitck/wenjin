@@ -11,11 +11,11 @@
   <header class="topbar">
     <div class="brand-cluster"><button id="primarySidebarToggle" class="icon-button topbar-icon" title="隐藏左侧栏" aria-label="隐藏左侧栏"><img src="/vendor/icons/panel-left-close.svg" alt="" aria-hidden="true"></button><div class="brand-copy"><strong id="brandName">问津</strong><span id="brandTagline">人文社会科学研究工作台</span></div></div>
     <nav class="workspace-nav importer" aria-label="主要工作区">
-      <button id="agentMode" class="mode-active"><img src="/vendor/icons/message-circle.svg" alt="" aria-hidden="true"><span data-i18n="nav_agent">研究对话</span></button>
-      <button id="projectMode"><img src="/vendor/icons/folder-kanban.svg" alt="" aria-hidden="true"><span data-i18n="nav_project">项目</span></button>
-      <button id="domainMode"><img src="/vendor/icons/bot.svg" alt="" aria-hidden="true"><span data-i18n="nav_domain">领域 Agent</span></button>
-      <button id="libraryMode"><img src="/vendor/icons/library.svg" alt="" aria-hidden="true"><span data-i18n="nav_library">图书馆</span></button>
-      <button id="articleMode"><img src="/vendor/icons/file-pen-line.svg" alt="" aria-hidden="true"><span data-i18n="nav_article">写作</span></button>
+      <button id="agentMode" class="mode-active" title="研究对话" aria-label="研究对话"><img src="/vendor/icons/message-circle.svg" alt="" aria-hidden="true"><span data-i18n="nav_agent">研究对话</span></button>
+      <button id="projectMode" title="项目工作区" aria-label="项目工作区"><img src="/vendor/icons/folder-kanban.svg" alt="" aria-hidden="true"><span data-i18n="nav_project">项目</span></button>
+      <button id="domainMode" title="领域 Agent" aria-label="领域 Agent"><img src="/vendor/icons/bot.svg" alt="" aria-hidden="true"><span data-i18n="nav_domain">领域 Agent</span></button>
+      <button id="libraryMode" title="研究图书馆" aria-label="研究图书馆"><img src="/vendor/icons/library.svg" alt="" aria-hidden="true"><span data-i18n="nav_library">图书馆</span></button>
+      <button id="articleMode" title="文章工作台" aria-label="文章工作台"><img src="/vendor/icons/file-pen-line.svg" alt="" aria-hidden="true"><span data-i18n="nav_article">写作</span></button>
     </nav>
     <div class="utility-nav"><button id="skillsMode" class="icon-button" title="技能与插件" aria-label="技能与插件"><img src="/vendor/icons/puzzle.svg" alt="" aria-hidden="true"></button><button id="settingsMode" class="icon-button" title="设置" aria-label="设置"><img src="/vendor/icons/settings.svg" alt="" aria-hidden="true"></button><button id="helpMode" class="icon-button" title="帮助" aria-label="帮助"><img src="/vendor/icons/circle-help.svg" alt="" aria-hidden="true"></button><button id="languageToggle" class="language-button" title="Switch language">EN</button></div>
   </header>
@@ -45,7 +45,7 @@
   <main id="domainWorkbench" class="domain-workbench" hidden>
     <aside id="domainListPanel" class="domain-list-panel surface">
       <header class="agent-heading"><div><h2 data-zh="领域 Agent" data-en="Domain agents">领域 Agent</h2><p data-zh="导入、创建或选择专业智能体" data-en="Import, create, or choose a specialist agent">导入、创建或选择专业智能体</p></div></header>
-      <div class="domain-manager-actions"><button id="domainImportToggle" data-zh="导入 Agent" data-en="Import agent">导入 Agent</button><button id="domainCreateToggle" data-zh="创建 Agent" data-en="Create agent">创建 Agent</button></div>
+      <div class="domain-manager-actions"><button id="domainImportToggle" class="icon-button" title="导入领域 Agent" aria-label="导入领域 Agent"><img src="/vendor/icons/archive.svg" alt="" aria-hidden="true"></button><button id="domainCreateToggle" class="icon-button" title="创建领域 Agent" aria-label="创建领域 Agent"><img src="/vendor/icons/plus.svg" alt="" aria-hidden="true"></button></div>
       <section id="domainImportPanel" class="domain-manager-panel" hidden>
         <strong data-zh="导入已有领域 Agent" data-en="Import an existing domain agent">导入已有领域 Agent</strong>
         <input id="domainImportPath" placeholder="选择 .zip 或已解压目录">
@@ -62,7 +62,7 @@
       <div id="domainAgentList" class="domain-agent-list"></div>
     </aside>
     <div id="domainLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整领域 Agent 列表宽度"></div><section class="domain-conversation-panel surface">
-      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div class="domain-thread-controls"><label><span data-zh="任务线程" data-en="Task thread">任务线程</span><select id="domainThreadSelect"></select></label><button id="renameDomainThread" class="icon-only" title="重命名当前线程" aria-label="重命名当前线程">✎</button><button id="newDomainThread" data-zh="＋ 新线程" data-en="＋ New thread">＋ 新线程</button></div><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
+      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div class="domain-thread-controls"><label><span data-zh="任务线程" data-en="Task thread">任务线程</span><select id="domainThreadSelect"></select></label><button id="renameDomainThread" class="icon-button" title="重命名当前线程" aria-label="重命名当前线程"><img src="/vendor/icons/pencil.svg" alt="" aria-hidden="true"></button><button id="newDomainThread" class="icon-button" title="新建领域线程" aria-label="新建领域线程"><img src="/vendor/icons/plus.svg" alt="" aria-hidden="true"></button></div><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
       <div id="domainFunctions" class="domain-functions"></div>
       <div class="run-status-row"><div id="domainRunStatus" class="run-status" role="status" aria-live="polite"></div><button id="domainJumpToLatest" class="jump-to-latest" hidden data-zh="回到最新消息" data-en="Jump to latest">回到最新消息</button></div>
       <div id="domainMessages" class="messages domain-messages"></div>
@@ -72,7 +72,7 @@
         <input id="domainAttachmentInput" type="file" multiple accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles" hidden>
         <div class="composer-main"><textarea id="domainMessageInput" placeholder="直接向当前领域 Agent 提出任务"></textarea><button id="sendDomainMessage" class="primary-inline" data-zh="发送" data-en="Send">发送</button></div>
         <div class="composer-toolbar">
-          <div class="composer-left"><button id="addDomainAttachment" data-zh="＋ 加入文件" data-en="＋ Attach files">＋ 加入文件</button><label>Agent 权限<select id="domainAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label></div>
+          <div class="composer-left"><button id="addDomainAttachment" class="icon-button" title="加入文件" aria-label="加入文件"><img src="/vendor/icons/paperclip.svg" alt="" aria-hidden="true"></button><label>Agent 权限<select id="domainAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label></div>
           <div class="composer-right"><button id="domainConfigureModel"><span id="domainModelLabel">跟随主模型</span></button><label id="domainReasoningModeLabel">推理模式<select id="domainReasoningMode"></select></label><label id="domainReasoningEffortLabel">思考强度<select id="domainReasoningEffort"></select></label></div>
         </div>
       </div>
@@ -172,7 +172,7 @@
         </div>
         <div class="composer-toolbar">
           <div class="composer-left">
-            <button id="attachFiles" type="button" data-zh="＋ 加入文件" data-en="＋ Attach files">＋ 加入文件</button>
+            <button id="attachFiles" type="button" class="icon-button" title="加入文件" aria-label="加入文件"><img src="/vendor/icons/paperclip.svg" alt="" aria-hidden="true"></button>
             <input id="chatAttachmentInput" type="file" multiple hidden accept=".pdf,.docx,.xlsx,.xlsm,.csv,.tsv,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.geojson,.gpkg,.kml,.kmz,.mbtiles">
             <label>Agent 权限<select id="agentAccessMode"><option value="ask">请求批准</option><option value="research_assist">帮我批准</option><option value="full_computer">完全访问</option></select></label>
           </div>
