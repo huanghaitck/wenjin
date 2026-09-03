@@ -805,6 +805,117 @@ def rename_thread(project_root: Path, thread_id: str, title: str) -> dict[str, A
     return {"thread_id": thread_id, "title": title[:120]}
 
 
+def archive_thread(project_root: Path, thread_id: str) -> dict[str, Any]:
+    """软删除：线程转入归档态，默认列表隐藏，可随时恢复。"""
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT thread_id FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        connection.execute(
+            "UPDATE threads SET status='archived',updated_at=? WHERE thread_id=?",
+            (utc_now(), thread_id),
+        )
+    return {"thread_id": thread_id, "status": "archived"}
+
+
+def restore_thread(project_root: Path, thread_id: str) -> dict[str, Any]:
+    """把归档线程恢复为 active。"""
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT thread_id FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        connection.execute(
+            "UPDATE threads SET status='active',updated_at=? WHERE thread_id=?",
+            (utc_now(), thread_id),
+        )
+    return {"thread_id": thread_id, "status": "active"}
+
+
+def _forget_codex_thread_ids(project_root: Path, thread_id: str) -> None:
+    """删除线程时同步清理 wenjin→codex 的线程 ID 映射，避免残留悬挂引用。"""
+    path = project_root / "runtime" / "codex_threads.json"
+    if not path.exists():
+        return
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    changed = False
+    if isinstance(data, dict):
+        for profile_key, mapping in list(data.items()):
+            if isinstance(mapping, dict) and thread_id in mapping:
+                mapping.pop(thread_id, None)
+                changed = True
+                if not mapping:
+                    data.pop(profile_key, None)
+    if changed:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def delete_thread(project_root: Path, thread_id: str) -> dict[str, Any]:
+    """彻底删除线程及其全部关联记录；不可恢复。
+
+    先按 runs/goals 的显式依赖清运行链，再动态扫描所有通过 thread_id 或
+    run_id/goal_id 引用的表逐表清理；领域运行记录（domain_agent_runs）只把
+    main_thread_id 置空以保留领域审计轨迹。最后删除 threads 行并同步清理
+    wenjin→codex 线程映射。
+    """
+    with connect(project_root) as connection:
+        row = connection.execute("SELECT thread_id FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"unknown thread: {thread_id}")
+        run_ids = [
+            str(item["run_id"])
+            for item in connection.execute("SELECT run_id FROM runs WHERE thread_id=?", (thread_id,)).fetchall()
+        ]
+        goal_ids = [
+            str(item["goal_id"])
+            for item in connection.execute("SELECT goal_id FROM goals WHERE thread_id=?", (thread_id,)).fetchall()
+        ]
+        for run_id in run_ids:
+            connection.execute(
+                "DELETE FROM approvals WHERE tool_call_id IN (SELECT tool_call_id FROM tool_calls WHERE run_id=?)",
+                (run_id,),
+            )
+            connection.execute("DELETE FROM tool_calls WHERE run_id=?", (run_id,))
+            connection.execute("DELETE FROM run_events WHERE run_id=?", (run_id,))
+        connection.execute("DELETE FROM runs WHERE thread_id=?", (thread_id,))
+        for goal_id in goal_ids:
+            connection.execute("DELETE FROM goals WHERE goal_id=?", (goal_id,))
+        connection.execute("DELETE FROM messages WHERE thread_id=?", (thread_id,))
+        connection.execute("DELETE FROM thread_attachments WHERE thread_id=?", (thread_id,))
+        connection.execute(
+            "DELETE FROM thread_inheritance WHERE child_thread_id=? OR parent_thread_id=?",
+            (thread_id, thread_id),
+        )
+        connection.execute(
+            "UPDATE domain_agent_runs SET main_thread_id=NULL WHERE main_thread_id=?",
+            (thread_id,),
+        )
+        # 动态清理其余通过 thread_id 引用 threads 的表（thread_context_bindings、
+        # memory_candidates、manuscripts 等随 schema 演进增减，写死清单必然漏）。
+        referencing = connection.execute(
+            """SELECT m.name AS table_name, f.\"from\" AS column_name
+               FROM sqlite_master m
+               JOIN pragma_foreign_key_list(m.name) f
+               WHERE f.\"table\" = 'threads' AND f.\"to\" = 'thread_id' AND m.name != 'threads'"""
+        ).fetchall()
+        for item in referencing:
+            table, column = str(item["table_name"]), str(item["column_name"])
+            if column == "main_thread_id":
+                connection.execute(
+                    f'UPDATE "{table}" SET main_thread_id=NULL WHERE main_thread_id=?', (thread_id,)
+                )
+                continue
+            if table == "domain_agent_runs":
+                continue
+            connection.execute(f'DELETE FROM "{table}" WHERE "{column}"=?', (thread_id,))
+        connection.execute("DELETE FROM threads WHERE thread_id=?", (thread_id,))
+    _forget_codex_thread_ids(project_root, thread_id)
+    return {"thread_id": thread_id, "status": "deleted"}
+
+
 def _maybe_title_thread(project_root: Path, thread_id: str, content: str) -> None:
     with connect(project_root) as connection:
         row = connection.execute("SELECT title FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
@@ -827,15 +938,17 @@ def ensure_default_thread(project_root: Path) -> dict[str, Any]:
     return dict(row) if row is not None else create_thread(project_root, "新的研究讨论")
 
 
-def list_threads(project_root: Path) -> list[dict[str, Any]]:
-    with connect(project_root) as connection:
-        rows = connection.execute(
-            """SELECT t.*,
+def list_threads(project_root: Path, include_archived: bool = False) -> list[dict[str, Any]]:
+    query = """SELECT t.*,
                       (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.thread_id) AS message_count,
                       (SELECT status FROM runs r WHERE r.thread_id = t.thread_id ORDER BY created_at DESC LIMIT 1)
                         AS latest_run_status
-               FROM threads t ORDER BY updated_at DESC, created_at DESC"""
-        ).fetchall()
+               FROM threads t"""
+    if not include_archived:
+        query += " WHERE t.status != 'archived'"
+    query += " ORDER BY updated_at DESC, created_at DESC"
+    with connect(project_root) as connection:
+        rows = connection.execute(query).fetchall()
     return [dict(row) for row in rows]
 
 

@@ -924,6 +924,8 @@ function renderDomainWorkspace(){
   threadSelect.disabled=!selectedSession;
   $('renameDomainThread').disabled=!selectedSession||!threadSelect.value;
   $('newDomainThread').disabled=!selectedSession;
+  $('archiveDomainThread').disabled=!selectedSession||!threadSelect.value;
+  $('deleteDomainThread').disabled=!selectedSession||!threadSelect.value;
   const domainRole=selectedSession?.model_settings?.roles?.find((item)=>item.id==='domain_reasoning'),run=view?.runs?.[0];
   $('domainModelLabel').textContent=!selectedSession?(english?'Choose an agent first':'请先选择 Agent'):(domainRole?.provider==='inherit'?`${english?'Inherits':'继承默认'} · ${domainRole?.effective_model||'—'}`:`${domainRole?.effective_provider||'—'} · ${domainRole?.effective_model||'—'}`);
   $('domainConfigureModel').disabled=!selectedSession;
@@ -987,13 +989,43 @@ function openDomainModelRole(roleId){
   actions.append(actionButton(english?'Refresh models':'刷新模型列表',async()=>{try{const result=await request('/api/domain-model-settings/models',localSessionOptions({plugin_name:session.plugin_name,role_id:role.id,provider:provider.value,base_url:baseUrl.value,api_key:apiKey.value}));const choice=window.prompt(english?'Available models; enter one':'可用模型；请输入要使用的名称',(result.models||[]).join('\n'));if(choice?.trim())model.value=choice.trim();notice(english?'Domain model list loaded.':'领域模型列表已读取。');}catch(error){notice(error.message,true);}}),actionButton(english?'Save for this agent':'保存到当前 Agent',async()=>{try{const result=await request('/api/domain-model-settings/save',localSessionOptions({plugin_name:session.plugin_name,role_id:role.id,provider:provider.value,model:model.value,base_url:baseUrl.value,api_key:apiKey.value,timeout_seconds:Number(timeout.value),preset_id:preset.value||'custom'}));session.model_settings=result;panel.hidden=true;renderDomainWorkspace();notice(english?'This domain model role was saved.':'当前领域 Agent 的模型岗位已保存。');}catch(error){notice(error.message,true);}},true));panel.append(actions);
 }
 
+const DOMAIN_TOOL_LABELS = {
+  process_disaster_table:'灾害表格处理',
+  books_list:'登记书籍列表',
+  pdf_inspect:'检查PDF',
+  pdf_render_page:'渲染PDF页',
+  pdf_crop_page:'裁切PDF区域',
+  pdf_extract_text:'提取PDF文本',
+  reference_search_excel:'检索参考表',
+  inspect_half_finished_workbook:'检查半成品表',
+  audit_original_text_style:'原文表述审计',
+  normalize_disaster_type:'灾种规范校验',
+  convert_half_finished_workbook:'半成品表转22列',
+  convert_workbook_to_custom_schema:'自定义表头转换',
+  create_category_summary_chart:'生成分类统计图',
+  run_book_pages:'逐页处理全书',
+  summarize_conversion_review:'汇总转换复核',
+  apply_review_workbook:'合并人工复核',
+  record_review_decisions:'记录复核结论',
+  chronology_vocabulary:'朝代纪年词表',
+  historical_admin_lookup:'历史政区查询',
+  modern_admin_lookup:'现代政区查询',
+  schema_validate:'结构校验',
+  evidence_match_quote:'原文引句核对',
+  ocr_page_api:'页面识别',
+  review_enqueue:'送入人工复核',
+  propagate_event_grades_to_all_rows:'等级传播到全部行',
+  domain_agent_consult:'咨询领域 Agent',
+};
+function toolLabel(name){const label=DOMAIN_TOOL_LABELS[String(name||'')];return label?`${label}（${name}）`:String(name||'');}
+
 function domainRunNotice(){
   const run=state.domainView?.runs?.[0];
   if(!run)return state.language==='en'?'Domain agent is preparing the run…':'领域 Agent 正在建立本轮运行……';
   const call=run.tool_calls?.at(-1);
-  if(call?.status==='RUNNING')return `${call.tool_name} ${state.language==='en'?'is running…':'正在运行……'}`;
-  if(call?.status==='COMPLETED')return `${call.tool_name} ${state.language==='en'?'returned; the agent is checking its receipt…':'已返回，Agent 正在核对回执……'}`;
-  if(call?.status==='FAILED')return `${call.tool_name} ${state.language==='en'?'failed; the agent is correcting the call…':'未通过，Agent 正在根据参数契约纠正……'}`;
+  if(call?.status==='RUNNING')return `${toolLabel(call.tool_name)} ${state.language==='en'?'is running…':'正在运行……'}`;
+  if(call?.status==='COMPLETED')return `${toolLabel(call.tool_name)} ${state.language==='en'?'returned; the agent is checking its receipt…':'已返回，Agent 正在核对回执……'}`;
+  if(call?.status==='FAILED')return `${toolLabel(call.tool_name)} ${state.language==='en'?'failed; the agent is correcting the call…':'未通过，Agent 正在根据参数契约纠正……'}`;
   return state.language==='en'?'Domain agent is reasoning…':'领域 Agent 正在思考并准备调用工具……';
 }
 
@@ -1037,13 +1069,94 @@ function renderAgentShell() {
   const list = $('threadList'); list.replaceChildren();
   const threads = (state.snapshot?.threads || []).filter((thread)=>!String(thread.title||'').startsWith('领域 Agent｜'));
   if (!threads.length) list.append(Object.assign(document.createElement('p'), {className:'empty', textContent:'还没有研究线程。'}));
+  const threadAction = (label, className, handler) => {
+    const action = document.createElement('button');
+    action.className = `thread-action ${className}`; action.type='button'; action.textContent = label;
+    action.onclick = (event) => { event.stopPropagation(); handler(action); };
+    return action;
+  };
+  const confirmOnce = (action, label, handler) => {
+    if (action.dataset.armed === '1') { handler(); return; }
+    action.dataset.armed = '1'; action.textContent = label;
+    setTimeout(() => { if (action.isConnected) { action.dataset.armed = ''; action.textContent = label.startsWith('确认') ? '删除' : label; } }, 2600);
+  };
+  const archiveThread = async (threadId) => {
+    try { await request('/api/thread/archive', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId})}); state.snapshot = await request('/api/snapshot'); renderAgentShell(); notice(state.language==='en'?'Thread archived. Use "Archived" to restore.':'线程已归档，可随时恢复。'); }
+    catch (error) { notice(error.message, true); }
+  };
+  const deleteThread = async (threadId) => {
+    try { await request('/api/thread/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId})}); if (state.threadId === threadId) state.threadId = ''; state.snapshot = await request('/api/snapshot'); renderAgentShell(); notice(state.language==='en'?'Thread permanently deleted.':'线程及其消息已彻底删除。'); }
+    catch (error) { notice(error.message, true); }
+  };
+  const openThreadContextMenu = (event, thread) => {
+    const menu = $('threadContextMenu'); if (!menu) return;
+    menu.replaceChildren();
+    const english = state.language === 'en';
+    const renameThread = async (name) => {
+      try { await request('/api/thread/rename', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:thread.thread_id, title:name})}); state.snapshot = await request('/api/snapshot'); renderAgentShell(); notice(english?'Thread renamed.':'线程已重命名。'); }
+      catch (error) { notice(error.message, true); }
+    };
+    const item = (label, danger, handler) => {
+      const button = document.createElement('button'); button.type='button'; button.textContent = label;
+      if (danger) button.className = 'danger';
+      button.onclick = () => { menu.hidden = true; handler(); };
+      menu.append(button);
+    };
+    item(english?'Rename task':'重命名任务', false, async () => {
+      const name = await askText(english?'Rename task':'重命名任务', english?'Thread name':'线程名称', thread.title);
+      if (name?.trim()) await renameThread(name.trim());
+    });
+    item(thread.status === 'archived' ? (english?'Restore task':'恢复任务') : (english?'Archive task':'归档任务'), false, async () => {
+      const endpoint = thread.status === 'archived' ? '/api/thread/restore' : '/api/thread/archive';
+      try { await request(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:thread.thread_id})}); state.snapshot = await request('/api/snapshot'); renderAgentShell(); notice(english?'Done.':'操作完成。'); }
+      catch (error) { notice(error.message, true); }
+    });
+    const deleteItem = document.createElement('button'); deleteItem.type='button'; deleteItem.className='danger';
+    deleteItem.textContent = english?'Delete permanently':'彻底删除';
+    deleteItem.onclick = () => {
+      if (deleteItem.dataset.armed === '1') { menu.hidden = true; deleteThread(thread.thread_id); return; }
+      deleteItem.dataset.armed = '1'; deleteItem.textContent = english?'Confirm delete?':'确认彻底删除？';
+    };
+    menu.append(deleteItem);
+    const x = Math.min(event.clientX, window.innerWidth - 190), y = Math.min(event.clientY, window.innerHeight - 140);
+    menu.style.left = `${Math.max(6, x)}px`; menu.style.top = `${Math.max(6, y)}px`;
+    menu.hidden = false;
+  };
+  document.addEventListener('click', (event) => {
+    const menu = $('threadContextMenu');
+    if (menu && !menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  });
   for (const thread of threads) {
+    const row = document.createElement('div'); row.className = 'thread-row';
     const button = document.createElement('button');
     const title = document.createElement('strong'); title.textContent = thread.title;
     const meta = document.createElement('small'); meta.textContent = `${thread.message_count} ${state.language==='en'?'message(s)':'条消息'} · ${thread.latest_run_status || (state.language==='en'?'not run yet':'尚未运行')}`;
     button.append(title, meta); button.classList.toggle('selected', thread.thread_id === state.threadId);
+    button.title = state.language==='en'?'Right-click: rename / archive / delete':'右键：重命名 / 归档 / 删除';
     button.onclick = () => loadThread(thread.thread_id).catch((error) => notice(error.message, true));
-    list.append(button);
+    button.oncontextmenu = (event) => { event.preventDefault(); openThreadContextMenu(event, thread); };
+    row.append(button);
+    list.append(row);
+  }
+  const archivedThreads = (state.snapshot?.archived_threads || []).filter((thread)=>!String(thread.title||'').startsWith('领域 Agent｜'));
+  if (archivedThreads.length) {
+    const details = document.createElement('details'); details.className = 'archived-threads';
+    const summary = document.createElement('summary'); summary.textContent = `${state.language==='en'?'Archived':'已归档'} (${archivedThreads.length})`;
+    details.append(summary);
+    for (const thread of archivedThreads) {
+      const row = document.createElement('div'); row.className = 'thread-row archived';
+      const button = document.createElement('button');
+      const title = document.createElement('strong'); title.textContent = thread.title;
+      button.append(title); button.onclick = () => loadThread(thread.thread_id).catch((error) => notice(error.message, true));
+      row.append(button);
+      row.append(threadAction(state.language==='en'?'Restore':'恢复', 'restore', async () => {
+        try { await request('/api/thread/restore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:thread.thread_id})}); state.snapshot = await request('/api/snapshot'); renderAgentShell(); notice(state.language==='en'?'Thread restored.':'线程已恢复。'); }
+        catch (error) { notice(error.message, true); }
+      }));
+      row.append(threadAction(state.language==='en'?'Delete':'彻底删除', 'delete', (action) => confirmOnce(action, state.language==='en'?'Confirm?':'确认删除？', () => deleteThread(thread.thread_id))));
+      details.append(row);
+    }
+    list.append(details);
   }
   if (!state.threadId && threads.length) loadThread(threads[0].thread_id).catch((error) => notice(error.message, true));
   else renderThread();
@@ -2232,7 +2345,7 @@ function renderApproval(run) {
   const english=state.language==='en';
   const noteApproval=approval.tool_name==='save_research_note'||('title' in approval.request&&'content' in approval.request);
   const card = document.createElement('article'); card.className = 'approval-card';
-  const heading = document.createElement('h3'); heading.textContent = noteApproval?(english?'Save research note?':'保存研究札记？'):(english?`Approve ${approval.tool_name}?`:`批准执行 ${approval.tool_name}？`);
+  const heading = document.createElement('h3'); heading.textContent = noteApproval?(english?'Save research note?':'保存研究札记？'):(english?`Approve ${toolLabel(approval.tool_name)}?`:`批准执行 ${toolLabel(approval.tool_name)}？`);
   const warning = document.createElement('p'); warning.textContent = noteApproval?(english?'Review or edit the proposal before it is written to the project.':'这是 Agent 的提案。请修改并确认后再写入项目。'):(english?`This action changes computer state. Permission class: ${approval.request.risk||'unspecified'}. Review every argument before approval.`:`该动作会改变电脑状态，权限等级：${approval.request.risk||'未声明'}。批准前请逐项检查参数。`);
   const titleLabel = document.createElement('label'); titleLabel.textContent = english?'Title':'标题';
   const title = document.createElement('input'); title.value = approval.request.title || ''; titleLabel.append(title);
@@ -2892,6 +3005,40 @@ function renderSettings() {
   models.append(Object.assign(document.createElement('p'), {textContent:`${english?'Vision assistant':'视觉辅助'}：${caps.vision_ocr?.available ? `${caps.vision_ocr.provider} / ${caps.vision_ocr.model}` : (english?'not configured':'未配置')}\n${english?'Translation assistant':'翻译辅助'}：${caps.translation?.available ? `${caps.translation.provider} / ${caps.translation.model}` : (english?'not configured':'未配置')}`})); appendSetting('runtime',models);
   const memory=card(english?'Memory layers':'记忆分层',english?'Conversation state, project knowledge, reusable historical knowledge, and engineering memory remain separate.':'对话状态、项目知识、可复用史学知识与工程记忆分开保存，不把所有信息塞进同一上下文。');
   memory.append(Object.assign(document.createElement('p'),{textContent:english?'1. Thread memory: current discussion and run receipts\n2. Project knowledge: sources, claims, evidence, manuscripts\n3. Historical memory: only reviewed reusable findings\n4. Engineering memory: tools, failures, and runbooks':'1. 对话记忆：当前讨论与运行回执\n2. 项目知识：来源、主张、证据与稿件\n3. 史学长期记忆：仅提升经复核、可复用的研究判断\n4. 工程记忆：工具、故障与运行方法'}));appendSetting('memory',memory);
+
+  const archivedCard = card(english?'Archived conversations':'已归档的对话', english?'Archived main-research and domain-agent threads are listed here. Restore them to the workspace or delete them permanently; deleting also removes messages, runs and attachments and cannot be undone.':'主对话与领域 Agent 的归档线程都列在这里；可恢复回工作区，或彻底删除。彻底删除会同时删除消息、运行与附件，不可恢复。');
+  const archivedList = document.createElement('section'); archivedList.className='context-form archived-conversations';
+  const archived = state.snapshot?.archived_threads || [];
+  if (!archived.length) archivedList.append(Object.assign(document.createElement('p'), {textContent: english?'No archived conversations.':'当前没有已归档的对话。'}));
+  const archivedAction = (label, className, handler) => {
+    const action = document.createElement('button'); action.type='button'; action.className=`thread-action ${className}`; action.textContent = label;
+    action.onclick = (event) => { event.stopPropagation(); handler(action); };
+    return action;
+  };
+  for (const thread of archived) {
+    const row = document.createElement('div'); row.className = 'thread-row archived';
+    const title = document.createElement('strong'); title.textContent = thread.title;
+    const meta = document.createElement('small'); meta.textContent = `${String(thread.title||'').startsWith('领域 Agent｜') ? (english?'Domain agent':'领域 Agent') : (english?'Main chat':'主对话')} · ${thread.message_count ?? 0} ${english?'message(s)':'条消息'}`;
+    const label = document.createElement('span'); label.className='archived-thread-label'; label.append(title, meta);
+    row.append(label);
+    row.append(archivedAction(english?'Restore':'恢复', 'restore', async () => {
+      try { await request('/api/thread/restore', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:thread.thread_id})}); state.snapshot = await request('/api/snapshot'); renderSettings(); notice(english?'Thread restored.':'线程已恢复到工作区。'); }
+      catch (error) { notice(error.message, true); }
+    }));
+    row.append(archivedAction(english?'Delete':'彻底删除', 'delete', (action) => {
+      if (action.dataset.armed !== '1') {
+        action.dataset.armed = '1'; action.textContent = english?'Confirm delete?':'确认彻底删除？';
+        setTimeout(()=>{ if (action.isConnected) { action.dataset.armed=''; action.textContent = english?'Delete':'彻底删除'; } }, 3200);
+        return;
+      }
+      (async () => {
+        try { await request('/api/thread/delete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:thread.thread_id})}); state.snapshot = await request('/api/snapshot'); renderSettings(); notice(english?'Thread permanently deleted.':'线程已彻底删除。'); }
+        catch (error) { notice(error.message, true); }
+      })();
+    }));
+    archivedList.append(row);
+  }
+  archivedCard.append(archivedList); appendSetting('memory', archivedCard);
   const memoryAdapter=state.snapshot.memory_adapter||{targets:{}};
   const adapterCard=card(english?'Local long-term memory adapters':'本地长期记忆适配器',english?'Approved candidates can be sent to the target 90_INBOX. Full chats, OCR drafts, and source files are outside this sync.':'经批准的候选可以送入目标库 90_INBOX；聊天全文、OCR草稿和来源文件不在同步范围内。');
   const historicalPath=document.createElement('input');historicalPath.placeholder=english?'Historical research memory path':'史学长期记忆库路径';historicalPath.value=memoryAdapter.targets?.historical?.path||'';
@@ -3184,8 +3331,44 @@ $('domainStartGuide').onclick=async()=>{const idea=$('domainAgentIdea').value.tr
 $('domainConfigureModel').onclick=()=>openDomainModelRole('domain_reasoning');
 $('addDomainAttachment').onclick=()=>$('domainAttachmentInput').click();
 $('domainThreadSelect').onchange=async()=>{state.domainThreadId=$('domainThreadSelect').value;if(state.domainSessionId)await loadDomainSession(state.domainSessionId);};
-$('renameDomainThread').onclick=async()=>{const session=(state.domainAgents?.sessions||[]).find((item)=>item.session_id===state.domainSessionId),thread=(state.snapshot?.threads||[]).find((item)=>item.thread_id===state.domainThreadId);if(!session||!thread)return;const prefix=domainThreadPrefix(session),own=String(thread.title||'').startsWith(prefix),current=own?thread.title.slice(prefix.length):thread.title,name=window.prompt(state.language==='en'?'Rename task thread':'重命名任务线程',current);if(!name?.trim())return;await request('/api/thread/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thread_id:thread.thread_id,title:own?`${prefix}${name.trim()}`:name.trim()})});state.snapshot=await request('/api/snapshot');renderAgentShell();await loadDomainSession(state.domainSessionId);notice(state.language==='en'?'Thread renamed.':'线程已重命名。');};
-$('newDomainThread').onclick=async()=>{const session=(state.domainAgents?.sessions||[]).find((item)=>item.session_id===state.domainSessionId);if(!session)return;const name=window.prompt(state.language==='en'?'New task thread name':'新任务线程名称',state.language==='en'?'New data task':'新数据任务');if(!name?.trim())return;const created=await request('/api/thread/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:`${domainThreadPrefix(session)}${name.trim()}`,parent_thread_id:''})});state.domainThreadId=created.thread_id;state.domainPendingAttachments=[];state.domainView={session,messages:[],runs:[],artifacts:[],main_thread_id:created.thread_id};state.snapshot=await request('/api/snapshot');renderDomainWorkspace();notice(state.language==='en'?'New isolated domain-agent thread created.':'已建立新的领域 Agent 隔离线程。');};
+$('renameDomainThread').onclick=async()=>{const session=(state.domainAgents?.sessions||[]).find((item)=>item.session_id===state.domainSessionId),thread=(state.snapshot?.threads||[]).find((item)=>item.thread_id===state.domainThreadId);if(!session||!thread)return notice(state.language==='en'?'Select a task thread first.':'请先选择一个任务线程。',true);const prefix=domainThreadPrefix(session),own=String(thread.title||'').startsWith(prefix),current=own?thread.title.slice(prefix.length):thread.title;const name=await askText(state.language==='en'?'Rename task thread':'重命名任务线程',state.language==='en'?'Thread name':'线程名称',current);if(!name?.trim())return;try{await request('/api/thread/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({thread_id:thread.thread_id,title:own?`${prefix}${name.trim()}`:name.trim()})});state.snapshot=await request('/api/snapshot');renderAgentShell();await loadDomainSession(state.domainSessionId);notice(state.language==='en'?'Thread renamed.':'线程已重命名。');}catch(error){notice(error.message,true);}};
+$('newDomainThread').onclick=async()=>{const session=(state.domainAgents?.sessions||[]).find((item)=>item.session_id===state.domainSessionId);if(!session)return notice(state.language==='en'?'Select a domain agent first.':'请先选择一个领域 Agent。',true);const name=await askText(state.language==='en'?'New task thread name':'新任务线程名称',state.language==='en'?'Thread name':'线程名称',state.language==='en'?'New data task':'新数据任务');if(!name?.trim())return;try{const created=await request('/api/thread/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:`${domainThreadPrefix(session)}${name.trim()}`,parent_thread_id:''})});state.domainThreadId=created.thread_id;state.domainPendingAttachments=[];state.domainView={session,messages:[],runs:[],artifacts:[],main_thread_id:created.thread_id};state.snapshot=await request('/api/snapshot');renderDomainWorkspace();notice(state.language==='en'?'New isolated domain-agent thread created.':'已建立新的领域 Agent 隔离线程。');}catch(error){notice(error.message,true);}};
+const domainThreadMutation = async (endpoint, successMessage) => {
+  const threadId = state.domainThreadId || $('domainThreadSelect')?.value;
+  if (!threadId) return notice(state.language==='en'?'Select a task thread first.':'请先选择一个任务线程。', true);
+  try {
+    await request(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId})});
+    state.domainThreadId = '';
+    state.domainSessionId = '';
+    state.domainView = null;
+    state.snapshot = await request('/api/snapshot');
+    await loadDomainAgents();
+    notice(successMessage);
+  } catch (error) { notice(error.message, true); }
+};
+$('archiveDomainThread').onclick=()=>domainThreadMutation('/api/thread/archive', state.language==='en'?'Domain thread archived. Manage archived threads in Settings → Memory & data.':'领域线程已归档；可在设置的“记忆与数据 → 已归档对话”中恢复。');
+let deleteDomainArmed = false;
+$('deleteDomainThread').onclick=(event)=>{
+  const button = event.currentTarget;
+  if (!deleteDomainArmed) {
+    deleteDomainArmed = true; button.classList.add('armed'); button.title = '再次点击才真正删除；40 秒内无操作自动取消';
+    setTimeout(()=>{ if (button.isConnected) { deleteDomainArmed = false; button.classList.remove('armed'); button.title = '彻底删除当前领域线程及其对话（不可恢复）'; } }, 40000);
+    return;
+  }
+  deleteDomainArmed = false; button.classList.remove('armed'); button.title = '彻底删除当前领域线程及其对话（不可恢复）';
+  domainThreadMutation('/api/thread/delete', state.language==='en'?'Domain thread permanently deleted.':'领域线程及其对话已彻底删除。');
+};
+$('archiveMainThread').onclick=async()=>{
+  const threadId = state.threadId;
+  if (!threadId) return notice(state.language==='en'?'Open a research thread first.':'请先打开一个研究线程。', true);
+  try {
+    await request('/api/thread/archive', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({thread_id:threadId})});
+    state.snapshot = await request('/api/snapshot');
+    state.threadId = '';
+    await refreshAgentSnapshot();
+    notice(state.language==='en'?'Conversation archived. Find it in Settings → Memory & data → Archived conversations.':'对话已归档；在设置的“记忆与数据 → 已归档对话”中可恢复或彻底删除。');
+  } catch (error) { notice(error.message, true); }
+};
 $('closeImagePreview').onclick=()=>$('imagePreviewDialog').close();
 $('imagePreviewDialog').onclick=(event)=>{if(event.target===$('imagePreviewDialog'))$('imagePreviewDialog').close();};
 $('domainMessageInput').oninput=()=>{state.domainDraft=$('domainMessageInput').value;};

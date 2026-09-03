@@ -289,7 +289,7 @@ def filesystem_roots() -> dict[str, Any]:
 @server.tool(annotations=READ)
 def file_search(
     roots: list[str], query: str = "", extensions: list[str] | None = None,
-    max_results: int = 200, max_scanned: int = 50000, include_hidden: bool = False,
+    max_results: int = 2000, max_scanned: int = 2_000_000, include_hidden: bool = False,
 ) -> dict[str, Any]:
     """Search explicitly named local folders with bounded traversal and no file-content reads."""
     if not roots or len(roots) > 8:

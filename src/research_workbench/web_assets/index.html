@@ -62,7 +62,7 @@
       <div id="domainAgentList" class="domain-agent-list"></div>
     </aside>
     <div id="domainLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整领域 Agent 列表宽度"></div><section class="domain-conversation-panel surface">
-      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div class="domain-thread-controls"><label><span data-zh="任务线程" data-en="Task thread">任务线程</span><select id="domainThreadSelect"></select></label><button id="renameDomainThread" class="icon-button" title="重命名当前线程" aria-label="重命名当前线程"><img src="/vendor/icons/pencil.svg" alt="" aria-hidden="true"></button><button id="newDomainThread" class="icon-button" title="新建领域线程" aria-label="新建领域线程"><img src="/vendor/icons/plus.svg" alt="" aria-hidden="true"></button></div><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
+      <header class="agent-heading domain-conversation-heading"><div><h1 id="domainAgentTitle">选择一个领域 Agent</h1><p id="domainAgentState">领域输出保持候选状态</p><div class="domain-thread-controls"><label><span data-zh="任务线程" data-en="Task thread">任务线程</span><select id="domainThreadSelect"></select></label><button id="renameDomainThread" class="icon-button" title="重命名当前线程" aria-label="重命名当前线程"><img src="/vendor/icons/pencil.svg" alt="" aria-hidden="true"></button><button id="newDomainThread" class="icon-button" title="新建领域线程" aria-label="新建领域线程"><img src="/vendor/icons/plus.svg" alt="" aria-hidden="true"></button><button id="archiveDomainThread" class="icon-button domain-thread-action" title="归档当前领域线程（可在设置的“记忆与数据 → 已归档对话”中恢复）" aria-label="归档当前领域线程">归档</button><button id="deleteDomainThread" class="icon-button" title="彻底删除当前领域线程及其对话（不可恢复）" aria-label="删除当前领域线程"><img src="/vendor/icons/trash-2.svg" alt="" aria-hidden="true"></button></div><div id="domainModelRoles" class="domain-model-roles"></div></div></header>
       <div id="domainFunctions" class="domain-functions"></div>
       <div class="run-status-row"><div id="domainRunStatus" class="run-status" role="status" aria-live="polite"></div><button id="domainJumpToLatest" class="jump-to-latest" hidden data-zh="回到最新消息" data-en="Jump to latest">回到最新消息</button></div>
       <div id="domainMessages" class="messages domain-messages"></div>
@@ -148,12 +148,14 @@
       </header>
       <header class="agent-heading"><h2>研究线程</h2><button id="newThread">＋</button></header>
       <div id="threadList" class="thread-list"></div>
+      <div id="threadContextMenu" class="thread-context-menu" hidden></div>
     </aside>
 
     <div id="agentLeftResizeHandle" class="panel-resize-handle left-panel-resize-handle" role="separator" aria-label="调整研究线程列表宽度"></div><section class="conversation-panel surface">
       <header class="agent-heading">
         <div><h1 id="threadTitle">新建一个研究线程</h1><p id="runState">对话与运行状态会保存在本地项目中</p></div>
         <div class="conversation-heading-actions">
+          <button id="archiveMainThread" class="thread-archive-button" title="归档当前研究对话（可在设置的“记忆与数据 → 已归档对话”中恢复）">归档此对话</button>
           <details id="planningOptions" class="conversation-options">
             <summary>上下文选项</summary>
             <label>本轮使用<select id="planningMode"><option value="independent_planning">只处理当前问题</option><option value="guided_execution">沿用已批准研究计划</option></select></label>

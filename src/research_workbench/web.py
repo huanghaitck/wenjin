@@ -15,6 +15,9 @@ from .agent_runtime import (
     assign_model, clear_model_assignment,
     create_thread,
     rename_thread,
+    archive_thread,
+    restore_thread,
+    delete_thread,
     ensure_default_thread,
     decide_approval,
     list_threads,
@@ -194,6 +197,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     "project": project_status(self.server.project_root),
                     "sources": list_sources(self.server.project_root),
                     "threads": list_threads(self.server.project_root),
+                    "archived_threads": list_threads(self.server.project_root, include_archived=True),
                     "model_profiles": sync_model_profiles(self.server.project_root),
                     "agent_profile": public_agent_profile(self.server.project_root),
                     "library": library_status(self.server.project_root, self.server.library_root),
@@ -584,6 +588,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             elif parsed.path == "/api/thread/rename":
                 result = rename_thread(
                     self.server.project_root, str(payload["thread_id"]), str(payload["title"]),
+                )
+            elif parsed.path == "/api/thread/archive":
+                result = archive_thread(
+                    self.server.project_root, str(payload["thread_id"]),
+                )
+            elif parsed.path == "/api/thread/restore":
+                result = restore_thread(
+                    self.server.project_root, str(payload["thread_id"]),
+                )
+            elif parsed.path == "/api/thread/delete":
+                result = delete_thread(
+                    self.server.project_root, str(payload["thread_id"]),
                 )
             elif parsed.path == "/api/domain-agent/message":
                 result = send_domain_message(
