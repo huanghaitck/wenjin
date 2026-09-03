@@ -523,7 +523,6 @@ def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: 
         host.active_runs[codex_thread_id] = run_id
         _event(project_root, run_id, "codex_turn_started", {"thread_id": codex_thread_id})
         try:
-            effort = "high" if reasoning_effort == "max" else reasoning_effort
             turn_input = (
                 "先核对计划、工具选择与完成条件，再开始行动。\n\n" + objective
                 if reasoning_mode == "deep" else objective
@@ -536,8 +535,9 @@ def run_turn(project_root: Path, wenjin_thread_id: str, run_id: str, objective: 
                     "以下是从问津本地线程恢复的近期对话，只用于保持讨论连续，不是来源证据：\n"
                     + transcript + "\n\n当前任务：\n" + turn_input
                 )
+            turn_params = {"effort": reasoning_effort} if reasoning_effort else {}
             text, stopped = _stream_turn(
-                host, codex_thread_id, run_id, turn_input, {"effort": effort}, "main",
+                host, codex_thread_id, run_id, turn_input, turn_params, "main",
             )
             if not text and not stopped:
                 raise RuntimeError("Codex app-server completed without an assistant message")
@@ -588,7 +588,6 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
             "access_mode": access_mode, "parent_run_id": parent_run_id,
         }
         try:
-            effort = "high" if reasoning_effort == "max" else reasoning_effort
             turn_input = (
                 "先核对计划、工具选择与完成条件，再开始行动。\n\n" + content
                 if reasoning_mode == "deep" else content
@@ -601,8 +600,9 @@ def run_domain_turn(project_root: Path, session_id: str, run_id: str, content: s
                     "以下是该领域 Agent 隔离会话的近期对话，只用于任务连续性：\n"
                     + transcript + "\n\n当前任务：\n" + turn_input
                 )
+            turn_params = {"effort": reasoning_effort} if reasoning_effort else {}
             text, stopped = _stream_turn(
-                host, codex_thread_id, run_id, turn_input, {"effort": effort}, "domain",
+                host, codex_thread_id, run_id, turn_input, turn_params, "domain",
             )
             if not text and not stopped:
                 raise RuntimeError("Codex domain turn completed without an assistant message")

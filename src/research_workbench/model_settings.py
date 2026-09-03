@@ -44,13 +44,25 @@ def reasoning_controls(provider: str, model: str, base_url: str = "") -> dict[st
         efforts = ["low", "high", "max"] if "flash" in model_name else ["high", "max"]
         return {"modes": ["standard", "deep"], "efforts": efforts,
                 "default_mode": "deep", "default_effort": "high"}
+    # 智谱 GLM：GLM-5.3 要求 effort ∈ {low, high, max}，不接受 medium；
+    # 早期 GLM-4.x 系列不支持 effort 参数，返回空列表由调用方省略。
+    if provider == "openai_compatible" and (
+        "bigmodel.cn" in endpoint or "z.ai" in endpoint
+        or model_name.startswith("glm-5")
+        or model_name.startswith("glm-4.5")
+    ):
+        if model_name.startswith("glm-5"):
+            return {"modes": ["standard", "deep"], "efforts": ["low", "high", "max"],
+                    "default_mode": "standard", "default_effort": "high"}
+        return {"modes": [], "efforts": [],
+                "default_mode": "standard", "default_effort": ""}
     if provider == "ollama" and "gpt-oss" in model_name:
         return {"modes": ["deep"], "efforts": ["low", "medium", "high"],
                 "default_mode": "deep", "default_effort": "medium"}
     if provider == "ollama" and any(name in model_name for name in ("qwen3", "deepseek-r1", "deepseek-v3.1")):
         return {"modes": ["standard", "deep"], "efforts": [],
                 "default_mode": "deep", "default_effort": "medium"}
-    return {"modes": [], "efforts": [], "default_mode": "standard", "default_effort": "medium"}
+    return {"modes": [], "efforts": [], "default_mode": "standard", "default_effort": ""}
 CREDENTIAL_PREFIX = "HistoricalResearchWorkbench"
 
 
